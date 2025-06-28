@@ -28,24 +28,19 @@ for i in range(M):
                 neighbors.append((ni, nj))
         adjacency[(i, j)] = neighbors
 
-
-# Helper function to get variable index
-def var_index(pos, t):
-    return pos * num_time_steps + t  # Flatten pos-time into unique integer index
+print("Adjacency Map:", adjacency)
 
 # Initialize QUBO dictionary
 Q = {}
 
-
-
 # Penalty weights
-K_adj = 5.0
+K_adj = 4.0
 K_hot = 5.0
 K_start = 5.0
-K_goal = 3.0  # Reward for being at goal
+K_goal = 5.0  # Reward for being at goal
 
 # Helper function to get variable index
-def var_index(pos, m,n):
+def var_index(pos, m, n):
     return pos % (M * N)
 
 # Constraint 1: One position per time step
@@ -64,42 +59,41 @@ for t in range(T):
             Q[(n, m)] = Q.get((n, m), 0) + 2 * K_hot
 
 
-
-# # Constraint 2: Movement must be to adjacent cells
-# for t in range(T):
-#     for i in range(M):
-#         for j in range(N):
-#             n = i*3 + j + 9*t
-#             Q[(n, n)] = Q.get((n, n), 0) + K_adj
-#             for (k, l) in adjacency[(i, j)]:
-#                 m = k*3 + l + 9*(t+1)
-#                 Q[(n, m)] = Q.get((n, m), 0) - K_adj
-# Assume valid_positions is a list of allowed (i,j) pairs (excluding obstacle)
-# adjacency[(i,j)] contains list of allowed (k,l) positions
-
-for t in range(T - 1):  # no movement after last time step
+# Constraint 2: Movement must be to adjacent cells
+# Reward for being in adjacent cells
+for t in range(T-1):
     for i in range(M):
         for j in range(N):
-            n = i*N + j + M*N*t  # or whatever your indexing scheme is
+            n = i*3 + j + 9*t
+            Q[(n, n)] = Q.get((n, n), 0) + K_adj
+            for (k, l) in adjacency[(i, j)]:
+                m = k*3 + l + 9*(t+1)
+                Q[(n, m)] = Q.get((n, m), 0) - K_adj
 
-            # Get all possible positions at next time step
-            for k in range(M):
-                for l in range(N):
-                    if (k == i and l == j):
-                        continue  # skip same cell; handled by self-loop or movement rules
-                    m = k*N + l + M*N*(t+1)
+#Penalize all no adjacent approach
+# for t in range(T - 1):  # no movement after last time step
+#     for i in range(M):
+#         for j in range(N):
+#             n = i*N + j + M*N*t  # or whatever your indexing scheme is
 
-                    # Only penalize if (k,l) is NOT in adjacency[(i,j)]
-                    if (k, l) not in adjacency[(i, j)]:
-                        Q[(n, m)] = Q.get((n, m), 0) + K_adj
+#             # Get all possible positions at next time step
+#             for k in range(M):
+#                 for l in range(N):
+#                     if (k == i and l == j):
+#                         continue  # skip same cell; handled by self-loop or movement rules
+#                     m = k*N + l + M*N*(t+1)
+
+#                     # Only penalize if (k,l) is NOT in adjacency[(i,j)]
+#                     if (k, l) not in adjacency[(i, j)]:
+#                         Q[(n, m)] = Q.get((n, m), 0) + K_adj
 
 
 
 # Constraint 3: Start at given position
 start_idx = s_i*3 + s_j
 end_idx = e_i*3 + e_j + 9*(T-1)
-Q[start_idx, start_idx] += (-2 * K_start) + K_start
-Q[end_idx, end_idx] += (-2 * K_start) + K_start
+Q[start_idx, start_idx] += -K_start
+Q[end_idx, end_idx] += -K_goal
 
 
 ## Solver 
