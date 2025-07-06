@@ -1,0 +1,30 @@
+problems:
+  - name: "grid_3x3_easy"
+    M: 3
+    N: 3
+    s_i: 2
+    s_j: 0
+    e_i: 0
+    e_j: 2
+    T: 5
+  # normalization scale
+  
+penalty_sets:
+  set1:
+    K_hot: 3     # Must have exactly one position per time step
+    K_adj: 1.5    # Must move to valid neighbor
+    K_start: 3    # Must start at given position
+    K_goal: 1.5   # Encourage reaching goal
+    K_lock: 1    # Discourage leaving goal once reached
+
+  set2:
+    K_hot: 5
+    K_adj: 3
+    K_start: 6
+    K_goal: 4
+    K_lock: 3
+
+settings:
+  num_runs_per_config: 10
+  normalize: true
+  num_reads: 10
