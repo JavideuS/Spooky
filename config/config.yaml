@@ -1,30 +1,41 @@
 problems:
-  - name: "grid_3x3_easy"
-    M: 3
-    N: 3
-    s_i: 2
-    s_j: 0
-    e_i: 0
-    e_j: 2
-    T: 5
-  # normalization scale
-  
+  grid_3x3_default:
+    grid:
+      M: 3
+      N: 3
+      obstacles: [(1, 1)]
+    start: (2, 0)
+    goal: (0, 2)
+    T: None # By default none but can be set to a specific time limit
+
+solver:
+  dwave_qa:
+    backend: "dwave"
+    normalization_scale: 1.0
+    num_reads: 10
+  qiskit_qaoa:
+    backend: "qiskit"
+    normalization_scale: 1.0
+    num_reads: 10
+  pennylane_qapa:
+    backend: "pennylane"
+    normalization_scale: 1.0
+    num_reads: 10
+
 penalty_sets:
-  set1:
-    K_hot: 3     # Must have exactly one position per time step
-    K_adj: 1.5    # Must move to valid neighbor
-    K_start: 3    # Must start at given position
-    K_goal: 1.5   # Encourage reaching goal
-    K_lock: 1    # Discourage leaving goal once reached
+  standard2x: #This relies on a 2x normalization scales
+    K_hot: 3  
+    K_adj: 1.5
+    K_start: 3
+    K_goal: 1.5
+    K_lock: 1
 
-  set2:
-    K_hot: 5
-    K_adj: 3
-    K_start: 6
-    K_goal: 4
-    K_lock: 3
+  standard_double_adj: #Follows double adjacency penalty 
+    K_hot: 8
+    K_adj: 4.5
+    K_start: 8
+    K_goal: 5
+    K_lock: 5
 
-settings:
+benchmark:
   num_runs_per_config: 10
-  normalize: true
-  num_reads: 10
