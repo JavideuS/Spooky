@@ -3,7 +3,7 @@ class Grid:
         self.M = M
         self.N = N
         # Define valid movements: 4-connectivity (no diagonals)
-        self._moves = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        self.moves = [(-1, 0), (1, 0), (0, -1), (0, 1)]
         self.obstacles = obstacles or []
         self.adjacency = self.build_adjacency()
 
@@ -15,7 +15,7 @@ class Grid:
                 # if (i, j) in self.obstacles:
                 #     continue
                 neighbors = []
-                for di, dj in self._moves:
+                for di, dj in self.moves:
                     ni, nj = i + di, j + dj
                     if 0 <= ni < self.M and 0 <= nj < self.N:
                         # Skip if the position is in obstacles

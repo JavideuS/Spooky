@@ -48,7 +48,3 @@ class QUBOSolver:
             'raw_response': response
         }
 
-    def is_solution_valid(solution, M, N, T, s_i, s_j, e_i, e_j):
-        # Your logic to check if solution is valid
-        pass
-

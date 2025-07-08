@@ -1,11 +1,19 @@
+import benchmark.benchmark
 import solvers.DWave_solver as DWave_solver
 import map
 import pathFormulation
+import config.parser as config_parser
 import QUBOBuilder
+import benchmark.benchmark as benchmark
 from pennylane import numpy as np
 
 # grid = map.Grid(M=3, N=3)
 grid = map.Grid(M=3, N=3, obstacles=[(1, 1)])
+
+# Need to implement a constructor based on a config file
+# conf = config_parser.load_config("config/config.yaml", sections=["problems"])
+# grid = conf["problems"]["grid_3x3_default"]
+# print("Loaded Grid Configuration:", grid)
 
 M = grid.M
 N = grid.N
@@ -63,6 +71,14 @@ for idx in range(M * N * T):
         path.append((i, j, t))
 
 print("Decoded Path:", sorted(path, key=lambda x: x[2]))
+
+validation_result = benchmark.is_solution_valid(best_sample, problem)
+
+if validation_result["valid"]:
+    print(validation_result["message"])
+else:
+    print(validation_result["message"])
+    print("Details:", validation_result["details"])
 
 # Solver (QAOA)
 
