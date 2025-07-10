@@ -7,19 +7,20 @@ import QUBOBuilder
 import benchmark.benchmark as benchmark
 from pennylane import numpy as np
 
+
 # grid = map.Grid(M=3, N=3)
 grid = map.Grid(M=3, N=3, obstacles=[(1, 1)])
 
-# Need to implement a constructor based on a config file
-# conf = config_parser.load_config("config/config.yaml", sections=["problems"])
-# grid = conf["problems"]["grid_3x3_default"]
-# print("Loaded Grid Configuration:", grid)
+conf = config_parser.load_config("config/config.yaml", sections=["problems", "penalty_sets", "solver"])
+map_conf = conf["problems"]["grid_3x3_default"]
+grid = map.Grid.from_dict(map_conf)
 
 M = grid.M
 N = grid.N
 adjacency = grid.adjacency
 
-problem = pathFormulation.PathfindingProblem(grid, start=(2, 0), end=(0, 2))
+# problem = pathFormulation.PathfindingProblem(grid, start=(2, 0), end=(0, 2))
+problem = pathFormulation.PathfindingProblem.from_dict(map_conf)
 
 s_i = problem.start[0]
 s_j = problem.start[1]
@@ -39,6 +40,7 @@ K_start = 3    # Must start at given position
 K_goal = 1.5   # Encourage reaching goal
 K_lock = 1    # Discourage leaving goal once reached
 penalties = {"K_hot": K_hot, "K_adj": K_adj, "K_start": K_start, "K_goal": K_goal, "K_lock": K_lock}
+penalties_conf = conf["penalty_sets"]["standard2x"]
 
 
 # Helper function to get variable index
@@ -50,14 +52,19 @@ def decode_position(idx):
     return i, j, t
 
 
-QUBOBuilder = QUBOBuilder.QUBOBuilder(problem, penalties=penalties)
+# QUBOBuilder = QUBOBuilder.QUBOBuilder(problem, penalties=penalties)
+QUBOBuilder = QUBOBuilder.QUBOBuilder(problem, penalties=penalties_conf)
+
 
 Q = QUBOBuilder.build()
 
 # Solver (Quantum annealing)
-DWave_solver = DWave_solver.QUBOSolver(normalize_scale=2.0, num_reads=10)
+solver = DWave_solver.QUBOSolver(normalize_scale=2.0, num_reads=10)
 
-result = DWave_solver.solve_qubo(Q)
+# solver_conf = conf["solver"]["dwave_qa"]
+# solver = DWave_solver.QUBOSolver.from_config(solver_conf)
+
+result = solver.solve_qubo(Q)
 best_sample = result['solution']
 min_energy = result['energy']
 

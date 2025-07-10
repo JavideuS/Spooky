@@ -4,6 +4,10 @@ class QUBOBuilder:
         self.penalties = penalties
         self.Q = {}
 
+    # Since the config file already returns a dict structure for the penalties, there is no need
+    # to define a new dictionary constructor
+
+
     # Must have exactly one position per time step
     def apply_one_hot(self):
         """

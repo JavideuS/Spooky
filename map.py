@@ -7,6 +7,18 @@ class Grid:
         self.obstacles = obstacles or []
         self.adjacency = self.build_adjacency()
 
+    @classmethod
+    def from_dict(cls, grid_dict):
+        """
+        Create a Grid instance from a dictionary (for config file setup).
+        It receives problem section from config file
+        and extracts grid parameters.
+        """
+        M = grid_dict["grid"]["M"]
+        N = grid_dict["grid"]["N"]
+        obstacles = grid_dict["grid"]["obstacles"]
+        return cls(M, N, obstacles)
+
     def build_adjacency(self):
         adjacency = {}
         for i in range(self.M):

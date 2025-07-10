@@ -9,6 +9,17 @@ class QUBOSolver:
         self.norm_scale = normalize_scale
         self.num_reads = num_reads
 
+    @classmethod
+    def from_config(cls, config):
+        """
+        Create a QUBOSolver instance from a configuration dictionary.
+        It receives solver section from config file
+        and extracts solver parameters.
+        """
+        norm_scale = config.get("normalization_scale", 0)
+        num_reads = config.get("num_reads", 10)
+        return cls(normalize_scale=norm_scale, num_reads=num_reads)
+
     def normalize_qubo(self, Q, scale=1.0):
         # Extract values
         values = np.array(list(Q.values()))
