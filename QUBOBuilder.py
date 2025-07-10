@@ -1,7 +1,8 @@
 class QUBOBuilder:
-    def __init__(self, problem, penalties):
+    def __init__(self, problem, penalties, name="unnamed"):
         self.problem = problem
         self.penalties = penalties
+        self.name = name  # Name for the penalties
         self.Q = {}
 
     # Since the config file already returns a dict structure for the penalties, there is no need

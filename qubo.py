@@ -1,4 +1,3 @@
-import benchmark.benchmark
 import solvers.DWave_solver as DWave_solver
 import map
 import pathFormulation
@@ -6,7 +5,7 @@ import config.parser as config_parser
 import QUBOBuilder
 import benchmark.benchmark as benchmark
 from pennylane import numpy as np
-
+import time
 
 # grid = map.Grid(M=3, N=3)
 grid = map.Grid(M=3, N=3, obstacles=[(1, 1)])
@@ -42,21 +41,13 @@ K_lock = 1    # Discourage leaving goal once reached
 penalties = {"K_hot": K_hot, "K_adj": K_adj, "K_start": K_start, "K_goal": K_goal, "K_lock": K_lock}
 penalties_conf = conf["penalty_sets"]["standard2x"]
 
-
-# Helper function to get variable index
-def decode_position(idx):
-    t = idx // (M * N)
-    pos = idx % (M * N)
-    i = pos // N
-    j = pos % N
-    return i, j, t
-
-
 # QUBOBuilder = QUBOBuilder.QUBOBuilder(problem, penalties=penalties)
-QUBOBuilder = QUBOBuilder.QUBOBuilder(problem, penalties=penalties_conf)
+QUBOBuilder = QUBOBuilder.QUBOBuilder(problem, penalties=penalties_conf, name="standard2x")
 
-
+# start_time = time.time()
 Q = QUBOBuilder.build()
+# duration = time.time() - start_time
+# print(f"QUBO built in {duration:.4f} seconds")
 
 # Solver (Quantum annealing)
 solver = DWave_solver.QUBOSolver(normalize_scale=2.0, num_reads=10)
@@ -64,28 +55,26 @@ solver = DWave_solver.QUBOSolver(normalize_scale=2.0, num_reads=10)
 # solver_conf = conf["solver"]["dwave_qa"]
 # solver = DWave_solver.QUBOSolver.from_config(solver_conf)
 
-result = solver.solve_qubo(Q)
-best_sample = result['solution']
-min_energy = result['energy']
+# result = solver.solve_qubo(Q)
+# best_sample = result['solution']
+# min_energy = result['energy']
 
-print("Best Solution:", best_sample)
-print("Energy:", min_energy)
+# print("Best Solution:", best_sample)
+# print("Energy:", min_energy)
 
-path = []
-for idx in range(M * N * T):
-    if best_sample.get(idx, 0) == 1:
-        i, j, t = decode_position(idx)
-        path.append((i, j, t))
+# path = solver.decode_path(best_sample, problem)
+# print("Decoded Path:", path)
 
-print("Decoded Path:", sorted(path, key=lambda x: x[2]))
+# validation_result = benchmark.is_solution_valid(best_sample, problem)
 
-validation_result = benchmark.is_solution_valid(best_sample, problem)
+# if validation_result["valid"]:
+#     print(validation_result["message"])
+# else:
+#     print(validation_result["message"])
+#     print("Details:", validation_result["details"])
 
-if validation_result["valid"]:
-    print(validation_result["message"])
-else:
-    print(validation_result["message"])
-    print("Details:", validation_result["details"])
+benchmark = benchmark.BenchmarkRunner(QUBOBuilder, solver, num_runs=50)
+benchmark.run_build()
 
 # Solver (QAOA)
 

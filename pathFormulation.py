@@ -1,11 +1,12 @@
 import map
 
 class PathfindingProblem:
-    def __init__(self, grid, start, end, T=None):
+    def __init__(self, grid, start, end, T=None, name="unnamed"):
         self.grid = grid
         self.start = start  # (i, j)
         self.end = end      # (i, j)
         self.T = int(self.manhattan_distance() * 1.5)
+        self.name = name  # Name for problem, maybe corridor, hall...
 
     @classmethod
     def from_grid_dict(cls, grid, problem_dict):
@@ -32,3 +33,14 @@ class PathfindingProblem:
 
     def manhattan_distance(self):
         return abs(self.start[0] - self.end[0]) + abs(self.start[1] - self.end[1])
+
+    def to_dict(self):
+        """
+        Convert the problem instance to a dictionary representation.
+        """
+        return {
+            "grid": self.grid.to_dict(),
+            "start": self.start,
+            "goal": self.end,
+            "T": self.T
+        }

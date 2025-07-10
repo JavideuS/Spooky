@@ -1,3 +1,122 @@
+from pathlib import Path
+from datetime import datetime
+import json
+import time
+
+
+class BenchmarkRunner:
+    def __init__(self, qubobuilder, solver, num_runs=10, output_dir="results/benchmarks"):
+        """
+        Run benchmark on a given solver and problem.
+
+        Args:
+            problem (PathfindingProblem): A fully initialized problem
+            solver (QUBOSolver): A solver implementing `.solve(Q)`
+            penalty_set (dict): Penalty dictionary {K_hot: ..., K_adj: ...}
+            num_runs (int): Number of times to run the solver
+            output_dir (str): Where to save results
+        """
+        self.builder = qubobuilder
+        self.problem = qubobuilder.problem
+        self.penalty_set = qubobuilder.penalties
+        self.solver = solver
+        self.num_runs = num_runs
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.results = []
+
+    def run(self):
+        """Run the benchmark multiple times and store results"""
+        print(f"\nBenchmarking Problem: {self.problem.name}")
+        print(f"Using Solver: {self.solver.name}")
+        print(f"Penalty Set: {self.penalty_set.get('name', 'unnamed')}")
+        print("-" * 60)
+
+        # Build QUBO once
+        Q = self.builder.build()
+
+        # Run multiple trials
+        for run_id in range(1, self.num_runs + 1):
+            start_time = time.time()
+            solution = self.solver.solve_qubo(Q)
+            duration = time.time() - start_time
+
+            validation = is_solution_valid(solution["solution"], self.problem)
+
+            result = {
+                "run_id": run_id,
+                "timestamp": datetime.now().isoformat(),
+                "problem": self.problem.to_dict(),
+                "solver": self.solver.to_dict(),
+                "penalty_set": self.penalty_set,
+                "solution": solution,
+                "validation": validation,
+                "energy": solution["energy"],
+                "success": validation["valid"],
+                "execution_time_sec": round(duration, 3),
+            }
+
+            self.results.append(result)
+
+            status = "✅ Valid" if validation["valid"] else "❌ Invalid"
+            print(f"Run {run_id}: {status} | Time: {duration:.2f}s")
+            print(f"Path: {self.solver.get_path(solution['solution'], self.problem)}")
+
+        self.save_results()
+        return self.results
+    
+    def run_build(self):
+        """Run the benchmark multiple times and store results"""
+        print(f"\nBenchmarking Problem: {self.problem.name}")
+        print(f"Using Solver: {self.solver.name}")
+        print(f"Penalty Set: {self.penalty_set.get('name', 'unnamed')}")
+        print("-" * 60)
+
+        # Run multiple trials
+        for run_id in range(1, self.num_runs + 1):
+            build_start = time.time()
+            Q = self.builder.build()
+            build_duration = time.time() - build_start
+
+            solve_start = time.time()
+            solution = self.solver.solve_qubo(Q)
+            solve_duration = time.time() - solve_start
+
+            print(f"Build time: {build_duration:.4f}s, Solve time: {solve_duration:.4f}s")
+
+            validation = is_solution_valid(solution["solution"], self.problem)
+
+            result = {
+                "run_id": run_id,
+                "timestamp": datetime.now().isoformat(),
+                "problem": convert_tuple_keys_to_str(self.problem.to_dict()),
+                "solver": self.solver.to_dict(),
+                "penalty_set": self.penalty_set,
+                "solution": solution,
+                "validation": validation,
+                "energy": solution["energy"],
+                "success": validation["valid"],
+                "execution_time_sec": round(solve_duration, 3),
+            }
+
+            self.results.append(result)
+
+            status = "✅ Valid" if validation["valid"] else "❌ Invalid"
+            print(f"Run {run_id}: {status} | Time: {solve_duration:.2f}s")
+            print(f"Path: {self.solver.get_path(solution['solution'], self.problem)}")
+
+        self.save_results()
+        return self.results
+
+    def save_results(self):
+        filename = f"benchmark_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        filepath = self.output_dir / filename
+        with open(filepath, "w") as f:
+            json.dump(self.results, f, indent=2, default=str)  # Use `default=str` to serialize tuples
+        print(f"\nBenchmark complete. Results saved to {filepath}")
+
+
+
 def is_solution_valid(solution, problem):
     """
     Checks if the binary solution vector represents a valid path from start to goal.
@@ -16,7 +135,6 @@ def is_solution_valid(solution, problem):
     start = problem.start
     goal = problem.end
     obstacles = grid.obstacles
-    moves = grid.moves  # List of allowed move deltas, e.g., [(-1,0), (1,0), ...]
 
     result = {"valid": True, "details": {}}
 
@@ -138,3 +256,16 @@ def is_solution_valid(solution, problem):
     result["message"] = "✅ Solution is valid"
 
     return result
+
+
+def convert_tuple_keys_to_str(obj):
+    """
+    Recursively convert tuple keys in dictionaries to strings.
+    This is useful for serializing dictionaries with tuple keys to JSON.
+    """
+    if isinstance(obj, dict):
+        return {str(k) if isinstance(k, tuple) else k: convert_tuple_keys_to_str(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_tuple_keys_to_str(i) for i in obj]
+    else:
+        return obj

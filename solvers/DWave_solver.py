@@ -8,6 +8,8 @@ class QUBOSolver:
     def __init__(self, normalize_scale=0, num_reads=10):
         self.norm_scale = normalize_scale
         self.num_reads = num_reads
+        self.backend = "dwave_qa"
+        self.name = f"{self.backend}_reads{num_reads}"
 
     @classmethod
     def from_config(cls, config):
@@ -18,6 +20,7 @@ class QUBOSolver:
         """
         norm_scale = config.get("normalization_scale", 0)
         num_reads = config.get("num_reads", 10)
+        # backend = config.get("backend", "dwave_qa")
         return cls(normalize_scale=norm_scale, num_reads=num_reads)
 
     def normalize_qubo(self, Q, scale=1.0):
@@ -32,6 +35,32 @@ class QUBOSolver:
         # Scale all values to [-scale, scale]
         scale_factor = scale / max_val
         return {k: v * scale_factor for k, v in Q.items()}
+    
+    # Helper function to get variable index
+    def decode_position(self, idx, problem):
+        M = problem.grid.M
+        N = problem.grid.N
+        t = idx // (M * N)
+        pos = idx % (M * N)
+        i = pos // N
+        j = pos % N
+        return i, j, t
+    
+    def decode_path(self, sample, problem):
+        """
+        Decode the binary sample into a path of (i, j, t) tuples.
+        """
+        path = []
+        M = problem.grid.M
+        N = problem.grid.N
+        T = problem.T
+
+        for idx in range(M * N * T):
+            if sample.get(idx, 0) == 1:
+                i, j, t = self.decode_position(idx, problem)
+                path.append((i, j, t))
+
+        return sorted(path, key=lambda x: x[2])
 
     def solve_qubo(self, Q):
         if self.norm_scale != 0:
@@ -56,6 +85,21 @@ class QUBOSolver:
             'solution': best_sample,
             'energy': best_energy,
             # 'success': is_solution_valid(best_sample, M, N, T, s_i, s_j, e_i, e_j),
-            'raw_response': response
+            'raw_response': response,
+        }
+    
+    def get_path(self, sample, problem):
+        """
+        Get the path from the sample.
+        """
+        return self.decode_path(sample, problem)
+    
+    def to_dict(self):
+        """
+        Convert the solver parameters to a dictionary.
+        """
+        return {
+            "normalization_scale": self.norm_scale,
+            "num_reads": self.num_reads,
         }
 
