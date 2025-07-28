@@ -1,11 +1,15 @@
 import map
 
+
 class PathfindingProblem:
     def __init__(self, grid, start, end, T=None, name="unnamed"):
         self.grid = grid
         self.start = start  # (i, j)
         self.end = end      # (i, j)
-        self.T = int(self.manhattan_distance() * 1.5)
+        if T is not None:
+            self.T = T
+        else:
+            self.T = int(self.manhattan_distance() * 1.5)
         self.name = name  # Name for problem, maybe corridor, hall...
 
     @classmethod
@@ -19,7 +23,7 @@ class PathfindingProblem:
         start = tuple(problem_dict["start"])
         end = tuple(problem_dict["goal"])
         T = problem_dict.get("T", None)
-        return cls(grid, start, end, T)
+        return cls(grid, start, end, T=T)
     
     @classmethod
     def from_dict(cls, problem_dict):

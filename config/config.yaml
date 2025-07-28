@@ -3,32 +3,135 @@ problems:
     grid:
       M: 3
       N: 3
-      obstacles: [(1, 1)]
+      obstacles: #[(1, 1)]
+        - [1, 1]
     start: (2, 0)
     goal: (0, 2)
     T: None # By default none but can be set to a specific time limit
+  grid_3x3_no_obs:
+    grid:
+      M: 3
+      N: 3
+      obstacles:
+    start: (2, 0)
+    goal: (0, 2)
+    T: None 
+  grid_5x5_default:
+    grid:
+      M: 5
+      N: 5
+      obstacles:
+    start: (4, 0)
+    goal: (0, 4)
+    T: None
+  grid_5x5_easy:
+    grid:
+      M: 5
+      N: 5
+      obstacles: #[(1, 1), (2, 2)]
+    start: (4, 0)
+    goal: (3, 4)
+    T: 6
+  grid_5x5_easyv2:
+    grid:
+      M: 5
+      N: 5
+      obstacles: #[(1, 1), (2, 2)]
+    start: (4, 0)
+    goal: (2, 4)
+    T: 7
+  grid_5x5_easyv2_alt:
+    grid:
+      M: 5
+      N: 5
+      obstacles: #[(1, 1), (2, 2)]
+    start: (4, 0)
+    goal: (0, 4)
+    T: 7
+  grid_5x5_easyv3:
+    grid:
+      M: 5
+      N: 5
+      obstacles: #[(1, 1), (2, 2)]
+    start: (4, 0)
+    goal: (1, 4)
+    T: 8
+  grid_5x5_medium:
+    grid:
+      M: 5
+      N: 5
+      obstacles: #[(1, 1), (2, 2), (3, 3)]
+        - [1, 1]
+        - [2, 2]
+        - [3, 3]
+    start: (4, 0)
+    goal: (0, 4)
+    T: None
+  grid_5x5_hard:
+    grid:
+      M: 5
+      N: 5
+      # obstacles: [(4, 2), (3, 3), (2, 3), (1,3)]
+      obstacles:
+        - [4, 2]
+        - [3, 3]
+        - [2, 3]
+        - [1, 3]
+    start: (4, 3)
+    goal: (4, 0)
+    T: 15
 
 solver:
   dwave_qa:
     backend: "dwave"
     normalization_scale: 1.0
     num_reads: 10
+
   qiskit_qaoa:
     backend: "qiskit"
     normalization_scale: 1.0
     num_reads: 10
+
   pennylane_qapa:
     backend: "pennylane"
     normalization_scale: 1.0
     num_reads: 10
 
 penalty_sets:
+
+
+# FIX TIME PENALTIES
+#-----------------------------------
+  standard:
+    K_hot: 7
+    K_adj: 4.5
+    K_start: 6.5
+    K_goal: 3.7
+    K_lock: 3
+
   standard2x: #This relies on a 2x normalization scales
     K_hot: 3  
-    K_adj: 1.5
+    K_adj: 2 #1.5 #1.9 teleports #2 doesnt find goal
     K_start: 3
-    K_goal: 1.5
+    K_goal: 1.3 #1.5 #1.3 too not enforce goal that much (over adjacency)
+    #1.2 gives problem of not finding goal or finding it too fast ignoring adjacency
     K_lock: 1
+
+  standard5x: #This relies on a 5x normalization scales
+    K_hot: 12
+    K_adj: 5.8
+    K_start: 8
+    K_goal: 4.8
+    K_lock: 3.7
+
+  alt:
+    K_hot: 9
+    K_adj: 4.8
+    K_start: 6.5
+    K_goal: 4.2
+    K_lock: 3.7
+    #3x3 jumpts to fast to goal
+    #5x5 doesnt find goal?
 
   standard_double_adj: #Follows double adjacency penalty 
     K_hot: 8
@@ -36,6 +139,22 @@ penalty_sets:
     K_start: 8
     K_goal: 5
     K_lock: 5
+
+  alt_later:
+    K_hot: 9
+    K_adj: 4.8
+    K_start: 6.5
+    K_goal: 1.7
+    K_lock: 1.2
+
+  alt_5x5:
+    K_hot: 9
+    K_adj: 4.8 
+    K_start: 6.5
+    K_goal: 1.2 # 2.5 # 3.5
+    K_lock: 0.5
+    K_bt: 1
+
 
 benchmark:
   num_runs_per_config: 10

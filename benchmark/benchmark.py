@@ -23,7 +23,12 @@ class BenchmarkRunner:
         self.num_runs = num_runs
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.results = []
+        self.results = {
+            "problem": self.problem.to_dict(),
+            "solver": self.solver.to_dict(),
+            "penalty_set": self.penalty_set,
+            "runs": []
+        }
 
     def run(self):
         """Run the benchmark multiple times and store results"""
@@ -46,9 +51,6 @@ class BenchmarkRunner:
             result = {
                 "run_id": run_id,
                 "timestamp": datetime.now().isoformat(),
-                "problem": self.problem.to_dict(),
-                "solver": self.solver.to_dict(),
-                "penalty_set": self.penalty_set,
                 "solution": solution,
                 "validation": validation,
                 "energy": solution["energy"],
@@ -56,11 +58,11 @@ class BenchmarkRunner:
                 "execution_time_sec": round(duration, 3),
             }
 
-            self.results.append(result)
+            self.results["runs"].append(result)
 
             status = "✅ Valid" if validation["valid"] else "❌ Invalid"
-            print(f"Run {run_id}: {status} | Time: {duration:.2f}s")
-            print(f"Path: {self.solver.get_path(solution['solution'], self.problem)}")
+            print(f"Run {run_id}: {status} | Time: {duration:.2f}s | Energy: {solution['energy']:.4f}")
+            print(f"Path: {self.solver.decode_path(solution['solution'], self.problem)}")
 
         self.save_results()
         return self.results
@@ -75,35 +77,34 @@ class BenchmarkRunner:
         # Run multiple trials
         for run_id in range(1, self.num_runs + 1):
             build_start = time.time()
-            Q = self.builder.build()
+            self.builder.build()
             build_duration = time.time() - build_start
 
             solve_start = time.time()
-            solution = self.solver.solve_qubo(Q)
+            solution = self.solver.solve_qubo(self.builder)
             solve_duration = time.time() - solve_start
 
             print(f"Build time: {build_duration:.4f}s, Solve time: {solve_duration:.4f}s")
 
-            validation = is_solution_valid(solution["solution"], self.problem)
+            path = self.solver.decode_path(solution["solution"], self.problem)
+            validation = is_solution_valid(path, self.problem)
+            # print("Validation:", validation)
 
             result = {
                 "run_id": run_id,
                 "timestamp": datetime.now().isoformat(),
-                "problem": convert_tuple_keys_to_str(self.problem.to_dict()),
-                "solver": self.solver.to_dict(),
-                "penalty_set": self.penalty_set,
                 "solution": solution,
                 "validation": validation,
                 "energy": solution["energy"],
-                "success": validation["valid"],
+                # "success": validation["valid"],
                 "execution_time_sec": round(solve_duration, 3),
             }
 
-            self.results.append(result)
+            self.results["runs"].append(result)
 
             status = "✅ Valid" if validation["valid"] else "❌ Invalid"
-            print(f"Run {run_id}: {status} | Time: {solve_duration:.2f}s")
-            print(f"Path: {self.solver.get_path(solution['solution'], self.problem)}")
+            print(f"Run {run_id}: {status} | Time: {solve_duration:.2f}s | Energy: {self.solver.total_energy(solution):.4f}")
+            print(f"Path: {path}")
 
         self.save_results()
         return self.results
@@ -112,19 +113,20 @@ class BenchmarkRunner:
         filename = f"benchmark_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         filepath = self.output_dir / filename
         with open(filepath, "w") as f:
-            json.dump(self.results, f, indent=2, default=str)  # Use `default=str` to serialize tuples
+            json.dump(self.results["penalty_set"], f, indent=2, default=str)
+            json.dump(self.results["runs"], f, indent=2, default=str)  # Use `default=str` to serialize tuples
         print(f"\nBenchmark complete. Results saved to {filepath}")
 
 
 
 def is_solution_valid(solution, problem):
     """
-    Checks if the binary solution vector represents a valid path from start to goal.
-    
+    Checks if the decoded path represents a valid path from start to goal.
+    Accepts a list of (i, j, t) tuples (decoded path), or a list of such paths.
     Args:
-        solution (dict): Binary solution dict {idx: 0/1}
-        problem (PathfindingProblem): Problem definition including grid, start, goal, T
-    
+        solution (list): List of (i, j, t) tuples, or list of such lists.
+        problem (PathfindingProblem): Problem definition including grid, start,
+            goal, T
     Returns:
         dict: Validation result with 'valid' flag and optional error details
     """
@@ -138,39 +140,26 @@ def is_solution_valid(solution, problem):
 
     result = {"valid": True, "details": {}}
 
-    # 1. Get active indices
-    active_indices = [idx for idx, val in solution.items() if val == 1]
-    if not active_indices:
-        result["valid"] = False
-        result["reason"] = "no_active_bits"
-        result["message"] = "❌ No active variables found. Invalid sample"
-        return result
+    # If input is a list of paths (list of lists of tuples)
+    if solution and isinstance(solution[0], list):
+        return [is_solution_valid(path, problem) for path in solution]
 
-    # 2. Decode positions
-    def decode_position(idx):
-        t = idx // (M * N)
-        pos = idx % (M * N)
-        i = pos // N
-        j = pos % N
-        return i, j, t
-
-    try:
-        positions = [decode_position(idx) for idx in active_indices]
-    except Exception as e:
+    # If input is a single path (list of tuples)
+    positions = list(solution)
+    if not positions:
         result["valid"] = False
-        result["reason"] = "invalid_index"
-        result["message"] = f"❌ Error decoding indices: {e}"
+        result["reason"] = "empty_path"
+        result["message"] = "❌ No path positions found. Invalid sample"
         return result
 
     result["details"]["path"] = positions
 
-    # 3. Sort by time step
+    # 1. Sort by time step
     positions.sort(key=lambda x: x[2])
 
-    # 4. Check all time steps from 0 to T-1 are present
+    # 2. Check all time steps from 0 to T-1 are present
     all_times = set(t for _, _, t in positions)
-    expected_times = set(range(T))  # We expect exactly T time steps
-
+    expected_times = set(range(T))
     missing_times = expected_times - all_times
     extra_times = all_times - expected_times
 
@@ -189,7 +178,7 @@ def is_solution_valid(solution, problem):
         result["details"]["extra_times"] = list(extra_times)
         return result
 
-    # 5. One-hot constraint per time step
+    # 3. One-hot constraint per time step
     time_to_positions = {}
     for i, j, t in positions:
         time_to_positions.setdefault(t, []).append((i, j))
@@ -202,7 +191,7 @@ def is_solution_valid(solution, problem):
             result["details"]["time_to_positions"] = time_to_positions
             return result
 
-    # 6. Start at correct position
+    # 4. Start at correct position
     first_time_cells = time_to_positions.get(0, [])
     if not first_time_cells or first_time_cells[0] != start:
         result["valid"] = False
@@ -210,7 +199,7 @@ def is_solution_valid(solution, problem):
         result["message"] = f"❌ Start position mismatch: Expected {start}, got {first_time_cells}"
         return result
 
-    # 7. Goal reached at some time step
+    # 5. Goal reached at some time step
     goal_reached = any(i == goal[0] and j == goal[1] for i, j, t in positions)
     if not goal_reached:
         result["valid"] = False
@@ -218,12 +207,11 @@ def is_solution_valid(solution, problem):
         result["message"] = f"❌ Goal {goal} was never reached"
         return result
 
-    # 8. Movement must be valid (adjacent cells only)
+    # 6. Movement must be valid (adjacent cells only)
     last_pos = None
-    for i, j, t in sorted(positions, key=lambda x: x[2]):
+    for i, j, t in positions:
         if last_pos is not None:
             li, lj, lt = last_pos
-
             # Obstacle collision check
             if (i, j) in obstacles:
                 result["valid"] = False
@@ -231,12 +219,10 @@ def is_solution_valid(solution, problem):
                 result["message"] = f"❌ Path goes through obstacle at ({i}, {j}) at time {t}"
                 result["details"]["collisions"] = [(i, j, t)]
                 return result
-
             # Goal-lock bypass: if both current and previous are goal, allow staying
             if (li, lj) == goal and (i, j) == goal:
                 last_pos = (i, j, t)
                 continue
-
             # Valid move check using adjacency map from Grid class
             if (i, j) not in grid.adjacency[(li, lj)]:
                 result["valid"] = False
@@ -244,10 +230,9 @@ def is_solution_valid(solution, problem):
                 result["message"] = f"❌ Invalid move from ({li}, {lj}, {lt}) to ({i}, {j}, {t})"
                 result["details"]["invalid_moves"] = [(li, lj, lt, i, j, t)]
                 return result
-
         last_pos = (i, j, t)
 
-    # 9. Final check: Did we reach the goal at the right time?
+    # 7. Final check: Did we reach the goal at the right time?
     goal_times = [t for i, j, t in positions if i == goal[0] and j == goal[1]]
     result["details"]["goal_times"] = goal_times
 

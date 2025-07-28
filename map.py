@@ -18,7 +18,7 @@ class Grid:
         M = grid_dict["grid"]["M"]
         N = grid_dict["grid"]["N"]
         obstacles = grid_dict["grid"]["obstacles"]
-        return cls(M, N, obstacles)
+        return cls(M, N, obstacles=obstacles, name=grid_dict.get("name", "unnamed"))
     
     def to_dict(self):
         """
