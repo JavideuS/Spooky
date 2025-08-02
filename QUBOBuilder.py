@@ -4,8 +4,11 @@ class QUBOBuilder:
         self.penalties = penalties
         self.name = name  # Name for the penalties
         self.var_limit = var_limit  # Maximum number of variables in the QUBO
-        self.window_max_steps = window_max_steps or self.max_window_size()
+        self.t_max = window_max_steps or self.max_window_size()
+        self.total_t = self.problem.T
         self.iter = 0
+        self.T = min(self.t_max, self.total_t - (self.iter * self.t_max))
+        self.initial_pos = problem.start  # Copy of the initial start position
         self.Q = {}
         # self.result
 
@@ -18,11 +21,9 @@ class QUBOBuilder:
         Apply one-hot encoding constraint: exactly one position per time step.
         """
         M, N = self.problem.grid.M, self.problem.grid.N
-        T = self.problem.T
-        # T = min(max_T, self.window_max_steps * (self.iter+1))  # Use the max window size if defined
         K_hot = self.penalties['K_hot']
         
-        for t in range(T):
+        for t in range(self.T):
             indices = [i * M + j + (M * N) * t for i in range(M) for j in range(N)]
             
             for n in indices:
@@ -39,11 +40,10 @@ class QUBOBuilder:
         Apply adjacency reward: encourage moving to adjacent cells.
         """
         M, N = self.problem.grid.M, self.problem.grid.N
-        T = self.problem.T
         adjacency = self.problem.grid.adjacency
         K_adj = self.penalties['K_adj']
         
-        for t in range(T - 1):
+        for t in range(self.T - 1):
             for i in range(M):
                 for j in range(N):
                     # This a consistent linear indexing for the grid
@@ -59,11 +59,10 @@ class QUBOBuilder:
         Apply adjacency penalty: discourage moving to non-adjacent cells.
         """
         M, N = self.problem.grid.M, self.problem.grid.N
-        T = self.problem.T
         adjacency = self.problem.grid.adjacency
         K_adj = self.penalties['K_adj']
         
-        for t in range(T - 1):
+        for t in range(self.T - 1):
             for i in range(M):
                 for j in range(N):
                     n = i * N + j + M * N * t
@@ -99,11 +98,10 @@ class QUBOBuilder:
         """
         M, N = self.problem.grid.M, self.problem.grid.N
         e_i, e_j = self.problem.end
-        T = self.problem.T
         K_goal = self.penalties['K_goal']
 
         # We start at time step 1 to not conflict with the start position
-        for t in range(1, T):
+        for t in range(1, self.T):
             goal_idx = e_i * N + e_j + M * N * t
             self.Q[(goal_idx, goal_idx)] += -K_goal
 
@@ -115,12 +113,14 @@ class QUBOBuilder:
         """
         M, N = self.problem.grid.M, self.problem.grid.N
         e_i, e_j = self.problem.end
-        T = self.problem.T
         K_goal = self.penalties['K_goal']
         
-        for t in range(1, T):
+        if self.iter == 0:
+            K_goal = 0.4 * K_goal
+
+        for t in range(1, self.T):
             goal_idx = e_i * N + e_j + M * N * t
-            time_factor = 1 + (t / T)
+            time_factor = 1 + (t / self.T)
             self.Q[(goal_idx, goal_idx)] += -K_goal * time_factor
 
     def apply_goal_early_penalty(self):
@@ -130,12 +130,11 @@ class QUBOBuilder:
         """
         M, N = self.problem.grid.M, self.problem.grid.N
         e_i, e_j = self.problem.end
-        T = self.problem.T
         K_goal = self.penalties['K_goal']
 
-        for t in range(1, T):
+        for t in range(1, self.T):
             goal_idx = e_i * N + e_j + M * N * t
-            time_factor = 1 + (T - t) / T
+            time_factor = 1 + (self.T - t) / self.T
             self.Q[(goal_idx, goal_idx)] += -K_goal * time_factor
 
     def apply_lock_after_goal(self):
@@ -144,10 +143,9 @@ class QUBOBuilder:
         """
         M, N = self.problem.grid.M, self.problem.grid.N
         e_i, e_j = self.problem.end
-        T = self.problem.T
         K_lock = self.penalties['K_lock']
 
-        for t in range(T - 1):  # up to T-2 to reference t+1
+        for t in range(self.T - 1):  # up to T-2 to reference t+1
             g_t = e_i * N + e_j + M * N * t
             g_t_next = e_i * N + e_j + M * N * (t + 1)
 
@@ -164,7 +162,6 @@ class QUBOBuilder:
         # Constraint: No backtracking (except at goal)
         M, N = self.problem.grid.M, self.problem.grid.N
         e_i, e_j = self.problem.end
-        T = self.problem.T
         K_bt = self.penalties['K_bt']
         for i in range(M):
             for j in range(N):
@@ -173,11 +170,26 @@ class QUBOBuilder:
                     continue
 
                 # For all time pairs t1 < t2
-                for t1 in range(T):
+                for t1 in range(self.T):
                     g_t = i * N + j + M * N * t1
-                    for t2 in range(t1 + 1, T):
+                    for t2 in range(t1 + 1, self.T):
                         g_t2 = i * N + j + M * N * t2
                         self.Q[(g_t, g_t2)] = self.Q.get((g_t, g_t2), 0) + K_bt
+
+    def apply_tp_penalty(self):
+        """
+        Apply a penlaty if goal is reached before is even physically possible
+        (i.e. if the goal is reached at time step t, but the manhattan distance is T)
+        """
+        M, N = self.problem.grid.M, self.problem.grid.N
+        e_i, e_j = self.problem.end
+        min_steps = self.problem.manhattan_distance()
+        
+        K_tp = self.penalties['K_tp']
+
+        for t in range(min(min_steps, self.T)):
+            goal_idx = e_i * N + e_j + M * N * t
+            self.Q[(goal_idx, goal_idx)] += K_tp  # Penalty for arriving to soon
 
     def build(self, constraints_to_apply=None):
         if constraints_to_apply is None:
@@ -187,7 +199,8 @@ class QUBOBuilder:
                 "K_start": "start",
                 "K_goal": "goal_later",
                 "K_lock": "lock",
-                "K_bt": "backtracking"
+                "K_bt": "backtracking",
+                "K_tp": "tp"
             }
             constraints_to_apply = [
                 v for k, v in penalty_to_constraint.items()
@@ -216,6 +229,8 @@ class QUBOBuilder:
             self.apply_lock_after_goal()
         if "backtracking" in constraints_to_apply:
             self.apply_backtracking_penalty()
+        if "tp" in constraints_to_apply:
+            self.apply_tp_penalty()
 
         return self.Q
     
@@ -227,3 +242,20 @@ class QUBOBuilder:
         M = self.problem.grid.M
         N = self.problem.grid.N
         return self.var_limit // (M * N)
+
+    def update_problem(self, new_start):
+        """ It is meant to be used by the solver to update the problem after each iteration """
+        self.iter += 1
+        new_T = min(self.t_max, self.total_t - (self.iter * self.t_max))
+        if (new_T > 0):
+            self.problem.start = new_start 
+            # print(f"Updated problem start to {self.problem.start} at iteration {self.iter}")
+            self.T = new_T
+            self.build()
+
+    def reset_problem(self):
+        """ It is meant to be used by the solver to reset the problem to the initial position """
+        self.problem.start = self.initial_pos
+        self.iter = 0
+        self.T = min(self.t_max, self.total_t - (self.iter * self.t_max))
+        self.build()

@@ -28,7 +28,7 @@ problems:
     grid:
       M: 5
       N: 5
-      obstacles: #[(1, 1), (2, 2)]
+      obstacles: [[1, 1], [2, 2]] 
     start: (4, 0)
     goal: (3, 4)
     T: 6
@@ -36,7 +36,7 @@ problems:
     grid:
       M: 5
       N: 5
-      obstacles: #[(1, 1), (2, 2)]
+      obstacles: 
     start: (4, 0)
     goal: (2, 4)
     T: 7
@@ -44,7 +44,7 @@ problems:
     grid:
       M: 5
       N: 5
-      obstacles: #[(1, 1), (2, 2)]
+      obstacles: 
     start: (4, 0)
     goal: (0, 4)
     T: 7
@@ -52,10 +52,10 @@ problems:
     grid:
       M: 5
       N: 5
-      obstacles: #[(1, 1), (2, 2)]
+      obstacles:
     start: (4, 0)
     goal: (1, 4)
-    T: 8
+    T: 9 #8 without time-window
   grid_5x5_medium:
     grid:
       M: 5
@@ -71,7 +71,7 @@ problems:
     grid:
       M: 5
       N: 5
-      # obstacles: [(4, 2), (3, 3), (2, 3), (1,3)]
+      # obstacles: [[4, 2], [3, 3], [2, 3], [1,3]]
       obstacles:
         - [4, 2]
         - [3, 3]
@@ -144,8 +144,27 @@ penalty_sets:
     K_hot: 9
     K_adj: 4.8
     K_start: 6.5
-    K_goal: 1.7
+    K_goal: 1.8
     K_lock: 1.2
+
+  alt_later_bt:
+    K_hot: 9
+    K_adj: 4.8
+    K_start: 6.5
+    K_goal: 2.4
+    K_lock: 1.4 
+    K_bt: 1
+    K_tp: 1.7
+
+  ter:
+    K_hot: 9
+    K_adj: 4.8
+    K_start: 6.5
+    K_goal: 2.4
+    K_lock: 1.4
+    K_bt: 1
+    K_tp: 1.7
+    K_ter: 1
 
   alt_5x5:
     K_hot: 9
@@ -158,3 +177,5 @@ penalty_sets:
 
 benchmark:
   num_runs_per_config: 10
+
+# Connectivity/Adjacency: 4-connectivity/8-connectivity

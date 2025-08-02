@@ -76,6 +76,7 @@ class BenchmarkRunner:
 
         # Run multiple trials
         for run_id in range(1, self.num_runs + 1):
+            self.builder.reset_problem()
             build_start = time.time()
             self.builder.build()
             build_duration = time.time() - build_start
@@ -87,6 +88,8 @@ class BenchmarkRunner:
             print(f"Build time: {build_duration:.4f}s, Solve time: {solve_duration:.4f}s")
 
             path = self.solver.decode_path(solution["solution"], self.problem)
+            # path = self.solver.merge_path_segments(path)
+            # print("Decoded Path:", path)
             validation = is_solution_valid(path, self.problem)
             # print("Validation:", validation)
 

@@ -46,11 +46,12 @@ class QUBOSolver:
         j = pos % N
         return i, j, t
     
-    def decode_path(self, sample, problem):
+    def decode_path(self, sample, problem, t_offset=0):
         """
         Decode the binary sample into a path of (i, j, t) tuples.
         Accepts sample as a dict or a list (ordered solution).
-        If sample is a list, concatenates the decoded path for each element.
+        If sample is a list, concatenates the decoded path for each element,
+        and offsets t so that it is continuous.
         """
         path = []
         # If sample is a list, process each element in order
@@ -60,9 +61,15 @@ class QUBOSolver:
                 sample = sample[0]
                 # fall through to dict case
             else:
+                t_offset_running = t_offset
+                path = []
                 for s in sample:
-                    path.extend(self.decode_path(s, problem))
-                return sorted(path, key=lambda x: x[2])
+                    sub_path = self.decode_path(s, problem, t_offset=t_offset_running)
+                    if sub_path:
+                        max_t = max(x[2] for x in sub_path)
+                        t_offset_running = max_t + 1
+                    path.extend(sub_path)
+                return path
         # If sample is a dict, process as before
         if isinstance(sample, dict):
             M = problem.grid.M
@@ -71,23 +78,38 @@ class QUBOSolver:
             for idx in range(M * N * T):
                 if sample.get(idx, 0) == 1:
                     i, j, t = self.decode_position(idx, problem)
-                    path.append((i, j, t))
-            return sorted(path, key=lambda x: x[2])
+                    path.append((i, j, t + t_offset))
+            return path
         # If sample is neither dict nor list, return empty path
         return []
 
-    def solve_qubo(self, builder):
-        # Q = builder.build()
-        Q = builder.Q
-        if self.norm_scale != 0:
-            Q = self.normalize_qubo(Q, self.norm_scale)
+    def merge_path_segments(self, path):
+        """
+        Given a path as a list of (i, j, t), remove duplicate consecutive positions
+        (where the first of a segment matches the last of the previous), and
+        reindex t to be continuous from 0.
+        """
+        if not path:
+            return []
+        merged = [path[0]]
+        for point in path[1:]:
+            if (point[0], point[1]) == (merged[-1][0], merged[-1][1]):
+                continue  # skip duplicate position
+            merged.append(point)
+        # Reindex t
+        merged = [(i, j, t) for t, (i, j, _) in enumerate(merged)]
+        return merged
 
+    def solve_qubo(self, builder):
         best_sample = []
         best_energy = []
         response = None
-        builder.iter = 1
-        while (builder.problem.T+1) > (builder.iter * builder.window_max_steps):
-            # print(builder.window_max_steps, builder.problem.T, builder.iter)
+
+        while (builder.total_t) > (builder.iter * builder.t_max):
+            Q = builder.Q
+            if self.norm_scale != 0:
+                Q = self.normalize_qubo(builder.Q, self.norm_scale)
+            print("Start position:", builder.problem.start, "Iteration:", builder.iter)
             bqm = BinaryQuadraticModel.from_qubo(Q)
             sampler = SimulatedAnnealingSampler()
             response = sampler.sample(bqm, num_reads=self.num_reads)
@@ -96,10 +118,8 @@ class QUBOSolver:
             # This simply extract the solution with the lowest energy (Theoretically the best solution)
             best_sample.append(response.first.sample)
             best_energy.append(response.first.energy)
-            # last_pos = self.decode_path(response.first.sample, builder.problem)[-1]
-            
-            builder.iter += 1
-            # builder.problem.grid.start = 
+            last_pos = self.decode_path(response.first.sample, builder.problem)[-1]
+            builder.update_problem(last_pos[:2])
 
         # top_solutions = sorted(response.data(), key=lambda x: x.energy)[:4]
         # samples = [tuple(sorted(sol.sample.items())) for sol in top_solutions]

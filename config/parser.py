@@ -1,5 +1,6 @@
 import yaml
 import ast
+from . import hdf5parser
 
 
 # PARSER FUNCTIONS
@@ -16,10 +17,16 @@ def parse_value(value):
 
 
 def convert_values(data):
-    """Recursively convert strings like 'None' or '(2,0)' into real values"""
+    """
+    Recursively convert strings like 'None' or '(2,0)' into real values.
+    Also convert lists of length 2 with ints to tuples (for obstacles).
+    """
     if isinstance(data, dict):
         return {k: convert_values(v) for k, v in data.items()}
     elif isinstance(data, list):
+        # Convert lists of length 2 with ints to tuples (for obstacles)
+        if len(data) == 2 and all(isinstance(x, int) for x in data):
+            return tuple(data)
         return [convert_values(item) for item in data]
     else:
         return parse_value(data)
@@ -94,10 +101,36 @@ def load_config(config_path="config.yaml", sections=None):
     return parsed_data
 
 
-# config = load_config(sections=["solver"])
-# config = load_config()  # To load the entire config file
-# print(config)
-# print(config["solver"]["dwave_qa"])
+def load_full_problem(problem_yaml_path, problem_name):
+    # Load problem config (start, goal, etc.) from YAML
+    with open(problem_yaml_path, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    map_h5_path = config['map']['path']
+    
+    # Load map data from HDF5
+    map_data = hdf5parser.load_map_from_hdf5(map_h5_path)
+    
+    # Get problem-specific data
+    problem_config = config['problems'][problem_name]
+    
+    # Combine into one dict
+    return {
+        # Map data
+        'name': map_data['name'],
+        'M': map_data['grid']['M'],
+        'N': map_data['grid']['N'],
+        'obstacles': map_data['grid']['obstacles'],
+        'resolution': map_data['resolution'],
+        'terrain_grid': map_data.get('terrain_grid'),
+        'elevation_grid': map_data.get('elevation_grid'),
+        
+        # Problem data
+        'start': problem_config['start'],
+        'goal': problem_config['goal'],
+        'time_limit': problem_config.get('time_limit'),
+        'dynamic_obstacles': problem_config.get('dynamic_obstacles', [])
+    }
 
 if __name__ == "__main__":
     import sys
