@@ -34,6 +34,17 @@ class PathfindingProblem:
         """
         grid = map.Grid.from_dict(problem_dict)
         return cls.from_grid_dict(grid, problem_dict)
+    
+    @classmethod
+    def from_hdf5_data(cls, map_data, problem_dict):
+        """
+        Create a PathfindingProblem instance from HDF5-loaded data dict.
+        
+        Args:
+            map_data: dict from load_map_from_hdf5()
+        """
+        grid = map.Grid.from_hdf5_data(map_data)
+        return cls.from_grid_dict(grid, problem_dict)
 
     def manhattan_distance(self):
         return abs(self.start[0] - self.end[0]) + abs(self.start[1] - self.end[1])

@@ -1,0 +1,49 @@
+Weights:
+  - distance: 1.0,
+  - terrain: 0.8,
+  - elevation: 0.6,
+  - dynamic: 0.3
+
+Terrain material:
+  # Outside oriented
+  - Asphalt: 1.0
+  - Sand: 3.0
+  - Grass: 2.0
+  - Concrete: 1.5
+  - Rock: 2.5
+  - Gravel: 2.0
+  - Dirt: 2.5
+  # Inside oriented
+  - Ceramic: 1.0
+  - Wood: 1.5
+  - Carpet: 2.0
+  - Brick: 2.5
+  # General to avoid
+  - Water: 5.0
+  - Ice: 4.5
+  - Mud: 4.0
+  - Snow: 3.5
+  - Obstacle: 10.0 # This way it increases likelihood of avoiding obstacles
+  - Unknown: 6.0 # Unknown terrain, should be avoided if possible
+
+materials:
+  #Outside oriented
+  asphalt:
+    index: 0
+    cost: 1.0
+  sand:
+    index: 1
+    cost: 3.0
+  grass:
+    index: 2
+    cost: 2.0
+
+  # Inside oriented
+  ceramic:
+    index: 6
+    cost: 1.0
+
+  # General to avoid
+  water:
+    index: 7
+    cost: 5.0

@@ -151,12 +151,12 @@ penalty_sets:
     K_hot: 9
     K_adj: 4.8
     K_start: 6.5
-    K_goal: 2.4
-    K_lock: 1.4 
-    K_bt: 1
-    K_tp: 1.7
+    K_goal: 3.5
+    K_lock: 4
+    K_bt: 2.3
+    K_tp: 1.2
 
-  ter:
+  alt_latercopyy:
     K_hot: 9
     K_adj: 4.8
     K_start: 6.5
@@ -164,7 +164,16 @@ penalty_sets:
     K_lock: 1.4
     K_bt: 1
     K_tp: 1.7
-    K_ter: 1
+
+  ter:
+    K_hot: 9
+    K_adj: 4.8
+    K_start: 6.5
+    K_goal: 3.3
+    K_lock: 2.4
+    K_bt: 2.5
+    K_tp: 0.5
+    K_ter: 1.4
 
   alt_5x5:
     K_hot: 9
@@ -179,3 +188,10 @@ benchmark:
   num_runs_per_config: 10
 
 # Connectivity/Adjacency: 4-connectivity/8-connectivity
+
+# Run 1: ✅ Valid | Time: 3.95s | Energy: -6.7333
+# Path: [(2, 0, 0), (2, 1, 1), (2, 2, 2), (1, 2, 3), (0, 2, 4), (0, 1, 5)]
+# Start position: (2, 0) Iteration: 0
+# Build time: 0.0001s, Solve time: 3.9724s
+# Run 2: ✅ Valid | Time: 3.97s | Energy: -6.5622
+# Path: [(2, 0, 0), (2, 1, 1), (2, 2, 2), (1, 2, 3), (0, 2, 4), (0, 2, 5)]

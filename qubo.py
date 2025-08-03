@@ -4,76 +4,59 @@ import pathFormulation
 import config.parser as config_parser
 import QUBOBuilder
 import benchmark.benchmark as benchmark
+from config.hdf5parser import load_map_from_hdf5
 from pennylane import numpy as np
 import time
 
 # grid = map.Grid(M=3, N=3)
-grid = map.Grid(M=3, N=3, obstacles=[(1, 1)])
+# grid = map.Grid(M=3, N=3, obstacles=[(1, 1)])
 
 conf = config_parser.load_config("config/config.yaml", sections=["problems", "penalty_sets", "solver"])
+
+# map_hdf5 = load_map_from_hdf5("maps/synthetic/3x3/no_obs3x3_ter.h5")
+map_hdf5 = load_map_from_hdf5("maps/synthetic/3x3/no_obs3x3alt.h5")
+# print("Map loaded from HDF5:", map_hdf5["name"])
+
 map_conf = conf["problems"]["grid_3x3_default"]
+# map_conf = conf["problems"]["grid_5x5_easyv2_alt"]
+# map_conf = conf["problems"]["grid_5x5_easyv2"]
 grid = map.Grid.from_dict(map_conf)
+grid = map.Grid.from_hdf5_data(map_hdf5)
 
-M = grid.M
-N = grid.N
-adjacency = grid.adjacency
-
+# print("Materials:", grid.materials)
 # problem = pathFormulation.PathfindingProblem(grid, start=(2, 0), end=(0, 2))
-problem = pathFormulation.PathfindingProblem.from_dict(map_conf)
-
-s_i = problem.start[0]
-s_j = problem.start[1]
-e_i = problem.end[0]
-e_j = problem.end[1]
-T = problem.T
+# problem = pathFormulation.PathfindingProblem.from_dict(map_conf)
+problem = pathFormulation.PathfindingProblem.from_hdf5_data(map_hdf5, map_conf)
+print("Problem ter:", problem.grid.terrain)
 
 print("Adjacency Map:", grid.adjacency)
-
-# Initialize QUBO dictionary
-Q = {}
-
-# Penalty weights
-K_hot = 3     # Must have exactly one position per time step
-K_adj = 1.5    # Must move to valid neighbor
-K_start = 3    # Must start at given position
-K_goal = 1.5   # Encourage reaching goal
-K_lock = 1    # Discourage leaving goal once reached
-penalties = {"K_hot": K_hot, "K_adj": K_adj, "K_start": K_start, "K_goal": K_goal, "K_lock": K_lock}
-penalties_conf = conf["penalty_sets"]["standard2x"]
-
-# QUBOBuilder = QUBOBuilder.QUBOBuilder(problem, penalties=penalties)
-QUBOBuilder = QUBOBuilder.QUBOBuilder(problem, penalties=penalties_conf, name="standard2x")
+print("Obstacles:", grid.obstacles)
+material_costs = {
+    "ceramic": 1.0,
+    "water": 5.0,
+    "asphalt": 1.5,
+    "grass": 2.0
+}
+penalties_conf = conf["penalty_sets"]["ter"]
+QUBOBuilder = QUBOBuilder.QUBOBuilder(problem, penalties=penalties_conf, name="standard", material_cost=material_costs)
 
 # start_time = time.time()
-Q = QUBOBuilder.build()
+# Q = QUBOBuilder.build()
 # duration = time.time() - start_time
 # print(f"QUBO built in {duration:.4f} seconds")
 
 # Solver (Quantum annealing)
-solver = DWave_solver.QUBOSolver(normalize_scale=2.0, num_reads=10)
+solver = DWave_solver.QUBOSolver(normalize_scale=2.0, num_reads=15)
 
 # solver_conf = conf["solver"]["dwave_qa"]
 # solver = DWave_solver.QUBOSolver.from_config(solver_conf)
 
-# result = solver.solve_qubo(Q)
-# best_sample = result['solution']
-# min_energy = result['energy']
+# solution = solver.solve_qubo(QUBOBuilder)
+# print("Solution:", solution["solution"])
+# print("Path:", solver.decode_path(solution["solution"], problem))
+# print(f"Energy: {solver.total_energy(solution):.4f}")
 
-# print("Best Solution:", best_sample)
-# print("Energy:", min_energy)
-
-# path = solver.decode_path(best_sample, problem)
-# print("Decoded Path:", path)
-
-# validation_result = benchmark.is_solution_valid(best_sample, problem)
-
-# if validation_result["valid"]:
-#     print(validation_result["message"])
-# else:
-#     print(validation_result["message"])
-#     print("Details:", validation_result["details"])
-
-benchmark = benchmark.BenchmarkRunner(QUBOBuilder, solver, num_runs=50)
+benchmark = benchmark.BenchmarkRunner(QUBOBuilder, solver, num_runs=100)
 benchmark.run_build()
 
 # Solver (QAOA)

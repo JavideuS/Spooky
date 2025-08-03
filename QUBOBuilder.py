@@ -1,5 +1,5 @@
 class QUBOBuilder:
-    def __init__(self, problem, penalties, name="unnamed", var_limit=176, window_max_steps=None):
+    def __init__(self, problem, penalties, name="unnamed", var_limit=176, window_max_steps=None, material_cost=None):
         self.problem = problem
         self.penalties = penalties
         self.name = name  # Name for the penalties
@@ -9,6 +9,7 @@ class QUBOBuilder:
         self.iter = 0
         self.T = min(self.t_max, self.total_t - (self.iter * self.t_max))
         self.initial_pos = problem.start  # Copy of the initial start position
+        self.material_cost = material_cost
         self.Q = {}
         # self.result
 
@@ -191,6 +192,25 @@ class QUBOBuilder:
             goal_idx = e_i * N + e_j + M * N * t
             self.Q[(goal_idx, goal_idx)] += K_tp  # Penalty for arriving to soon
 
+    def apply_terrain_penalty(self):
+        """
+        Apply terrain penalty: encourage moving to cells with lower terrain cost.
+        It introduces a linear bias depending on material costs in the grid.
+        """
+        M, N = self.problem.grid.M, self.problem.grid.N
+        
+        K_ter = self.penalties['K_ter']
+
+        for t in range(self.T):  # t = 0 to T-1
+            for i in range(M):
+                for j in range(N):
+                    material = self.problem.grid.get_terrain_at(i, j)
+                    cost = self.problem.grid.get_material_cost(material, self.material_cost)
+                    # print(f"Applying terrain penalty at t={t}, i={i}, j={j}")
+                    # print(f"Material: {material}, Cost: {cost}")
+                    g_t = i * N + j + M * N * t
+                    self.Q[(g_t, g_t)] += K_ter * cost
+
     def build(self, constraints_to_apply=None):
         if constraints_to_apply is None:
             penalty_to_constraint = {
@@ -200,7 +220,8 @@ class QUBOBuilder:
                 "K_goal": "goal_later",
                 "K_lock": "lock",
                 "K_bt": "backtracking",
-                "K_tp": "tp"
+                "K_tp": "tp",
+                "K_ter": "terrain"
             }
             constraints_to_apply = [
                 v for k, v in penalty_to_constraint.items()
@@ -231,6 +252,8 @@ class QUBOBuilder:
             self.apply_backtracking_penalty()
         if "tp" in constraints_to_apply:
             self.apply_tp_penalty()
+        if "terrain" in constraints_to_apply:
+            self.apply_terrain_penalty()
 
         return self.Q
     
