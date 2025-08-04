@@ -175,6 +175,16 @@ penalty_sets:
     K_tp: 0.5
     K_ter: 1.4
 
+  elev:
+    K_hot: 9
+    K_adj: 4.8
+    K_start: 6.5
+    K_goal: 3.7
+    K_lock: 2.4
+    K_bt: 1.9
+    K_tp: 0.5
+    K_elev: 1.2
+
   alt_5x5:
     K_hot: 9
     K_adj: 4.8 

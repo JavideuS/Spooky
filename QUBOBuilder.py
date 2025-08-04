@@ -211,6 +211,38 @@ class QUBOBuilder:
                     g_t = i * N + j + M * N * t
                     self.Q[(g_t, g_t)] += K_ter * cost
 
+    def apply_elevation_penalty(self):
+        """
+        Apply elevation penalty: encourage moving to cells with lower elevation.
+        This is similar to terrain penalty but focuses on elevation values.
+        Be mind that if the slope is too steep, it will penalize the movement (for security reasons).
+        """
+        M, N = self.problem.grid.M, self.problem.grid.N
+        adjacency = self.problem.grid.adjacency
+        K_elev = self.penalties['K_elev']
+
+        for t in range(self.T - 1):
+            for i in range(M):
+                for j in range(N):
+                    hi = self.problem.grid.get_elevation_at(i, j)
+                    n = i * N + j + M * N * t  # linear index for time step t
+
+                    for (k, l) in adjacency[(i, j)]:
+                        hk = self.problem.grid.get_elevation_at(k, l)
+                        delta_h = hk - hi  # positive = uphill
+
+                        m = k * N + l + M * N * (t + 1)  # next time step index
+
+                        if delta_h > 0:
+                            move_cost = K_elev * (delta_h ** 1.8)  # super-linear for steep climbs
+                        elif delta_h < -.7:
+                            move_cost = K_elev * 0.7 * abs(delta_h)  # still costly if too steep down
+                        else:
+                            move_cost = K_elev * 0.3 * abs(delta_h)  # mild descent = easy
+
+                        # Add to QUBO: only if move occurs
+                        self.Q[(n, m)] = self.Q.get((n, m), 0) + move_cost
+
     def build(self, constraints_to_apply=None):
         if constraints_to_apply is None:
             penalty_to_constraint = {
@@ -221,7 +253,8 @@ class QUBOBuilder:
                 "K_lock": "lock",
                 "K_bt": "backtracking",
                 "K_tp": "tp",
-                "K_ter": "terrain"
+                "K_ter": "terrain",
+                "K_elev": "elevation"
             }
             constraints_to_apply = [
                 v for k, v in penalty_to_constraint.items()
@@ -254,6 +287,8 @@ class QUBOBuilder:
             self.apply_tp_penalty()
         if "terrain" in constraints_to_apply:
             self.apply_terrain_penalty()
+        if "elevation" in constraints_to_apply:
+            self.apply_elevation_penalty()
 
         return self.Q
     
