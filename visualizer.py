@@ -1,359 +1,644 @@
-import matplotlib.pyplot as plt
+# quantum_pathfinding_visualizer_with_images.py
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+import plotly.io as pio
 import numpy as np
-from matplotlib.patches import Rectangle
-from matplotlib.animation import FuncAnimation
-import seaborn as sns
-from typing import List, Tuple, Optional, Dict
-import time
+import base64
+from io import BytesIO
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+    print("Warning: PIL (Pillow) not found. Image conversion might be limited.")
 
 class QuantumRoboticsVisualizer:
     """
-    Simple visualization tools for quantum robotics framework
-    No GUI required - generates static plots and animations
+    Visualizes quantum pathfinding results on a 2D grid using Plotly.
+    Designed to work in Jupyter notebooks and can export to HTML for web.
+    Handles coordinate system conversion for matrix indexing (row, col) -> (x, y).
+    Input format: coordinates are (row, col) tuples.
+    Plotly display: x=col, y=row (with Y axis increasing upwards by default).
+    Grid display: Configured so (0,0) input is at the top-left visually.
+
+    Enhanced to support custom images for Start and Goal markers.
     """
-    
-    def __init__(self, figsize=(12, 8)):
-        self.figsize = figsize
-        plt.style.use('dark_background')  # Modern dark theme
-        
-    def visualize_grid_and_path(self, obstacles: List[Tuple[int, int]], 
-                               width: int, height: int,
-                               path: List[Tuple[int, int, int]], 
-                               start: Tuple[int, int], goal: Tuple[int, int],
-                               title: str = "Quantum Pathfinding Result",
-                               save_path: Optional[str] = None):
+    def __init__(self, grid_size, title="Quantum Pathfinding Visualization", start_image_path=None, goal_image_path=None):
         """
-        Visualize grid map with obstacles and the computed path
-        
+        Initializes the visualizer.
         Args:
-            obstacles: List of (x, y) coordinates representing obstacles
-            width: Grid width
-            height: Grid height
-            path: List of (x, y, t) coordinates representing the path with time steps
-            start: Starting position (x, y)
-            goal: Goal position (x, y)
-            title: Plot title
-            save_path: If provided, saves the plot to this path
+            grid_size (tuple): (num_rows, num_cols) of the grid.
+            title (str): Title for the plot.
+            start_image_path (str, optional): Path to the image file for the Start marker.
+            goal_image_path (str, optional): Path to the image file for the Goal marker.
         """
-        fig, ax = plt.subplots(figsize=self.figsize)
+        self.rows, self.cols = grid_size # Store as rows, cols
+        self.title = title
+        self.start_image_path = start_image_path
+        self.goal_image_path = goal_image_path
+        self._start_image_base64 = self._load_image_base64(start_image_path)
+        self._goal_image_base64 = self._load_image_base64(goal_image_path)
+
+        # --- Default Styling ---
+        self.colors = {
+            'background': 'white', 
+            'grid_lines': 'lightgrey',
+            'obstacle': 'black',
+            'start': 'blue',
+            'goal': 'red',
+            'path_line': 'orange',
+            'path_marker': 'orange',
+            'current_position': 'green'
+        }
+        self.symbols = {
+            'obstacle': 'square',
+            'start': 'circle', # Fallback symbol
+            'goal': 'diamond', # Fallback symbol
+            'current_position': 'star'
+        }
+        self.sizes = {
+            'obstacle': 20,
+            'goal': 15, # This will be used for fallback marker size
+            'current_position': 15,
+            'path_marker': 8
+        }
+        # Image display size - now relative to grid cell size
+        self.image_marker_size_factor = 0.8 # Images will take up 80% of a cell
+
+    def _load_image_base64(self, image_path):
+        """
+        Loads an image file and converts it to a base64 string for embedding in Plotly.
+        Supports PNG and JPG natively, SVG needs PIL for conversion or special handling.
+        """
+        if not image_path:
+            return None
+
+        try:
+            # Try to determine image type from extension
+            if image_path.lower().endswith('.svg'):
+                # For SVG, we can embed it directly as a data URI string
+                with open(image_path, 'rb') as f:
+                    svg_data = f.read()
+                # Encode the raw SVG data
+                encoded_data = base64.b64encode(svg_data).decode()
+                return f"data:image/svg+xml;base64,{encoded_data}"
+            else:
+                # For PNG, JPG, etc.
+                if PIL_AVAILABLE:
+                    # Use PIL to open and convert to PNG bytes
+                    img = Image.open(image_path)
+                    img_buffer = BytesIO()
+                    # Convert to PNG to ensure compatibility
+                    img.save(img_buffer, format='PNG')
+                    img_buffer.seek(0)
+                    encoded_data = base64.b64encode(img_buffer.read()).decode()
+                    return f"data:image/png;base64,{encoded_data}"
+                else:
+                    # If PIL is not available, try reading raw bytes (works for PNG)
+                    with open(image_path, 'rb') as f:
+                        image_data = f.read()
+                    encoded_data = base64.b64encode(image_data).decode()
+                    # Guess the type based on extension for the data URI
+                    if image_path.lower().endswith('.png'):
+                        mime_type = 'image/png'
+                    elif image_path.lower().endsendswith(('.jpg', '.jpeg')):
+                        mime_type = 'image/jpeg'
+                    else:
+                        mime_type = 'image/png' # Default guess
+                    return f"{mime_type};base64,{encoded_data}"
+        except Exception as e:
+            print(f"Warning: Could not load image {image_path}: {e}. Using fallback marker.")
+            return None
+
+    def _convert_coordinates(self, coords):
+        """
+        Converts matrix coordinates (row, col) to Plotly coordinates (x, y).
+        Plotly X corresponds to column index.
+        Plotly Y corresponds to row index, following matrix notation 
+        where y increases downward.
+        """
+        converted = []
+        for coord in coords:
+            # Input is (row, col) or (row, col, t)
+            row, col = coord[0], coord[1] 
+            # Plotly X is column index
+            x_plotly = col
+            # Plotly Y is row index, following matrix notation
+            # Row 0 should be at the top (y=0), row increases downward
+            y_plotly = row
+            converted.append((x_plotly, y_plotly))
+        return converted
+
+    def _calculate_figure_size(self):
+        """
+        Calculates consistent figure size based on grid dimensions.
+        Returns tuple of (width, height) in pixels.
+        """
+        base_width = max(400, self.cols * 50)
+        base_height = max(400, self.rows * 50)
+        return base_width, base_height
+
+    def _calculate_cell_size(self):
+        """
+        Calculates the size of a single grid cell in pixels.
+        This helps ensure consistent sizing across different plot types.
+        """
+        width, height = self._calculate_figure_size()
+        cell_width = width / self.cols
+        cell_height = height / self.rows
+        return min(cell_width, cell_height)  # Use the smaller dimension to maintain square cells
+
+    def _calculate_marker_size(self, marker_type):
+        """
+        Calculates consistent marker sizes based on grid cell size.
+        Args:
+            marker_type (str): Type of marker ('obstacle', 'goal', 'current_position', 'path_marker')
+        Returns:
+            int: Marker size in pixels
+        """
+        cell_size = self._calculate_cell_size()
+        base_sizes = {
+            'obstacle': 20,
+            'goal': 15,
+            'current_position': 15,
+            'path_marker': 8
+        }
         
-        # Create grid from obstacle list
-        display_grid = np.zeros((height, width))
+        # Scale marker size based on cell size for consistency
+        base_size = base_sizes.get(marker_type, 10)
+        scale_factor = cell_size / 50  # Normalize to the base cell size
+        return max(5, int(base_size * scale_factor))  # Ensure minimum size
+
+    def _calculate_static_plot_scale_factor(self):
+        """
+        Calculates an appropriate scale factor for the static plot to match step-by-step plot size.
+        Returns:
+            float: Scale factor to apply to base figure size
+        """
+        # For larger grids, we want larger plots
+        grid_area = self.rows * self.cols
         
-        # Mark obstacles
-        for x, y in obstacles:
-            if 0 <= x < width and 0 <= y < height:
-                display_grid[y, x] = 1.0  # Obstacle cells
-        
-        # Extract spatial coordinates from path (ignore time)
-        spatial_path = [(x, y) for x, y, t in path]
-        
-        # Mark path
-        for x, y in spatial_path:
-            if (x, y) != start and (x, y) != goal and 0 <= x < width and 0 <= y < height:
-                display_grid[y, x] = 0.5  # Path cells
-        
-        # Mark start and goal
-        if 0 <= start[0] < width and 0 <= start[1] < height:
-            display_grid[start[1], start[0]] = 0.3  # Start
-        if 0 <= goal[0] < width and 0 <= goal[1] < height:
-            display_grid[goal[1], goal[0]] = 0.7   # Goal
-        
-        # Plot grid with custom colors
-        im = ax.imshow(display_grid, cmap='viridis', alpha=0.8)
-        
-        # Overlay path as arrows with time annotations
-        if len(path) > 1:
-            for i in range(len(path) - 1):
-                x1, y1, t1 = path[i]
-                x2, y2, t2 = path[i + 1]
-                
-                # Draw arrow
-                ax.arrow(x1, y1, x2-x1, y2-y1, 
-                        head_width=0.1, head_length=0.1, 
-                        fc='yellow', ec='yellow', alpha=0.8)
-                
-                # Add time step annotation
-                ax.text(x1, y1-0.3, f't{t1}', fontsize=8, ha='center', 
-                       color='white', fontweight='bold',
-                       bbox=dict(boxstyle='round,pad=0.2', facecolor='black', alpha=0.7))
+        if grid_area <= 9:  # Small grids (3x3 or smaller)
+            return 1.5
+        elif grid_area <= 16:  # Medium grids (4x4)
+            return 2
+        elif grid_area <= 25:  # Larger grids (5x5)
+            return 2.5
+        else:  # Very large grids
+            return 3
+
+    def _add_image_marker(self, fig, x, y, image_base64_data, name, size_factor=0.8):
+        """
+        Adds an image as a marker to the figure at the specified coordinates.
+        The image is centered at (x,y) and sized to fit within a grid cell.
+        """
+        if image_base64_data:
+            # Use consistent image size relative to grid cell size
+            image_size = size_factor  # Since grid cells are unit size (1x1) in plot coordinates
             
-            # Add final time step
-            if path:
-                x_final, y_final, t_final = path[-1]
-                ax.text(x_final, y_final-0.3, f't{t_final}', fontsize=8, ha='center', 
-                       color='white', fontweight='bold',
-                       bbox=dict(boxstyle='round,pad=0.2', facecolor='black', alpha=0.7))
-        
-        # Mark start and goal with special markers
-        ax.plot(start[0], start[1], 'go', markersize=15, label='Start')
-        ax.plot(goal[0], goal[1], 'ro', markersize=15, label='Goal')
-        
+            # Add the image as a layout image, centered at (x,y)
+            fig.add_layout_image(
+                dict(
+                    source=image_base64_data,
+                    x=x,  # Center x
+                    y=y,  # Center y
+                    xref="x",
+                    yref="y",
+                    sizex=image_size,
+                    sizey=image_size,
+                    sizing="contain",  # How the image fits within sizex/sizey
+                    opacity=1.0,
+                    layer="above",  # Place above traces
+                    xanchor="center",  # Anchor point for x positioning
+                    yanchor="middle"   # Anchor point for y positioning
+                )
+            )
+
+    def create_static_plot(self, obstacles=None, path=None, start=None, 
+                          goal=None, current_step=None):
+        """
+        Creates a single static plot showing the grid, obstacles, path, start, goal,
+        and optionally highlighting the current position at a specific step.
+        Args:
+            obstacles (list of tuples): List of (row, col) coordinates for obstacles.
+            path (list of tuples): Path in format [(row, col, t), ...].
+            start (tuple): (row, col) coordinate of the start.
+            goal (tuple): (row, col) coordinate of the goal.
+            current_step (int): If provided, highlights the position at this time step.
+        Returns:
+            plotly.graph_objects.Figure: The Plotly figure object.
+        """
+        fig = go.Figure()
+        # --- 1. Draw Grid Background ---
         # Add grid lines
-        ax.set_xticks(np.arange(-0.5, width, 1), minor=True)
-        ax.set_yticks(np.arange(-0.5, height, 1), minor=True)
-        ax.grid(which="minor", color="gray", linestyle='-', linewidth=0.5, alpha=0.3)
+        # Vertical lines (along columns)
+        for c in range(self.cols + 1):
+            fig.add_shape(type='line', x0=c-0.5, y0=-0.5, x1=c-0.5, y1=self.rows-0.5,
+                          line=dict(color=self.colors['grid_lines'], width=1))
+        # Horizontal lines (along rows)
+        for r in range(self.rows + 1):
+            # Y coordinates for horizontal lines are at row boundaries
+            y_plotly = r - 0.5
+            fig.add_shape(type='line', x0=-0.5, y0=y_plotly, x1=self.cols-0.5, 
+                         y1=y_plotly, line=dict(color=self.colors['grid_lines'], width=1))
         
-        # Labels and title
-        ax.set_title(title, fontsize=16, fontweight='bold', color='white')
-        ax.set_xlabel('X Coordinate', fontweight='bold')
-        ax.set_ylabel('Y Coordinate', fontweight='bold')
-        ax.legend()
+        # --- 2. Add Obstacles ---
+        if obstacles:
+            obs_coords_converted = self._convert_coordinates(obstacles)
+            if obs_coords_converted:
+                 obs_xs, obs_ys = zip(*obs_coords_converted)
+                 fig.add_trace(go.Scatter(
+                     x=obs_xs, y=obs_ys,
+                     mode='markers',
+                     marker=dict(color=self.colors['obstacle'], size=self._calculate_marker_size('obstacle'), symbol=self.symbols['obstacle']),
+                     name='Obstacles',
+                     showlegend=True
+                 ))
         
-        # Add path info with timing
-        path_length = len(path)
-        total_time = path[-1][2] + 1 if path else 0  # Time steps (0-indexed)
-        ax.text(0.02, 0.98, f'Path: {path_length} steps\nTime: {total_time} units', 
-                transform=ax.transAxes, fontsize=12, 
-                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='black', alpha=0.7))
+        # --- 3. Add Path ---
+        if path:
+            path_coords_converted = self._convert_coordinates(path)
+            if path_coords_converted:
+                 path_xs, path_ys = zip(*path_coords_converted)
+                 # Add path line
+                 fig.add_trace(go.Scatter(
+                     x=path_xs, y=path_ys,
+                     mode='lines+markers',
+                     line=dict(color=self.colors['path_line'], width=2),
+                     marker=dict(color=self.colors['path_marker'], size=self._calculate_marker_size('path_marker'), symbol='circle'),
+                     name='Path',
+                     showlegend=True
+                 ))
+                 # Highlight Current Position (if step specified and valid)
+                 if current_step is not None and 0 <= current_step < len(path):
+                      curr_x, curr_y = path_coords_converted[current_step]
+                      # Use goal image for current position if available
+                      if self._start_image_base64:
+                          self._add_image_marker(fig, curr_x, curr_y, self._start_image_base64, f'Current (Step {current_step})', self.image_marker_size_factor)
+                          # Add invisible marker for hover and legend
+                          fig.add_trace(go.Scatter(
+                              x=[curr_x], y=[curr_y],
+                              mode='markers',
+                              marker=dict(color='rgba(0,0,0,0)', size=0), # Invisible
+                              name=f'Current (Step {current_step})',
+                              showlegend=True,
+                              hovertemplate=f'Current (Step {current_step})<br>X: %{{x}}<br>Y: %{{y}}<extra></extra>'
+                          ))
+                      else:
+                          # Fallback to standard marker
+                          fig.add_trace(go.Scatter(
+                              x=[curr_x], y=[curr_y],
+                              mode='markers',
+                              marker=dict(color=self.colors['current_position'], size=self._calculate_marker_size('current_position'), symbol=self.symbols['current_position']),
+                              name=f'Current (Step {current_step})',
+                              showlegend=True
+                          ))
         
-        plt.tight_layout()
+        # --- 4. Add Start Point ---
+        if start:
+            start_converted = self._convert_coordinates([start])[0]
+            start_x, start_y = start_converted
+            # Try to add image marker first
+            if self._start_image_base64:
+                self._add_image_marker(fig, start_x, start_y, self._start_image_base64, 'Start', self.image_marker_size_factor)
+                # Add invisible marker for hover and legend
+                fig.add_trace(go.Scatter(
+                    x=[start_x], y=[start_y],
+                    mode='markers',
+                    marker=dict(color='rgba(0,0,0,0)', size=0), # Invisible
+                    name='Start',
+                    showlegend=True,
+                    hovertemplate='Start<br>X: %{x}<br>Y: %{y}<extra></extra>'
+                ))
+            else:
+                # Fallback to standard marker
+                fig.add_trace(go.Scatter(
+                    x=[start_x], y=[start_y],
+                    mode='markers',
+                    marker=dict(color=self.colors['start'], size=self._calculate_marker_size('goal'), symbol=self.symbols['start']),
+                    name='Start',
+                    showlegend=True
+                ))
         
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='black')
+        # --- 5. Add Goal Point ---
+        if goal:
+            goal_converted = self._convert_coordinates([goal])[0]
+            goal_x, goal_y = goal_converted
+            # Try to add image marker first
+            if self._goal_image_base64:
+                self._add_image_marker(fig, goal_x, goal_y, self._goal_image_base64, 'Goal', self.image_marker_size_factor)
+                # Add invisible marker for hover and legend
+                fig.add_trace(go.Scatter(
+                    x=[goal_x], y=[goal_y],
+                    mode='markers',
+                    marker=dict(color='rgba(0,0,0,0)', size=0), # Invisible
+                    name='Goal',
+                    showlegend=True,
+                    hovertemplate='Goal<br>X: %{x}<br>Y: %{y}<extra></extra>'
+                ))
+            else:
+                # Fallback to standard marker
+                fig.add_trace(go.Scatter(
+                    x=[goal_x], y=[goal_y],
+                    mode='markers',
+                    marker=dict(color=self.colors['goal'], size=self._calculate_marker_size('goal'), symbol=self.symbols['goal']),
+                    name='Goal',
+                    showlegend=True
+                ))
         
-        plt.show()
+        # --- 6. Layout and Axes ---
+        # Use consistent sizing - scale up to match step-by-step plot size
+        base_width, base_height = self._calculate_figure_size()
         
-    def compare_algorithms(self, results: Dict[str, Dict], 
-                          save_path: Optional[str] = None):
+        # Scale up the static plot to match the step-by-step plot size
+        # Use adaptive scaling based on grid size
+        scale_factor = self._calculate_static_plot_scale_factor()
+        width = int(base_width * scale_factor)
+        height = int(base_height * scale_factor)
+        
+        fig.update_layout(
+            title=self.title,
+            xaxis=dict(
+                range=[-0.5, self.cols - 0.5], # X range based on columns
+                showgrid=False, 
+                zeroline=False,
+                showticklabels=True,
+                dtick=1, 
+                title='Column'
+            ),
+            yaxis=dict(
+                range=[-0.5, self.rows - 0.5], # Y range based on rows
+                showgrid=False,
+                zeroline=False,
+                showticklabels=True,
+                dtick=1,
+                title='Row',
+                # Reverse the y-axis so that row 0 is at the top (matrix notation)
+                autorange='reversed',
+                scaleanchor="x", # Keep square grid if desired
+                scaleratio=1
+            ),
+            showlegend=True,
+            width=width,
+            height=height
+        )
+        return fig
+
+    def create_step_by_step_plot(self, obstacles, path, start=None, goal=None):
         """
-        Compare performance between quantum and classical algorithms
-        
+        Creates a subplot visualization showing the path evolution over time steps.
         Args:
-            results: Dict with algorithm names as keys and results as values
-                   Each result should have: 'time', 'path_length', 'path'
+            obstacles (list of tuples): List of (row, col) coordinates for obstacles.
+            path (list of tuples): Path in format [(row, col, t), ...].
+            start (tuple): (row, col) coordinate of the start.
+            goal (tuple): (row, col) coordinate of the goal.
+        Returns:
+            plotly.graph_objects.Figure: The Plotly figure object with subplots.
         """
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
-        fig.suptitle('Quantum vs Classical Algorithm Comparison', fontsize=16, fontweight='bold')
+        if not path:
+            raise ValueError("Path is required for step-by-step visualization.")
+        num_steps = len(path)
+        import math
+        cols_subplot = math.ceil(math.sqrt(num_steps))
+        rows_subplot = math.ceil(num_steps / cols_subplot)
         
-        algorithms = list(results.keys())
-        times = [results[alg]['time'] for alg in algorithms]
-        path_lengths = [len(results[alg]['path']) for alg in algorithms]
+        # Calculate consistent sizing based on grid size (same as static plot)
+        base_width, base_height = self._calculate_figure_size()
         
-        # Execution time comparison
-        bars1 = ax1.bar(algorithms, times, color=['#ff6b6b', '#4ecdc4', '#45b7d1'])
-        ax1.set_title('Execution Time', fontweight='bold')
-        ax1.set_ylabel('Time (seconds)')
-        for bar, time_val in zip(bars1, times):
-            ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
-                    f'{time_val:.3f}s', ha='center', va='bottom')
+        # Calculate subplot dimensions to maintain consistent cell sizes
+        subplot_width = base_width / cols_subplot
+        subplot_height = base_height / rows_subplot
         
-        # Path length comparison  
-        path_lengths = [len(results[alg]['path']) for alg in algorithms]
-        path_times = [results[alg]['path'][-1][2] + 1 if results[alg]['path'] else 0 for alg in algorithms]  # Total time steps
+        fig = make_subplots(
+            rows=rows_subplot, cols=cols_subplot,
+            subplot_titles=[f"Step {i}" for i in range(num_steps)],
+            horizontal_spacing=0.02,  # Consistent spacing
+            vertical_spacing=0.08,    # Consistent spacing
+            specs=[[{"secondary_y": False} for _ in range(cols_subplot)] for _ in range(rows_subplot)]
+        )
         
-        bars2 = ax2.bar(algorithms, path_lengths, color=['#ff6b6b', '#4ecdc4', '#45b7d1'])
-        ax2.set_title('Path Length (Steps)', fontweight='bold')
-        ax2.set_ylabel('Number of Steps')
-        for bar, length in zip(bars2, path_lengths):
-            ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
-                    f'{length}', ha='center', va='bottom')
-        
-        # Efficiency metric (steps per second)
-        efficiency = [path_lengths[i] / max(times[i], 0.001) for i in range(len(algorithms))]
-        bars3 = ax3.bar(algorithms, efficiency, color=['#ff6b6b', '#4ecdc4', '#45b7d1'])
-        ax3.set_title('Efficiency (Steps/Second)', fontweight='bold')
-        ax3.set_ylabel('Steps per Second')
-        for bar, eff in zip(bars3, efficiency):
-            ax3.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
-                    f'{eff:.1f}', ha='center', va='bottom')
-        
-        plt.tight_layout()
-        
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='black')
-        
-        plt.show()
-        
-    def animate_pathfinding(self, obstacles: List[Tuple[int, int]], 
-                           width: int, height: int,
-                           path: List[Tuple[int, int, int]], 
-                           start: Tuple[int, int], goal: Tuple[int, int],
-                           title: str = "Quantum Pathfinding Animation",
-                           save_path: Optional[str] = None,
-                           jupyter_mode: bool = False):
-        """
-        Create an animated visualization of the pathfinding process
-        Shows the robot moving through time steps
-        
-        Args:
-            jupyter_mode: Set to True when running in Jupyter notebooks for proper display
-        """
-        # Configure for Jupyter if needed
-        if jupyter_mode:
-            try:
-                from IPython.display import HTML
-                plt.rcParams['animation.html'] = 'jshtml'  # Use JavaScript HTML for animations
-            except ImportError:
-                print("Warning: IPython not available. Animation may not display properly in Jupyter.")
-        
-        fig, ax = plt.subplots(figsize=self.figsize)
-        
-        # Setup the grid display from obstacles
-        display_grid = np.zeros((height, width))
-        
-        # Mark obstacles
-        for x, y in obstacles:
-            if 0 <= x < width and 0 <= y < height:
-                display_grid[y, x] = 1.0
-        
-        # Mark start and goal
-        if 0 <= start[0] < width and 0 <= start[1] < height:
-            display_grid[start[1], start[0]] = 0.3  # Start
-        if 0 <= goal[0] < width and 0 <= goal[1] < height:
-            display_grid[goal[1], goal[0]] = 0.7   # Goal
-        
-        im = ax.imshow(display_grid, cmap='viridis', alpha=0.8)
-        
-        # Initialize empty path line and current position marker
-        line, = ax.plot([], [], 'yo-', linewidth=3, markersize=6, alpha=0.8, label='Path')
-        current_pos, = ax.plot([], [], 'ro', markersize=12, alpha=0.9, label='Current Position')
-        
-        ax.set_title(title, fontsize=16, fontweight='bold')
-        ax.set_xlabel('X Coordinate', fontweight='bold')
-        ax.set_ylabel('Y Coordinate', fontweight='bold')
-        ax.legend()
-        
-        # Add grid
-        ax.set_xticks(np.arange(-0.5, width, 1), minor=True)
-        ax.set_yticks(np.arange(-0.5, height, 1), minor=True)
-        ax.grid(which="minor", color="gray", linestyle='-', linewidth=0.5, alpha=0.3)
-        
-        def animate(frame):
-            if frame < len(path):
-                # Show path up to current frame
-                current_path = path[:frame+1]
-                x_coords = [p[0] for p in current_path]
-                y_coords = [p[1] for p in current_path]
-                line.set_data(x_coords, y_coords)
+        # Convert coordinates once
+        obstacles_converted = self._convert_coordinates(obstacles) if obstacles else []
+        path_converted = self._convert_coordinates(path)
+        goal_converted = self._convert_coordinates([goal])[0] if goal else None
+        start_converted = self._convert_coordinates([start])[0] if start else None
+
+        for i, (x_plotly, y_plotly) in enumerate(path_converted):
+            row_subplot = (i // cols_subplot) + 1
+            col_subplot = (i % cols_subplot) + 1
+            # Add grid background for subplot
+            for c in range(self.cols + 1):
+                fig.add_shape(type='line', x0=c-0.5, y0=-0.5, x1=c-0.5, y1=self.rows-0.5,
+                              line=dict(color=self.colors['grid_lines'], width=1),
+                              row=row_subplot, col=col_subplot)
+            for r in range(self.rows + 1):
+                y_plotly_grid = r - 0.5
+                fig.add_shape(type='line', x0=-0.5, y0=y_plotly_grid, x1=self.cols-0.5, 
+                             y1=y_plotly_grid, line=dict(color=self.colors['grid_lines'], width=1),
+                             row=row_subplot, col=col_subplot)
+            
+            # Add obstacles to subplot
+            if obstacles_converted:
+                obs_xs, obs_ys = zip(*obstacles_converted)
+                fig.add_trace(go.Scatter(
+                    x=list(obs_xs), y=list(obs_ys),
+                    mode='markers',
+                    marker=dict(color=self.colors['obstacle'], size=self._calculate_marker_size('obstacle'), symbol=self.symbols['obstacle']),
+                    name='Obstacles',
+                    showlegend=(i==0)
+                ), row=row_subplot, col=col_subplot)
+            
+            # Add Start (if defined and on first step)
+            if start_converted and i == 0:
+                # Add start marker (either image or fallback)
+                if self._start_image_base64:
+                    # Add image marker to this specific subplot
+                    fig.add_layout_image(
+                        dict(
+                            source=self._start_image_base64,
+                            x=start_converted[0],
+                            y=start_converted[1],
+                            xref=f"x{i+1}" if i > 0 else "x",
+                            yref=f"y{i+1}" if i > 0 else "y",
+                            sizex=self.image_marker_size_factor,
+                            sizey=self.image_marker_size_factor,
+                            sizing="contain",
+                            opacity=1.0,
+                            layer="above",
+                            xanchor="center",
+                            yanchor="middle"
+                        )
+                    )
+                else:
+                    # Fallback to standard marker
+                    fig.add_trace(go.Scatter(
+                        x=[start_converted[0]], y=[start_converted[1]],
+                        mode='markers',
+                        marker=dict(color=self.colors['start'], size=self._calculate_marker_size('goal'), symbol=self.symbols['start']),
+                        name='Start',
+                        showlegend=(i==0)
+                    ), row=row_subplot, col=col_subplot)
+            
+            # Add partial path up to current step
+            if i >= 0:
+                partial_path_coords = path_converted[:i+1]
+                pxs, pys = zip(*partial_path_coords)
+                fig.add_trace(go.Scatter(
+                    x=list(pxs), y=list(pys),
+                    mode='lines+markers',
+                    line=dict(color=self.colors['path_line'], width=2),
+                    marker=dict(color=self.colors['path_marker'], size=self._calculate_marker_size('path_marker')),
+                    name='Path',
+                    showlegend=(i==0)
+                ), row=row_subplot, col=col_subplot)
+            
+            # Add current position marker (use goal image if available)
+            if self._start_image_base64:
+                # Use the goal image (Scooby) for current position
+                fig.add_layout_image(
+                    dict(
+                        source=self._start_image_base64,
+                        x=x_plotly,
+                        y=y_plotly,
+                        xref=f"x{i+1}" if i > 0 else "x",
+                        yref=f"y{i+1}" if i > 0 else "y",
+                        sizex=self.image_marker_size_factor,
+                        sizey=self.image_marker_size_factor,
+                        sizing="contain",
+                        opacity=1.0,
+                        layer="above",
+                        xanchor="center",
+                        yanchor="middle"
+                    )
+                )
+            else:
+                # Fallback to standard marker
+                fig.add_trace(go.Scatter(
+                    x=[x_plotly], y=[y_plotly],
+                    mode='markers',
+                    marker=dict(color=self.colors['current_position'], size=self._calculate_marker_size('current_position'), symbol=self.symbols['current_position']),
+                    name='Current',
+                    showlegend=(i==0)
+                ), row=row_subplot, col=col_subplot)
+            
+            # Add Goal (show until reached)
+            if goal_converted:
+                opacity = 1.0
+                current_x_plotly, current_y_plotly = path_converted[i]
+                goal_x_plotly, goal_y_plotly = goal_converted
+                if current_x_plotly == goal_x_plotly and current_y_plotly == goal_y_plotly:
+                    opacity = 0.3  # Fade goal if reached on this step
                 
-                # Show current position
-                current_x, current_y, current_t = path[frame]
-                current_pos.set_data([current_x], [current_y])
-                
-                # Update title with progress and time step
-                ax.set_title(f'{title} - Step {frame+1}/{len(path)} (t={current_t})', 
-                           fontsize=16, fontweight='bold')
-            return line, current_pos
-        
-        anim = FuncAnimation(fig, animate, frames=len(path), 
-                           interval=800, blit=False, repeat=True)
-        
-        if save_path:
-            anim.save(save_path.replace('.png', '.gif'), writer='pillow', fps=1.2)
-        
-        if jupyter_mode:
-            plt.close(fig)  # Prevent static display
-            return anim  # Return animation object for Jupyter display
-        else:
-            plt.show()
-            return anim
-    
-    def visualize_performance_scaling(self, grid_sizes: List[int], 
-                                    quantum_times: List[float], 
-                                    classical_times: List[float],
-                                    save_path: Optional[str] = None):
-        """
-        Visualize how performance scales with problem size
-        """
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-        
-        # Linear scale
-        ax1.plot(grid_sizes, quantum_times, 'o-', label='Quantum (QAOA)', 
-                linewidth=3, markersize=8, color='#ff6b6b')
-        ax1.plot(grid_sizes, classical_times, 's-', label='Classical (A*)', 
-                linewidth=3, markersize=8, color='#4ecdc4')
-        ax1.set_xlabel('Grid Size (NxN)', fontweight='bold')
-        ax1.set_ylabel('Execution Time (seconds)', fontweight='bold')
-        ax1.set_title('Performance Scaling - Linear', fontweight='bold')
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-        
-        # Log scale
-        ax2.loglog(grid_sizes, quantum_times, 'o-', label='Quantum (QAOA)', 
-                  linewidth=3, markersize=8, color='#ff6b6b')
-        ax2.loglog(grid_sizes, classical_times, 's-', label='Classical (A*)', 
-                  linewidth=3, markersize=8, color='#4ecdc4')
-        ax2.set_xlabel('Grid Size (NxN)', fontweight='bold')
-        ax2.set_ylabel('Execution Time (seconds)', fontweight='bold')
-        ax2.set_title('Performance Scaling - Log Scale', fontweight='bold')
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='black')
-        
-        plt.show()
+                # Add goal marker (either image or fallback)
+                if self._goal_image_base64:
+                    # Add image marker to this specific subplot
+                    fig.add_layout_image(
+                        dict(
+                            source=self._goal_image_base64,
+                            x=goal_converted[0],
+                            y=goal_converted[1],
+                            xref=f"x{i+1}" if i > 0 else "x",
+                            yref=f"y{i+1}" if i > 0 else "y",
+                            sizex=self.image_marker_size_factor,
+                            sizey=self.image_marker_size_factor,
+                            sizing="contain",
+                            opacity=opacity,
+                            layer="above",
+                            xanchor="center",
+                            yanchor="middle"
+                        )
+                    )
+                else:
+                    # Fallback to standard marker
+                    fig.add_trace(go.Scatter(
+                        x=[goal_converted[0]], y=[goal_converted[1]],
+                        mode='markers',
+                        marker=dict(color=self.colors['goal'], size=self._calculate_marker_size('goal'), symbol=self.symbols['goal'], opacity=opacity),
+                        name='Goal',
+                        showlegend=(i==0)
+                    ), row=row_subplot, col=col_subplot)
 
-# Usage example and helper functions
-def create_sample_obstacles(width: int = 8, height: int = 8, 
-                          obstacle_prob: float = 0.2) -> List[Tuple[int, int]]:
-    """Create a sample obstacle list"""
-    np.random.seed(42)  # For reproducible results
-    obstacles = []
-    
-    for x in range(width):
-        for y in range(height):
-            # Skip start and goal positions
-            if (x, y) == (0, 0) or (x, y) == (width-1, height-1):
-                continue
-            if np.random.random() < obstacle_prob:
-                obstacles.append((x, y))
-    
-    return obstacles
+            # Update axes for subplot with consistent ranges
+            fig.update_xaxes(
+                range=[-0.5, self.cols - 0.5], 
+                showgrid=False, 
+                zeroline=False, 
+                dtick=1, 
+                row=row_subplot, 
+                col=col_subplot,
+                title='Column' if row_subplot == rows_subplot else None  # Only show title on bottom row
+            )
+            # Reverse the y-axis so that row 0 is at the top (matrix notation)
+            fig.update_yaxes(
+                range=[-0.5, self.rows - 0.5], 
+                showgrid=False, 
+                zeroline=False, 
+                dtick=1, 
+                autorange='reversed', 
+                row=row_subplot, 
+                col=col_subplot,
+                title='Row' if col_subplot == 1 else None  # Only show title on leftmost column
+            )
 
-def demo_visualization():
-    """Demonstrate the visualization capabilities"""
-    # Create visualizer
-    viz = QuantumRoboticsVisualizer()
-    
-    # Create sample data - using obstacle list format
-    width, height = 8, 8
-    obstacles = create_sample_obstacles(width, height, 0.25)
-    
-    # Path with time steps (x, y, t) - like your QUBO output format
-    path = [(0, 0, 0), (0, 1, 1), (1, 1, 2), (1, 2, 3), (2, 2, 4), 
-            (3, 2, 5), (4, 2, 6), (5, 2, 7), (6, 2, 8), (7, 2, 9), 
-            (7, 3, 10), (7, 4, 11), (7, 5, 12), (7, 6, 13), (7, 7, 14)]
-    
-    start = (0, 0)
-    goal = (7, 7)
-    
-    # Visualize path
-    viz.visualize_grid_and_path(obstacles, width, height, path, start, goal, 
-                               title="Quantum QAOA Pathfinding Result")
-    
-    # Compare algorithms - note: paths need to be in (x,y,t) format
-    classical_path = [(0, 0, 0), (1, 0, 1), (2, 0, 2), (3, 0, 3), (4, 0, 4), 
-                     (5, 0, 5), (6, 0, 6), (7, 0, 7), (7, 1, 8), (7, 2, 9), 
-                     (7, 3, 10), (7, 4, 11), (7, 5, 12), (7, 6, 13), (7, 7, 14)]
-    
-    results = {
-        'QAOA': {'time': 3.142, 'path': path},
-        'A*': {'time': 0.001, 'path': classical_path},
-        'Dijkstra': {'time': 0.003, 'path': path}
-    }
-    viz.compare_algorithms(results)
-    
-    # Performance scaling
-    grid_sizes = [3, 4, 5, 6, 7, 8]
-    quantum_times = [0.1, 0.5, 3.0, 15.0, 45.0, 120.0]  # Exponential growth
-    classical_times = [0.001, 0.002, 0.003, 0.005, 0.008, 0.012]  # Linear growth
-    
-    viz.visualize_performance_scaling(grid_sizes, quantum_times, classical_times)
+        # Note: Start and Goal images are now added to each subplot individually
+        # within the loop above, so we don't need global layout images here.
 
+        # Calculate total figure size to maintain consistent cell sizes
+        total_width = base_width * cols_subplot
+        total_height = base_height * rows_subplot
+        
+        fig.update_layout(
+            title=f"{self.title} - Step by Step",
+            showlegend=False,
+            width=total_width,
+            height=total_height
+        )
+        return fig
+
+    def show(self, fig):
+        """Displays the figure."""
+        fig.show()
+
+    def write_html(self, fig, filename):
+        """Saves the figure as HTML."""
+        fig.write_html(filename)
+        print(f"Plot saved to {filename}")
+
+    def write_image(self, fig, filename, format='png', width=None, height=None):
+        """Saves the figure as a static image."""
+        try:
+            fig.write_image(filename, format=format, width=width, height=height)
+            print(f"Image saved to {filename}")
+        except Exception as e:
+             print(f"Failed to save image: {e}. Ensure kaleido (`pip install kaleido`) is installed.")
+
+# --- Example Usage ---
 if __name__ == "__main__":
-    # demo_visualization()
-    # Your QUBO output format
-    path = [(2, 0, 0), (2, 1, 1), (2, 2, 2), (1, 2, 3), (0, 2, 4), (0, 2, 5)]
-    obstacles = [(1, 1), (3, 2)]
-    width, height = 4, 3
-    start = (2, 0)
-    goal = (0, 2)
+    # Example data using (row, col) format
+    grid_size = (3, 4) # (rows, cols)
+    obstacles = [(1, 1), (2, 3)] 
+    path = [(2, 0, 0), (2, 1, 1), (2, 2, 2), (1, 2, 3), (0, 2, 4), (0, 3, 5)]
+    start = (2, 0) # row 2, col 0
+    goal = (0, 3)  # row 0, col 3
 
-    # Visualize
-    viz = QuantumRoboticsVisualizer()
-    viz.animate_pathfinding(obstacles, width, height, path, start, goal,
-                            title="QUBO Solution with Time Steps")
+    # --- Create visualizer instance WITH image paths ---
+    # Replace 'path/to/start_image.png' and 'path/to/goal_image.svg' with your actual paths
+    visualizer = QuantumRoboticsVisualizer(
+        grid_size, 
+        title="My Quantum Path with Custom Images (Matrix Coords)",
+        start_image_path="path/to/your/start_image.png", # e.g., "start.png" or "start.svg"
+        goal_image_path="path/to/your/goal_image.svg"     # e.g., "goal.png" or "goal.svg"
+    )
+    
+    # --- Create and Show Static Plot ---
+    static_fig = visualizer.create_static_plot(obstacles=obstacles, path=path, start=start, goal=goal, current_step=3)
+    # visualizer.show(static_fig) # Uncomment to display in notebook
+    # visualizer.write_html(static_fig, "static_path_with_images.html")
+    # visualizer.write_image(static_fig, "static_path_with_images.png")
+
+    # --- Create and Show Step-by-Step Plot ---
+    step_fig = visualizer.create_step_by_step_plot(obstacles=obstacles, path=path, start=start, goal=goal)
+    # visualizer.show(step_fig) # Uncomment to display in notebook
+    # visualizer.write_html(step_fig, "step_by_step_path_with_images.html")
+    # visualizer.write_image(step_fig, "step_by_step_path_with_images.png", width=900, height=600)
