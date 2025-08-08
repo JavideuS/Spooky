@@ -1,3 +1,6 @@
+import pennylane as qml
+
+
 class QUBOBuilder:
     def __init__(self, problem, penalties, name="unnamed", var_limit=176, window_max_steps=None, material_cost=None):
         self.problem = problem
@@ -292,6 +295,94 @@ class QUBOBuilder:
 
         return self.Q
     
+    def qubo_to_ising(self):
+        """
+        Convert the QUBO (upper triangle) dictionary to an Ising Hamiltonian format.
+        Returns an qml.Hamiltonian object and an offset constant.
+        """
+        linear_coeffs = {}
+        quadratic_terms = {}
+        constant = 0.0
+        qubit_indices = set()
+
+        for (i, j), qij in self.Q.items():
+            qubit_indices.update([i, j])
+            if i == j:
+                constant += qij / 2
+                linear_coeffs[i] = linear_coeffs.get(i, 0) - qij / 2
+            else:
+                constant += qij / 4
+                linear_coeffs[i] = linear_coeffs.get(i, 0) - qij / 4
+                linear_coeffs[j] = linear_coeffs.get(j, 0) - qij / 4
+                quadratic_terms[i, j] = quadratic_terms.get((i, j), 0) + qij / 4
+
+        coeffs = []
+        observables = []
+
+        for i in sorted(linear_coeffs):
+            if linear_coeffs[i] != 0:
+                coeffs.append(linear_coeffs[i])
+                observables.append(qml.PauliZ(i))
+
+        for (i, j), val in quadratic_terms.items():
+            if val != 0:
+                coeffs.append(val)
+                observables.append(qml.PauliZ(i) @ qml.PauliZ(j))
+
+        Hc = qml.Hamiltonian(coeffs, observables)
+        return Hc, constant
+    
+    # def np_qubo_to_ising(self, Q):
+    #     n = Q.shape[0]
+    #     linear_coeffs = np.zeros(n)
+    #     quadratic_terms = {}
+    #     constant = 0.0
+
+    #     for i in range(n):
+    #         # Diagonal (linear) terms
+    #         qii = Q[i, i]
+    #         constant += qii / 2
+    #         linear_coeffs[i] -= qii / 2  # from x_i = (1 - Z_i)/2
+
+    #         for j in range(i+1, n):
+    #             qij = Q[i, j]
+    #             if qij != 0:
+    #                 constant += qij / 4
+    #                 linear_coeffs[i] -= qij / 4
+    #                 linear_coeffs[j] -= qij / 4
+    #                 quadratic_terms[(i, j)] = quadratic_terms.get((i, j), 0) + qij / 4
+
+    #     coeffs = []
+    #     observables = []
+
+    #     for i in range(n):
+    #         if linear_coeffs[i] != 0:
+    #             coeffs.append(linear_coeffs[i])
+    #             observables.append(qml.PauliZ(i))
+
+    #     for (i, j), val in quadratic_terms.items():
+    #         coeffs.append(val)
+    #         observables.append(qml.PauliZ(i) @ qml.PauliZ(j))
+
+    #     H = qml.Hamiltonian(coeffs, observables)
+    #     return H, constant
+    
+    def get_num_wires(self):
+        """ 
+        Get the number of qubits (wires) in the QUBO.
+        It should return the number of unique qubit indices used in the QUBO dictionary.
+        """
+        # Standard way to retrieve out of the QUBO dictionary
+        # if not self.Q:
+        #     raise ValueError("QUBO dictionary is empty. Build the QUBO first.")
+        # qubit_indices = set()
+        # for (i, j) in self.Q.keys():
+        #     qubit_indices.update([i, j])
+        # return len(qubit_indices)
+
+        # Fast way to extract it knowing the problem grid size and time steps
+        return self.problem.grid.M * self.problem.grid.N * self.T
+
     def max_window_size(self):
         """
         Calculate the maximum window size based on the problem's time steps.

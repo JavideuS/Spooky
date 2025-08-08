@@ -15,7 +15,15 @@ problems:
       obstacles:
     start: (2, 0)
     goal: (0, 2)
-    T: None 
+    T: None
+  grid_2x2_no_obs:
+    grid:
+      M: 2
+      N: 2
+      obstacles:
+    start: (1, 0)
+    goal: (0, 1)
+    T: 3
   grid_5x5_default:
     grid:
       M: 5
