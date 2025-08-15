@@ -2,7 +2,8 @@ import numpy as np
 
 
 class Grid:
-    def __init__(self, M, N, obstacles=None, terrain=None, elevation=None, materials=None, name="unnamed"):
+    def __init__(self, M, N, obstacles=None, terrain=None, elevation=None,
+                 materials=None, materials_data=None, resolution=1.0, name="unnamed"):
         self.M = M
         self.N = N
         self.moves = [(-1, 0), (1, 0), (0, -1), (0, 1)]  # 4-connectivity
@@ -11,8 +12,10 @@ class Grid:
         self.elevation = elevation  # 2D numpy array of heights (optional)
         # List: index → material_name
         self.materials = materials if materials is not None else []
+        self.materials_data = materials_data if materials_data is not None else {}
         self.adjacency = self.build_adjacency()
         self.name = name
+        self.resolution = resolution  # meters per grid cell
 
     @classmethod
     def from_dict(cls, grid_dict):
@@ -25,11 +28,13 @@ class Grid:
         N = grid_dict["grid"]["N"]
         obstacles = grid_dict["grid"]["obstacles"]
         materials = grid_dict.get("materials", [])
+        materials_data = grid_dict.get("materials_data", {})
         return cls(M, N, obstacles=obstacles, materials=materials,
+                   materials_data=materials_data,
                    name=grid_dict.get("name", "unnamed"))
     
     @classmethod
-    def from_hdf5_data(cls, map_data, name=None):
+    def from_hdf5_data(cls, map_data, materials_data=None, name=None):
         """
         Create Grid from HDF5-loaded data dict.
         
@@ -44,6 +49,7 @@ class Grid:
         terrain_grid = map_data.get('terrain_grid')
         elevation_grid = map_data.get('elevation_grid')
         materials = map_data.get('materials', [])  # if you pass material list
+        resolution = map_data.get('resolution', 1.0)
         
         return cls(
             M=M,
@@ -52,6 +58,8 @@ class Grid:
             terrain=terrain_grid,
             elevation=elevation_grid,
             materials=materials,
+            materials_data=materials_data,
+            resolution=resolution,
             name=name or map_data.get('name', 'unnamed')
         )
     
@@ -103,7 +111,7 @@ class Grid:
         if 0 <= index < len(self.materials):
             return self.materials[index]
         return "unknown"
-
+    
     def get_unique_materials_in_map(self):
         """Get list of material names actually present in this map"""
         if self.terrain is not None:
@@ -111,7 +119,12 @@ class Grid:
             return [self.get_material_name(idx) for idx in unique_indices]
         return []
 
-    def get_material_cost(self, index, material_costs):
+    def get_material_cost(self, index):
         """Get cost of material by index"""
         name = self.get_material_name(index)
-        return material_costs.get(name, 1.0)
+        return self.materials_data[name].get("cost", 6.0)
+    
+    def get_color(self, index):
+        """Get color of material by name"""
+        name = self.get_material_name(index)
+        return self.materials_data[name].get("color", "white")

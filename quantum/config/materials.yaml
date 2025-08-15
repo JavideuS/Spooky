@@ -1,9 +1,3 @@
-Weights:
-  - distance: 1.0,
-  - terrain: 0.8,
-  - elevation: 0.6,
-  - dynamic: 0.3
-
 Terrain material:
   # Outside oriented
   - Asphalt: 1.0
@@ -31,19 +25,24 @@ materials:
   asphalt:
     index: 0
     cost: 1.0
+    color: "black"
   sand:
     index: 1
     cost: 3.0
+    color: "khaki"
   grass:
     index: 2
     cost: 2.0
+    color: "green"
 
   # Inside oriented
   ceramic:
     index: 6
     cost: 1.0
+    color: "#8793a8"
 
   # General to avoid
   water:
     index: 7
     cost: 5.0
+    color: "#628fde"

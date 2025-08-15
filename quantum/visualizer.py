@@ -24,7 +24,7 @@ class QuantumRoboticsVisualizer:
 
     Enhanced to support custom images for Start and Goal markers.
     """
-    def __init__(self, grid_size, title="Quantum Pathfinding Visualization", start_image_path=None, goal_image_path=None):
+    def __init__(self, grid_size, title="Quantum Pathfinding Visualization", start_image_path=None, goal_image_path=None, obstacle_image_path=None):
         """
         Initializes the visualizer.
         Args:
@@ -39,6 +39,7 @@ class QuantumRoboticsVisualizer:
         self.goal_image_path = goal_image_path
         self._start_image_base64 = self._load_image_base64(start_image_path)
         self._goal_image_base64 = self._load_image_base64(goal_image_path)
+        self._obstacle_image_base64 = self._load_image_base64(obstacle_image_path)
 
         # --- Default Styling ---
         self.colors = {
@@ -215,8 +216,8 @@ class QuantumRoboticsVisualizer:
                 )
             )
 
-    def create_static_plot(self, obstacles=None, path=None, start=None, 
-                          goal=None, current_step=None):
+    def create_static_plot(self, obstacles=None, path=None, start=None, goal=None, current_step=None,
+                       problem=None, materials=None):
         """
         Creates a single static plot showing the grid, obstacles, path, start, goal,
         and optionally highlighting the current position at a specific step.
@@ -229,79 +230,160 @@ class QuantumRoboticsVisualizer:
         Returns:
             plotly.graph_objects.Figure: The Plotly figure object.
         """
+        if problem is not None:
+            if start is None:
+                start = getattr(problem, "start", None)
+            if goal is None:
+                goal = getattr(problem, "end", None)
+
         fig = go.Figure()
+        for r in range(self.rows):
+            for c in range(self.cols):
+                mat_index = problem.grid.get_terrain_at(r, c)
+                color = problem.grid.get_color(mat_index, materials)
+                fig.add_shape(
+                    type="rect",
+                    x0=c - 0.5, y0=r - 0.5,
+                    x1=c + 0.5, y1=r + 0.5,
+                    fillcolor=color,
+                    line=dict(width=0),
+                    layer="below"
+                )
+        # Need to add leyend for only active backgrounds
+
         # --- 1. Draw Grid Background ---
         # Add grid lines
         # Vertical lines (along columns)
-        for c in range(self.cols + 1):
+        for c in range(self.cols):
             fig.add_shape(type='line', x0=c-0.5, y0=-0.5, x1=c-0.5, y1=self.rows-0.5,
-                          line=dict(color=self.colors['grid_lines'], width=1))
+                        line=dict(color=self.colors['grid_lines'], width=1))
         # Horizontal lines (along rows)
-        for r in range(self.rows + 1):
+        for r in range(self.rows):
             # Y coordinates for horizontal lines are at row boundaries
             y_plotly = r - 0.5
             fig.add_shape(type='line', x0=-0.5, y0=y_plotly, x1=self.cols-0.5, 
-                         y1=y_plotly, line=dict(color=self.colors['grid_lines'], width=1))
+                        y1=y_plotly, line=dict(color=self.colors['grid_lines'], width=1))
         
         # --- 2. Add Obstacles ---
         if obstacles:
             obs_coords_converted = self._convert_coordinates(obstacles)
             if obs_coords_converted:
-                 obs_xs, obs_ys = zip(*obs_coords_converted)
-                 fig.add_trace(go.Scatter(
-                     x=obs_xs, y=obs_ys,
-                     mode='markers',
-                     marker=dict(color=self.colors['obstacle'], size=self._calculate_marker_size('obstacle'), symbol=self.symbols['obstacle']),
-                     name='Obstacles',
-                     showlegend=True
-                 ))
-        
+                obs_xs, obs_ys = zip(*obs_coords_converted)
+                # Try to add image markers first
+                if self._obstacle_image_base64:
+                    # Add image for each obstacle using the same logic as step_by_step_plot
+                    for x, y in zip(obs_xs, obs_ys):
+                        fig.add_layout_image(
+                            dict(
+                                source=self._obstacle_image_base64,
+                                x=x,
+                                y=y,
+                                xref="x",  # Main plot reference
+                                yref="y",  # Main plot reference
+                                sizex=self.image_marker_size_factor,
+                                sizey=self.image_marker_size_factor,
+                                sizing="contain",
+                                opacity=1.0,
+                                layer="above",
+                                xanchor="center",
+                                yanchor="middle"
+                            )
+                        )
+                    # Add invisible marker for hover and legend (single entry)
+                    fig.add_trace(go.Scatter(
+                        x=list(obs_xs), y=list(obs_ys),
+                        mode='markers',
+                        marker=dict(color='rgba(0,0,0,0)', size=0), # Invisible
+                        name='Obstacles',
+                        showlegend=True,
+                        hovertemplate='Obstacle<br>X: %{x}<br>Y: %{y}<extra></extra>'
+                    ))
+                else:
+                    # Fallback to standard markers
+                    fig.add_trace(go.Scatter(
+                        x=obs_xs, y=obs_ys,
+                        mode='markers',
+                        marker=dict(color=self.colors['obstacle'], size=self._calculate_marker_size('obstacle'), symbol=self.symbols['obstacle']),
+                        name='Obstacles',
+                        showlegend=True
+                    ))
+                
         # --- 3. Add Path ---
         if path:
             path_coords_converted = self._convert_coordinates(path)
             if path_coords_converted:
-                 path_xs, path_ys = zip(*path_coords_converted)
-                 # Add path line
-                 fig.add_trace(go.Scatter(
-                     x=path_xs, y=path_ys,
-                     mode='lines+markers',
-                     line=dict(color=self.colors['path_line'], width=2),
-                     marker=dict(color=self.colors['path_marker'], size=self._calculate_marker_size('path_marker'), symbol='circle'),
-                     name='Path',
-                     showlegend=True
-                 ))
-                 # Highlight Current Position (if step specified and valid)
-                 if current_step is not None and 0 <= current_step < len(path):
-                      curr_x, curr_y = path_coords_converted[current_step]
-                      # Use goal image for current position if available
-                      if self._start_image_base64:
-                          self._add_image_marker(fig, curr_x, curr_y, self._start_image_base64, f'Current (Step {current_step})', self.image_marker_size_factor)
-                          # Add invisible marker for hover and legend
-                          fig.add_trace(go.Scatter(
-                              x=[curr_x], y=[curr_y],
-                              mode='markers',
-                              marker=dict(color='rgba(0,0,0,0)', size=0), # Invisible
-                              name=f'Current (Step {current_step})',
-                              showlegend=True,
-                              hovertemplate=f'Current (Step {current_step})<br>X: %{{x}}<br>Y: %{{y}}<extra></extra>'
-                          ))
-                      else:
-                          # Fallback to standard marker
-                          fig.add_trace(go.Scatter(
-                              x=[curr_x], y=[curr_y],
-                              mode='markers',
-                              marker=dict(color=self.colors['current_position'], size=self._calculate_marker_size('current_position'), symbol=self.symbols['current_position']),
-                              name=f'Current (Step {current_step})',
-                              showlegend=True
-                          ))
+                path_xs, path_ys = zip(*path_coords_converted)
+                # Add path line
+                fig.add_trace(go.Scatter(
+                    x=path_xs, y=path_ys,
+                    mode='lines+markers',
+                    line=dict(color=self.colors['path_line'], width=2),
+                    marker=dict(color=self.colors['path_marker'], size=self._calculate_marker_size('path_marker'), symbol='circle'),
+                    name='Path',
+                    showlegend=True
+                ))
+                # Highlight Current Position (if step specified and valid)
+                if current_step is not None and 0 <= current_step < len(path):
+                    curr_x, curr_y = path_coords_converted[current_step]
+                    # Use start image for current position if available (same logic as step_by_step_plot)
+                    if self._start_image_base64:
+                        fig.add_layout_image(
+                            dict(
+                                source=self._start_image_base64,
+                                x=curr_x,
+                                y=curr_y,
+                                xref="x",
+                                yref="y",
+                                sizex=self.image_marker_size_factor,
+                                sizey=self.image_marker_size_factor,
+                                sizing="contain",
+                                opacity=1.0,
+                                layer="above",
+                                xanchor="center",
+                                yanchor="middle"
+                            )
+                        )
+                        # Add invisible marker for hover and legend
+                        fig.add_trace(go.Scatter(
+                            x=[curr_x], y=[curr_y],
+                            mode='markers',
+                            marker=dict(color='rgba(0,0,0,0)', size=0), # Invisible
+                            name=f'Current (Step {current_step})',
+                            showlegend=True,
+                            hovertemplate=f'Current (Step {current_step})<br>X: %{{x}}<br>Y: %{{y}}<extra></extra>'
+                        ))
+                    else:
+                        # Fallback to standard marker
+                        fig.add_trace(go.Scatter(
+                            x=[curr_x], y=[curr_y],
+                            mode='markers',
+                            marker=dict(color=self.colors['current_position'], size=self._calculate_marker_size('current_position'), symbol=self.symbols['current_position']),
+                            name=f'Current (Step {current_step})',
+                            showlegend=True
+                        ))
         
         # --- 4. Add Start Point ---
         if start:
             start_converted = self._convert_coordinates([start])[0]
             start_x, start_y = start_converted
-            # Try to add image marker first
+            # Try to add image marker first using the same logic as step_by_step_plot
             if self._start_image_base64:
-                self._add_image_marker(fig, start_x, start_y, self._start_image_base64, 'Start', self.image_marker_size_factor)
+                fig.add_layout_image(
+                    dict(
+                        source=self._start_image_base64,
+                        x=start_x,
+                        y=start_y,
+                        xref="x",
+                        yref="y",
+                        sizex=self.image_marker_size_factor,
+                        sizey=self.image_marker_size_factor,
+                        sizing="contain",
+                        opacity=1.0,
+                        layer="above",
+                        xanchor="center",
+                        yanchor="middle"
+                    )
+                )
                 # Add invisible marker for hover and legend
                 fig.add_trace(go.Scatter(
                     x=[start_x], y=[start_y],
@@ -325,27 +407,54 @@ class QuantumRoboticsVisualizer:
         if goal:
             goal_converted = self._convert_coordinates([goal])[0]
             goal_x, goal_y = goal_converted
-            # Try to add image marker first
-            if self._goal_image_base64:
-                self._add_image_marker(fig, goal_x, goal_y, self._goal_image_base64, 'Goal', self.image_marker_size_factor)
-                # Add invisible marker for hover and legend
-                fig.add_trace(go.Scatter(
-                    x=[goal_x], y=[goal_y],
-                    mode='markers',
-                    marker=dict(color='rgba(0,0,0,0)', size=0), # Invisible
-                    name='Goal',
-                    showlegend=True,
-                    hovertemplate='Goal<br>X: %{x}<br>Y: %{y}<extra></extra>'
-                ))
-            else:
-                # Fallback to standard marker
-                fig.add_trace(go.Scatter(
-                    x=[goal_x], y=[goal_y],
-                    mode='markers',
-                    marker=dict(color=self.colors['goal'], size=self._calculate_marker_size('goal'), symbol=self.symbols['goal']),
-                    name='Goal',
-                    showlegend=True
-                ))
+            
+            # Check if current position has reached the goal (same logic as step_by_step_plot)
+            show_goal = True
+            if current_step is not None and path:
+                path_coords_converted = self._convert_coordinates(path)
+                if current_step < len(path_coords_converted):
+                    current_x_plotly, current_y_plotly = path_coords_converted[current_step]
+                    if current_x_plotly == goal_x and current_y_plotly == goal_y:
+                        show_goal = False  # Don't show goal if current position is at goal
+            
+            # Only show goal if current position hasn't reached it yet
+            if show_goal:
+                # Try to add image marker first using the same logic as step_by_step_plot
+                if self._goal_image_base64:
+                    fig.add_layout_image(
+                        dict(
+                            source=self._goal_image_base64,
+                            x=goal_x,
+                            y=goal_y,
+                            xref="x",
+                            yref="y",
+                            sizex=self.image_marker_size_factor,
+                            sizey=self.image_marker_size_factor,
+                            sizing="contain",
+                            opacity=1.0,
+                            layer="above",
+                            xanchor="center",
+                            yanchor="middle"
+                        )
+                    )
+                    # Add invisible marker for hover and legend
+                    fig.add_trace(go.Scatter(
+                        x=[goal_x], y=[goal_y],
+                        mode='markers',
+                        marker=dict(color='rgba(0,0,0,0)', size=0), # Invisible
+                        name='Goal',
+                        showlegend=True,
+                        hovertemplate='Goal<br>X: %{x}<br>Y: %{y}<extra></extra>'
+                    ))
+                else:
+                    # Fallback to standard marker
+                    fig.add_trace(go.Scatter(
+                        x=[goal_x], y=[goal_y],
+                        mode='markers',
+                        marker=dict(color=self.colors['goal'], size=self._calculate_marker_size('goal'), symbol=self.symbols['goal']),
+                        name='Goal',
+                        showlegend=True
+                    ))
         
         # --- 6. Layout and Axes ---
         # Use consistent sizing - scale up to match step-by-step plot size
@@ -376,12 +485,13 @@ class QuantumRoboticsVisualizer:
                 title='Row',
                 # Reverse the y-axis so that row 0 is at the top (matrix notation)
                 autorange='reversed',
-                scaleanchor="x", # Keep square grid if desired
+                scaleanchor="x", # Keep square grid cells
                 scaleratio=1
             ),
             showlegend=True,
             width=width,
-            height=height
+            height=height,
+            margin=dict(l=60, r=60, t=80, b=60)  # Tighter margins to reduce unused space
         )
         return fig
 
@@ -406,9 +516,6 @@ class QuantumRoboticsVisualizer:
         # Calculate consistent sizing based on grid size (same as static plot)
         base_width, base_height = self._calculate_figure_size()
         
-        # Calculate subplot dimensions to maintain consistent cell sizes
-        subplot_width = base_width / cols_subplot
-        subplot_height = base_height / rows_subplot
         
         fig = make_subplots(
             rows=rows_subplot, cols=cols_subplot,
@@ -427,6 +534,11 @@ class QuantumRoboticsVisualizer:
         for i, (x_plotly, y_plotly) in enumerate(path_converted):
             row_subplot = (i // cols_subplot) + 1
             col_subplot = (i % cols_subplot) + 1
+
+            subplot_index = (row_subplot - 1) * cols_subplot + (col_subplot - 1) + 1
+            xref = f"x{subplot_index}" if subplot_index > 1 else "x"
+            yref = f"y{subplot_index}" if subplot_index > 1 else "y"
+
             # Add grid background for subplot
             for c in range(self.cols + 1):
                 fig.add_shape(type='line', x0=c-0.5, y0=-0.5, x1=c-0.5, y1=self.rows-0.5,
@@ -441,13 +553,49 @@ class QuantumRoboticsVisualizer:
             # Add obstacles to subplot
             if obstacles_converted:
                 obs_xs, obs_ys = zip(*obstacles_converted)
-                fig.add_trace(go.Scatter(
-                    x=list(obs_xs), y=list(obs_ys),
-                    mode='markers',
-                    marker=dict(color=self.colors['obstacle'], size=self._calculate_marker_size('obstacle'), symbol=self.symbols['obstacle']),
-                    name='Obstacles',
-                    showlegend=(i==0)
-                ), row=row_subplot, col=col_subplot)
+                # Try to add image markers first for obstacles
+                if self._obstacle_image_base64:
+                    # Add image for each obstacle directly to this subplot's axes
+                    for ox, oy in zip(obs_xs, obs_ys):
+                        fig.add_layout_image(
+                            dict(
+                                source=self._obstacle_image_base64,
+                                x=ox,
+                                y=oy,
+                                xref=xref, # Use calculated subplot reference
+                                yref=yref, # Use calculated subplot reference
+                                sizex=self.image_marker_size_factor,
+                                sizey=self.image_marker_size_factor,
+                                sizing="contain",
+                                opacity=1.0,
+                                layer="above",
+                                xanchor="center",
+                                yanchor="middle"
+                            )
+                        )
+
+                        fig.add_trace(go.Scatter(
+                            x=[ox], y=[oy], # Position for legend entry
+                            mode='markers',
+                            marker=dict(color='rgba(0,0,0,0)', size=0), # Invisible marker
+                            name='Obstacles',
+                            showlegend=True,
+                            hovertemplate='Obstacle<br>X: %{x}<br>Y: %{y}<extra></extra>'
+                        ), row=row_subplot, col=col_subplot)
+                else:
+                    # Fallback to standard markers for obstacles
+                    fig.add_trace(go.Scatter(
+                        x=list(obs_xs), y=list(obs_ys),
+                        mode='markers',
+                        marker=dict(
+                            color=self.colors['obstacle'],
+                            size=self._calculate_marker_size('obstacle'),
+                            symbol=self.symbols['obstacle']
+                        ),
+                        name='Obstacles',
+                        # Only show the legend for obstacles in the first subplot
+                        showlegend=(i == 0) 
+                    ), row=row_subplot, col=col_subplot)
             
             # Add Start (if defined and on first step)
             if start_converted and i == 0:
@@ -459,8 +607,8 @@ class QuantumRoboticsVisualizer:
                             source=self._start_image_base64,
                             x=start_converted[0],
                             y=start_converted[1],
-                            xref=f"x{i+1}" if i > 0 else "x",
-                            yref=f"y{i+1}" if i > 0 else "y",
+                            xref=xref,
+                            yref=yref,
                             sizex=self.image_marker_size_factor,
                             sizey=self.image_marker_size_factor,
                             sizing="contain",
@@ -501,8 +649,8 @@ class QuantumRoboticsVisualizer:
                         source=self._start_image_base64,
                         x=x_plotly,
                         y=y_plotly,
-                        xref=f"x{i+1}" if i > 0 else "x",
-                        yref=f"y{i+1}" if i > 0 else "y",
+                        xref=xref,
+                        yref=yref,
                         sizex=self.image_marker_size_factor,
                         sizey=self.image_marker_size_factor,
                         sizing="contain",
@@ -538,8 +686,8 @@ class QuantumRoboticsVisualizer:
                             source=self._goal_image_base64,
                             x=goal_converted[0],
                             y=goal_converted[1],
-                            xref=f"x{i+1}" if i > 0 else "x",
-                            yref=f"y{i+1}" if i > 0 else "y",
+                            xref=xref,
+                            yref=yref,
                             sizex=self.image_marker_size_factor,
                             sizey=self.image_marker_size_factor,
                             sizing="contain",

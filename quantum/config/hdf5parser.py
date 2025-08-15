@@ -2,34 +2,49 @@ import h5py
 import numpy as np
 from pathlib import Path
 
-def load_map_from_hdf5(h5_path):
+# config/hdf5parser.py
+import h5py
+from pathlib import Path
+
+def load_map_from_hdf5(h5_source):
     """
-    Load map data from HDF5 file and return structured dict.
+    Load map data from HDF5 file. Accepts:
+        - string path (e.g., "map.h5")
+        - file-like object (e.g., SpooledTemporaryFile)
     
-    Returns:
-        dict with keys:
-            - 'name': str
-            - 'grid': {'M': int, 'N': int, 'obstacles': list of tuples}
-            - 'terrain': {'base_material': str, 'modifications': list} [optional]
-            - 'elevation': {'base_height': float, 'modifications': list} [optional]
-            - 'resolution': float
+    Returns structured dict.
     """
-    with h5py.File(h5_path, 'r') as f:
+    with h5py.File(h5_source, 'r') as f:
         # Load required data
         occupancy = f['map_structure'][:]
         M, N = occupancy.shape
         
-        # Extract obstacles (where occupancy == 1)
+        # Extract obstacles
         obstacles = []
         obs_positions = np.where(occupancy == 1)
         for i, j in zip(obs_positions[0], obs_positions[1]):
             obstacles.append((int(i), int(j)))
 
         # Load metadata
-        map_name = f.attrs.get('map_name', Path(h5_path).stem)
+        map_name = f.attrs.get('map_name', None)
+        
+        # Only use filename stem if map_name not set AND source is a path
+        # Note that path stem was giving problem with fastApi
+        if map_name is None:
+            # Try to get filename only if h5_source is a string or has name
+            try:
+                if isinstance(h5_source, (str, Path)):
+                    map_name = Path(h5_source).stem
+                elif hasattr(h5_source, 'name') and isinstance(h5_source.name, str):
+                    map_name = Path(h5_source.name).stem
+                else:
+                    map_name = "unknown_map"
+            except Exception:
+                map_name = "unknown_map"
+
         resolution = f.attrs.get('resolution', 1.0)
 
-        # Load materials list (as dataset, not attribute)
+        # Load materials
         materials = []
         if 'materials' in f:
             materials = [mat.decode('utf-8') for mat in f['materials'][:]]
@@ -45,7 +60,6 @@ def load_map_from_hdf5(h5_path):
             'materials': materials
         }
 
-        # Optional: Load terrain and elevation grids
         if 'terrain' in f:
             result['terrain_grid'] = f['terrain'][:]
         if 'elevation' in f:

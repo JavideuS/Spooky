@@ -22,9 +22,11 @@ class DWaveSolver(BaseSolver):
             sampler = SimulatedAnnealingSampler()
             response = sampler.sample(bqm, num_reads=self.num_reads)
 
-            # Get best solution
-            # This simply extract the solution with the lowest energy (Theoretically the best solution)
-            best_sample.append(response.first.sample)
+            # Extract JSON-safe data
+            first = response.first
+            sample_dict = dict(first.sample)  # OrderedDict → dict
+
+            best_sample.append(sample_dict)
             best_energy.append(response.first.energy)
             last_pos = self.decode_path(response.first.sample, builder.problem)[-1]
             builder.update_problem(last_pos[:2])

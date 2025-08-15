@@ -1,5 +1,6 @@
 import yaml
 import ast
+from pathlib import Path
 from . import hdf5parser
 
 
@@ -34,10 +35,10 @@ def convert_values(data):
 
 # VERIFICATION FUNCTIONS
 def validate_problem(problem):
-    if not isinstance(problem.get("grid", {}).get("M"), int) or problem["grid"]["M"] <= 0:
-        raise ValueError("Grid M must be a positive integer")
-    if not isinstance(problem.get("grid", {}).get("N"), int) or problem["grid"]["N"] <= 0:
-        raise ValueError("Grid N must be a positive integer")
+    # if not isinstance(problem.get("grid", {}).get("M"), int) or problem["grid"]["M"] <= 0:
+    #     raise ValueError("Grid M must be a positive integer")
+    # if not isinstance(problem.get("grid", {}).get("N"), int) or problem["grid"]["N"] <= 0:
+    #     raise ValueError("Grid N must be a positive integer")
     if not isinstance(problem.get("start"), tuple) or len(problem["start"]) != 2:
         raise ValueError("Start must be a 2-tuple (i, j)")
     if not isinstance(problem.get("goal"), tuple) or len(problem["goal"]) != 2:
@@ -70,8 +71,19 @@ def validate_benchmark(benchmark):
 
 # LOADER FUNCTION
 def load_config(config_path="config.yaml", sections=None):
-    with open(config_path, "r") as f:
-        raw_data = yaml.safe_load(f)
+    # If it's a string or Path, open it
+    if isinstance(config_path, (str, Path)):
+        with open(config_path, "r") as f:
+            raw_data = yaml.safe_load(f)
+    else:
+        # Assume it's a file-like object (has .read())
+        try:
+            # Ensure we're at the start
+            if hasattr(config_path, 'seek'):
+                config_path.seek(0)
+            raw_data = yaml.safe_load(config_path)
+        except Exception as e:
+            raise ValueError(f"Failed to parse file-like config: {str(e)}")
 
     # Load only requested sections
     if sections is None:
@@ -99,50 +111,3 @@ def load_config(config_path="config.yaml", sections=None):
         validate_benchmark(parsed_data["benchmark"])
 
     return parsed_data
-
-
-def load_full_problem(problem_yaml_path, problem_name):
-    # Load problem config (start, goal, etc.) from YAML
-    with open(problem_yaml_path, 'r') as f:
-        config = yaml.safe_load(f)
-    
-    map_h5_path = config['map']['path']
-    
-    # Load map data from HDF5
-    map_data = hdf5parser.load_map_from_hdf5(map_h5_path)
-    
-    # Get problem-specific data
-    problem_config = config['problems'][problem_name]
-    
-    # Combine into one dict
-    return {
-        # Map data
-        'name': map_data['name'],
-        'M': map_data['grid']['M'],
-        'N': map_data['grid']['N'],
-        'obstacles': map_data['grid']['obstacles'],
-        'resolution': map_data['resolution'],
-        'terrain_grid': map_data.get('terrain_grid'),
-        'elevation_grid': map_data.get('elevation_grid'),
-        
-        # Problem data
-        'start': problem_config['start'],
-        'goal': problem_config['goal'],
-        'time_limit': problem_config.get('time_limit'),
-        'dynamic_obstacles': problem_config.get('dynamic_obstacles', [])
-    }
-
-if __name__ == "__main__":
-    import sys
-    config_path = sys.argv[1] if len(sys.argv) > 1 else "config.yaml"
-    config = load_config(config_path)
-    
-    print("Loaded config:")
-    for name, problem in config.get("problems", {}).items():
-        print(f"\nProblem '{name}':")
-        print("  Raw:", problem)
-        try:
-            validate_problem(problem)
-            print("  Validated ✅")
-        except Exception as e:
-            print("  ❌ Validation failed:", e)

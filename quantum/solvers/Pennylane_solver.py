@@ -31,9 +31,9 @@ class PennylaneSolver(BaseSolver):
         device = config.get("device", "default.qubit")
         params = config.get("params", None)
         opt_steps = config.get("optimizer_steps", 10)
-        if optimizer not in ["GradientDescent", "Adam"]:
-            raise ValueError("Optimizer must be either 'GradientDescent' "
-                             "or 'Adam'")
+        if optimizer not in ["GradientDescent", "Adam", "QNG", "SPSA", "QNSPSA"]:
+            raise ValueError("Optimizer must be either 'GradientDescent', "
+                             "'QNG', 'SPSA', 'QNSPSA' or 'Adam'")
         if device not in ["default.qubit", "lightning.qubit", "lightning.gpu"]:
             raise ValueError("Device must be either 'default.qubit' "
                              "or 'lightning'")
@@ -62,7 +62,7 @@ class PennylaneSolver(BaseSolver):
 
         return ansatz
 
-    def solve_qubo(self, builder):
+    def solve_qubo(self, builder, optimization=True):
         """
         Solve QUBO using Pennylane QAOA.
 
@@ -104,20 +104,26 @@ class PennylaneSolver(BaseSolver):
             # Optimization
             if self.optimizer_name == "GradientDescent":
                 optimizer = qml.GradientDescentOptimizer()
+            elif self.optimizer_name == "QNG":
+                optimizer = qml.QNGOptimizer()
+            elif self.optimizer_name == "SPSA":
+                optimizer = qml.SPSAOptimizer()
+            elif self.optimizer_name == "QNSPSA":
+                optimizer = qml.QNSPSAOptimizer()
             else:
                 optimizer = qml.AdamOptimizer()
 
-            # Optimization loop
-            # prev_cost = 0
-            for step in range(self.optimizer_steps):
-                # Retrieving optimal parameters
-                self.params, cost = optimizer.step_and_cost(
-                    cost_function, self.params)
-                if step % 10 == 0:
-                    print(f"Step {step}, ⟨H_C⟩ = {cost:.6f}")
-                # if step > 3 and abs(cost - prev_cost) < 1e-4:
-                #     break
-                # prev_cost = cost
+            if optimization:
+                # prev_cost = 0
+                for step in range(self.optimizer_steps):
+                    # Retrieving optimal parameters
+                    self.params, cost = optimizer.step_and_cost(
+                        cost_function, self.params)
+                    if step % 10 == 0:
+                        print(f"Step {step}, ⟨H_C⟩ = {cost:.6f}")
+                    # if step > 3 and abs(cost - prev_cost) < 1e-4:
+                    #     break
+                    # prev_cost = cost
 
             # FIXED: Improved sampling and post-processing
             # Create sampling circuit that returns all measurements at once
@@ -199,3 +205,4 @@ class PennylaneSolver(BaseSolver):
             'energy': best_energy,
             'optimized_params': self.params
         }
+

@@ -2,7 +2,8 @@ import pennylane as qml
 
 
 class QUBOBuilder:
-    def __init__(self, problem, penalties, name="unnamed", var_limit=176, window_max_steps=None, material_cost=None):
+    def __init__(self, problem, penalties, name="unnamed",
+                 var_limit=176, window_max_steps=None):
         self.problem = problem
         self.penalties = penalties
         self.name = name  # Name for the penalties
@@ -12,7 +13,6 @@ class QUBOBuilder:
         self.iter = 0
         self.T = min(self.t_max, self.total_t - (self.iter * self.t_max))
         self.initial_pos = problem.start  # Copy of the initial start position
-        self.material_cost = material_cost
         self.Q = {}
         # self.result
 
@@ -208,7 +208,7 @@ class QUBOBuilder:
             for i in range(M):
                 for j in range(N):
                     material = self.problem.grid.get_terrain_at(i, j)
-                    cost = self.problem.grid.get_material_cost(material, self.material_cost)
+                    cost = self.problem.grid.get_material_cost(material)
                     # print(f"Applying terrain penalty at t={t}, i={i}, j={j}")
                     # print(f"Material: {material}, Cost: {cost}")
                     g_t = i * N + j + M * N * t

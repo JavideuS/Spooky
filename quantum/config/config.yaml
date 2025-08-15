@@ -89,24 +89,7 @@ problems:
     goal: (4, 0)
     T: 15
 
-solver:
-  dwave_qa:
-    backend: "dwave"
-    normalization_scale: 1.0
-    num_reads: 10
-
-  qiskit_qaoa:
-    backend: "qiskit"
-    normalization_scale: 1.0
-    num_reads: 10
-
-  pennylane_qapa:
-    backend: "pennylane"
-    normalization_scale: 1.0
-    num_reads: 10
-
 penalty_sets:
-
 
 # FIX TIME PENALTIES
 #-----------------------------------

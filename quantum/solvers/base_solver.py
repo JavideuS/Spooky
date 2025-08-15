@@ -37,7 +37,6 @@ class BaseSolver(ABC):
         Returns:
             Solver instance
         """
-        backend = config.get("backend", "dwave")
         norm_scale = config.get("normalization_scale", 0)
         num_reads = config.get("num_reads", 15)
 
@@ -47,7 +46,8 @@ class BaseSolver(ABC):
             if k not in ["backend", "normalization_scale", "num_reads"]
         }
 
-        return cls(backend=backend, normalize_scale=norm_scale,
+        # Each class expects to run its own backend
+        return cls(normalize_scale=norm_scale,
                    num_reads=num_reads, **backend_params)
 
     def normalize_qubo(self, Q: Dict, scale: float = 1.0) -> Dict:
