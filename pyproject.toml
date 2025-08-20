@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spooky"
+version = "0.1.0"
+description = "Quantum-inspired navigation algorithms"
+authors = [
+    {name="JavideuS", email="javi.rm2005@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["quantum*"]
