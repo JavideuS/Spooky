@@ -1,0 +1,16 @@
+# Estimate quantum resources needed for a planning problem
+
+#request
+geometry_msgs/PoseStamped start
+geometry_msgs/PoseStamped goal
+nav_msgs/OccupancyGrid costmap
+int32 max_time_steps
+string planner_id
+---
+#response
+bool feasible                                    # Whether problem is feasible
+int32 estimated_qubits                          # Estimated qubits needed
+float32 estimated_time_seconds                  # Estimated computation time
+int32 estimated_circuit_depth                  # Estimated quantum circuit depth
+float32 success_probability                     # Estimated probability of success
+string[] warnings                               # Resource constraint warnings

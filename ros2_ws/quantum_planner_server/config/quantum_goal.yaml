@@ -1,0 +1,49 @@
+ClientNode:
+  ros__parameters:
+    goal:
+      header:
+        frame_id: "map"
+      pose:
+        position:
+          x: 1.0
+          y: 2.0
+          z: 0.0
+        orientation:
+          x: 0.0
+          y: 0.0
+          z: 0.0
+          w: 1.0
+    start:
+      header:
+        frame_id: "map"
+      pose:
+        position:
+          x: 0.0
+          y: 0.0
+          z: 0.0
+        orientation:
+          x: 0.0
+          y: 0.0
+          z: 0.0
+          w: 1.0
+    max_planning_time_steps: 100
+    planning_timeout: 10.0
+    robot_id: "Angie"
+
+    planner:
+      # Quantum planner selection
+      solver: "dwave.3x3"
+      fallback_to_classical: true
+      classical_backup: "a_star"
+
+      # Quantum-specific parameters (nested under 'params')
+      params:
+        num_layers: 3
+        optimization_steps: 100
+        convergence_threshold: 1e-4
+        backend: "qasm_simulator"
+        shots: 1024
+        use_noise_model: false
+        optimizer: "COBYLA"
+        timeout_seconds: 30.0
+        enable_classical_comparison: true

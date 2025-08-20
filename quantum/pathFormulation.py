@@ -1,4 +1,4 @@
-from . import map
+from quantum import map
 
 
 class PathfindingProblem:

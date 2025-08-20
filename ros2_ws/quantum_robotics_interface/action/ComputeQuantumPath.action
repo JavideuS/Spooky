@@ -1,0 +1,42 @@
+# Request
+geometry_msgs/PoseStamped goal                    # Goal pose
+geometry_msgs/PoseStamped start                   # Start pose
+QuantumPlannerSelector planner                    # Quantum planner selection
+int32 max_planning_time_steps                    # Maximum temporal planning horizon
+float32 planning_timeout                          # Maximum planning time (seconds)
+string robot_id                               # Robot identifier (for multi-robot scenarios) and caching
+
+---
+# Result
+nav_msgs/Path path                                # Standard ROS path
+QuantumMetadata quantum_path                          # Extended quantum path info
+builtin_interfaces/Duration planning_time        # Time taken for planning
+uint16 error_code                                # Error code (see constants below)
+string error_msg                                 # Human-readable error message
+
+# Constants for error codes
+uint16 NONE=0
+uint16 UNKNOWN=400
+uint16 INVALID_PLANNER=401
+uint16 TF_ERROR=402
+uint16 START_OUTSIDE_MAP=403
+uint16 GOAL_OUTSIDE_MAP=404
+uint16 START_OCCUPIED=405
+uint16 GOAL_OCCUPIED=406
+uint16 TIMEOUT=407
+uint16 NO_VALID_PATH=408
+uint16 QUANTUM_CIRCUIT_ERROR=409
+uint16 INSUFFICIENT_QUBITS=410
+uint16 BACKEND_UNAVAILABLE=411
+uint16 CONVERGENCE_FAILED=412
+uint16 CLASSICAL_FALLBACK_FAILED=413
+uint16 GRID_TOO_LARGE=414
+uint16 QUANTUM_HARDWARE_ERROR=415
+
+---
+#feedback definition
+QuantumPlannerStatus status                       # Current computation status
+float32 percent_complete                          # Overall progress (0.0-100.0)
+string current_operation                          # Current operation description
+nav_msgs/Path partial_path                        # Best path found so far
+float32 current_best_cost                        # Current best path cost

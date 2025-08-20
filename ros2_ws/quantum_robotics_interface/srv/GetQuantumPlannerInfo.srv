@@ -1,0 +1,12 @@
+# Get information about available quantum planners
+
+#request
+string planner_id                                 # Specific planner to query (empty for all)
+---
+#response
+string[] available_planners                       # List of available quantum planners
+string[] supported_backends                       # Available quantum backends
+int32 max_grid_size                              # Maximum supported grid size
+int32 max_qubits_available                       # Maximum qubits available
+bool hardware_available                          # Whether quantum hardware is accessible
+string[] error_messages                          # Any configuration errors
