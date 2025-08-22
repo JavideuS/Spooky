@@ -5,11 +5,12 @@ QuantumPlannerSelector planner                    # Quantum planner selection
 int32 max_planning_time_steps                    # Maximum temporal planning horizon
 float32 planning_timeout                          # Maximum planning time (seconds)
 string robot_id                               # Robot identifier (for multi-robot scenarios) and caching
+string map_id                                 # Map identifier (for caching and multi-map scenarios)
 
 ---
 # Result
 nav_msgs/Path path                                # Standard ROS path
-QuantumMetadata quantum_path                          # Extended quantum path info
+QuantumMetadata quantum_metadata                      # Extended quantum path info
 builtin_interfaces/Duration planning_time        # Time taken for planning
 uint16 error_code                                # Error code (see constants below)
 string error_msg                                 # Human-readable error message

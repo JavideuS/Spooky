@@ -30,6 +30,7 @@ ClientNode::ClientNode()
     this->declare_parameter("max_planning_time_steps", 100);
     this->declare_parameter("planning_timeout", 10.0f);
     this->declare_parameter("robot_id", "Angie");
+    this->declare_parameter("map_id", "TestMap");
 
     // Planner 
     this->declare_parameter("planner.solver", "qaoa");
@@ -119,6 +120,12 @@ void ClientNode::result_callback(const rclcpp_action::ClientGoalHandle<QuantumPa
     // Process the result
     // For example, print the path or other relevant information
     RCLCPP_INFO(this->get_logger(), "Result received");
+    RCLCPP_INFO(this->get_logger(), "Planning time: %f seconds", result.result->planning_time.sec + 
+        result.result->planning_time.nanosec / 1e9);
+    RCLCPP_INFO(this->get_logger(), "Total cost: %f", result.result->quantum_metadata.total_cost);
+    for (const auto& pose : result.result->path.poses) {
+        RCLCPP_INFO(this->get_logger(), "Pose: [%.2f, %.2f, %.2f]", pose.pose.position.x, pose.pose.position.y, pose.pose.position.z);
+    }
 }
 
 ClientNode::QuantumPath::Goal ClientNode::get_message(){
@@ -148,6 +155,7 @@ ClientNode::QuantumPath::Goal ClientNode::get_message(){
     msg.max_planning_time_steps = this->get_parameter("max_planning_time_steps").as_int();
     msg.planning_timeout = this->get_parameter("planning_timeout").as_double();
     msg.robot_id = this->get_parameter("robot_id").as_string();
+    msg.map_id = this->get_parameter("map_id").as_string();
 
     msg.planner.solver = this->get_parameter("planner.solver").as_string();
     msg.planner.fallback_to_classical = this->get_parameter("planner.fallback_to_classical").as_bool();

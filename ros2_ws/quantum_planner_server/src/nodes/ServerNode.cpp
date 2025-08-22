@@ -165,38 +165,49 @@ void ServerNode::execute(std::shared_ptr<GoalHandleQuantumPath> goal_handle)
     }
 
     // If map not loaded, we load it
-    // This should happen only once per map and robot_id
     // And it's a good to check if map is fine
-    // (NEED TO IMPLEMENT MAP CHECKING)
-    j.clear();
+    std::string api_path = "/robots/" + goal->robot_id + "/maps/" + goal->map_id;
 
-    std::string map_data = read_file(map_path_);
-    std::string mat_data = read_file(materials_path_);
-
-    httplib::UploadFormDataItems items = {
-        {"file", map_data, "map.h5", "application/octet-stream"},
-        {"materials_file", mat_data, "materials.yaml", "text/yaml"}
-    };
-
-
-    std::string api_path = "/robots/" + goal->robot_id + "/maps/" + "default"; // + map_name instead of + "default"
-
-    RCLCPP_INFO(this->get_logger(), "Map %s", this->map_path_.c_str());
-
-    res = cli.Post(api_path.c_str(), items);
-
-    // Check if the request was successful
+    res = cli.Get(api_path.c_str());
     if (res && res->status == 200) {
-        std::cout << "Map POST successful!" << std::endl;
+        std::cout << "Map already exists, skipping upload." << std::endl;
         std::cout << "Response: " << res->body << std::endl;
+        // If map exists, we can skip uploading it
     } else {
-        std::cout << "Map POST failed or no response" << std::endl;
-        if (res) {
-            std::cout << "Status: " << res->status << std::endl;
+        std::cout << "Map does not exist, uploading..." << std::endl;
+        
+        // Uploading map
+        // This should happen only once per map and robot_id
+
+        j.clear();
+
+        std::string map_data = read_file(map_path_);
+        std::string mat_data = read_file(materials_path_);
+
+        httplib::UploadFormDataItems items = {
+            {"file", map_data, "map.h5", "application/octet-stream"},
+            {"materials_file", mat_data, "materials.yaml", "text/yaml"}
+        };
+
+
+        RCLCPP_INFO(this->get_logger(), "Map %s", this->map_path_.c_str());
+
+        res = cli.Post(api_path.c_str(), items);
+
+        // Check if the request was successful
+        if (res && res->status == 200) {
+            std::cout << "Map POST successful!" << std::endl;
+            std::cout << "Response: " << res->body << std::endl;
         } else {
-            std::cout << "No response received (check connection/server)" << std::endl;
+            std::cout << "Map POST failed or no response" << std::endl;
+            if (res) {
+                std::cout << "Status: " << res->status << std::endl;
+            } else {
+                std::cout << "No response received (check connection/server)" << std::endl;
+            }
+            goal_handle->abort(result);;
         }
-        goal_handle->abort(result);;
+
     }
 
     // Finally after making we have a robot_id and map
@@ -205,7 +216,7 @@ void ServerNode::execute(std::shared_ptr<GoalHandleQuantumPath> goal_handle)
 
     api_path = "/robots/" + goal->robot_id + "/plan";
 
-    j["map_id"] = "default"; // Use the map name instead of "default"
+    j["map_id"] = goal->map_id; // Use the map name instead of "default"
     j["start"] = {goal->start.pose.position.x, goal->start.pose.position.y};
     j["goal"] = {goal->goal.pose.position.x, goal->goal.pose.position.y};
     j["solver"] = goal->planner.solver;
@@ -219,9 +230,44 @@ void ServerNode::execute(std::shared_ptr<GoalHandleQuantumPath> goal_handle)
         std::cout << "Path planning successful!" << std::endl;
         std::cout << "Response: " << res->body << std::endl;
 
-        // Here you can process the response and send it back to the client
-        // For example, you can convert the response to a suitable format
-        // and set it in the goal handle's result.
+        // Parse the JSON response
+        try {
+            json response = json::parse(res->body);
+
+            // Extract data
+            auto path = response["path"].get<std::vector<std::vector<int>>>();
+            double cost = response["cost"];
+            std::string map_id = response["map_id"];
+            std::string solver_used = response["solver_used"];
+            json solver_details = response["solver_details"]; // could be null
+            json metrics = response["metrics"];
+            double planning_time = metrics["planning_time"];
+
+            result->quantum_metadata.total_cost = cost;
+            result->planning_time.sec = static_cast<int>(planning_time);
+            result->planning_time.nanosec = static_cast<int>((planning_time - static_cast<int>(planning_time)) * 1e9);
+            std::string timestamp = metrics["timestamp"];
+
+            // Print results
+            std::cout << "Cost: " << cost << std::endl;
+            std::cout << "Map ID: " << map_id << std::endl;
+            std::cout << "Solver Used: " << solver_used << std::endl;
+
+            std::cout << "Path:" << std::endl;
+            result->path.header.stamp = this->now();
+            result->path.header.frame_id = goal->goal.header.frame_id;
+            for (const auto& point : path) {
+                std::cout << "  [" << point[0] << ", " << point[1] << ", " << point[2] << "]" << std::endl;
+                geometry_msgs::msg::PoseStamped p;
+                p.pose.position.x = point[0];
+                p.pose.position.y = point[1];
+                p.pose.position.z = point[2];
+                result->path.poses.push_back(p);
+            }
+        }
+        catch (const std::exception& e) {
+            std::cerr << "JSON parsing error: " << e.what() << std::endl;
+        }
     } else {
         std::cout << "Path planning failed or no response" << std::endl;
         if (res) {
@@ -233,7 +279,6 @@ void ServerNode::execute(std::shared_ptr<GoalHandleQuantumPath> goal_handle)
     }
 
     // Goal succeeded
-    result->planning_time.sec = 100;
     goal_handle->succeed(result);
     RCLCPP_INFO(this->get_logger(), "Goal succeeded");
 

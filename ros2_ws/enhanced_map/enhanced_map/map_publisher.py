@@ -16,13 +16,17 @@ class MapPublisher(Node):
 
         # Declare parameter for map file
         self.declare_parameter('map_file', 'maps/synthetic/3x3/no_obs3x3_elev.h5')
+        self.declare_parameter('materials_file', 'config/materials.yaml')
         self.declare_parameter('frame_id', 'map')
 
+
         map_file = self.get_parameter('map_file').get_parameter_value().string_value
+        materials_file = self.get_parameter('materials_file').get_parameter_value().string_value
         self.frame_id = self.get_parameter('frame_id').get_parameter_value().string_value
 
+        print("Map_file", map_file)
         # Load materials config
-        materials_data = config_parser.load_config("config/materials.yaml")["materials"]
+        materials_data = config_parser.load_config(materials_file)["materials"]
 
         # Load map from HDF5
         map_conf = h5parser.load_map_from_hdf5(map_file)

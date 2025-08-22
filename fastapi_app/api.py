@@ -10,6 +10,7 @@ from profiles.models import MapInfo, RobotMapsResponse, PlanRequest, PlanRespons
 from config_api import load_solver_configs, global_solver_configs, global_aliases, global_penalties_params
 from typing import Dict, Optional
 import datetime
+import time
 
 # Global registry: robot_id → Robot instance
 robots: Dict[str, Robot] = {}
@@ -271,8 +272,10 @@ def plan_path(robot_id: str, request: PlanRequest):
             end=tuple(request.goal)
         )
         builder = QUBOBuilder.QUBOBuilder(problem, penalties=global_penalties_params["alt_later"], name="standard")
+        start_time = time.time()
         builder.build()
         path = solver.solve_qubo(builder)
+        planning_time = time.time() - start_time
         decoded_path = solver.decode_path(path["solution"], problem)
         energy = solver.total_energy(path)
         print("Energy", energy)
@@ -286,6 +289,7 @@ def plan_path(robot_id: str, request: PlanRequest):
             metrics={
                 "start": request.start,
                 "goal": request.goal,
+                "planning_time": planning_time,
                 "timestamp": datetime.datetime.now(datetime.UTC).isoformat()
             }
         )

@@ -80,8 +80,8 @@ class PennylaneSolver(BaseSolver):
             if self.norm_scale != 0:
                 builder.Q = self.normalize_qubo(builder.Q, self.norm_scale)
 
-            print("Start position:", builder.problem.start,
-                  "Iteration:", builder.iter)
+            # print("Start position:", builder.problem.start,
+            #       "Iteration:", builder.iter)
 
             wires = range(builder.get_num_wires())
             Hc, constant = builder.qubo_to_ising()
@@ -133,7 +133,7 @@ class PennylaneSolver(BaseSolver):
                 # Return measurements for all qubits
                 return qml.sample()
 
-            print(f"Collecting {self.shots} samples...")
+            # print(f"Collecting {self.shots} samples...")
             
             # Collect samples and calculate energies
             samples = []
@@ -170,7 +170,7 @@ class PennylaneSolver(BaseSolver):
                 
                 energies.append(energy)
                 
-            print(f"Collected {len(samples)} samples with energies: {energies[:5]}...")
+            # print(f"Collected {len(samples)} samples with energies: {energies[:5]}...")
             
             # Handle case where no samples were collected
             if not samples:
@@ -188,8 +188,8 @@ class PennylaneSolver(BaseSolver):
             best_sample.append(samples[best_idx])
             best_energy.append(energies[best_idx])
             
-            print(f"Best energy this iteration: {energies[best_idx]}")
-            print(f"Best sample: {samples[best_idx]}")
+            # print(f"Best energy this iteration: {energies[best_idx]}")
+            # print(f"Best sample: {samples[best_idx]}")
 
             # Update problem for next iteration
             try:
