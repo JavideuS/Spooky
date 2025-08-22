@@ -28,7 +28,7 @@ class QUBOBuilder:
         K_hot = self.penalties['K_hot']
         
         for t in range(self.T):
-            indices = [i * M + j + (M * N) * t for i in range(M) for j in range(N)]
+            indices = [i * N + j + (M * N) * t for i in range(M) for j in range(N)]
             
             for n in indices:
                 self.Q[(n, n)] = self.Q.get((n, n), 0) - K_hot
