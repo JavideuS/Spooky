@@ -9,7 +9,7 @@ class PathfindingProblem:
         if T is not None:
             self.T = T
         else:
-            self.T = int(self.manhattan_distance() * 1.5)
+            self.T = int(self.manhattan_distance(start, end) * 1.5)
         self.name = name  # Name for problem, maybe corridor, hall...
 
     @classmethod
@@ -35,8 +35,8 @@ class PathfindingProblem:
         grid = map.Grid.from_dict(problem_dict)
         return cls.from_grid_dict(grid, problem_dict)
 
-    def manhattan_distance(self):
-        return abs(self.start[0] - self.end[0]) + abs(self.start[1] - self.end[1])
+    def manhattan_distance(self, start, end):
+        return abs(start[0] - end[0]) + abs(start[1] - end[1])
 
     def to_dict(self):
         """

@@ -14,7 +14,7 @@ Main classes:
 
 from .base_solver import BaseSolver
 from .solver_factory import SolverFactory, DynamicSolver
-from .DWave_solver import DWaveSolver, QUBOSolver
+from .DWave_solver import DWaveSolver
 from .Pennylane_solver import PennylaneSolver
 
 __all__ = [
@@ -22,6 +22,5 @@ __all__ = [
     "SolverFactory",
     "DynamicSolver",
     "DWaveSolver",
-    "QUBOSolver",  # Backward compatibility
     "PennylaneSolver",
 ]

@@ -30,43 +30,6 @@ class BenchmarkRunner:
             "runs": []
         }
 
-    def run(self):
-        """Run the benchmark multiple times and store results"""
-        print(f"\nBenchmarking Problem: {self.problem.name}")
-        print(f"Using Solver: {self.solver.name}")
-        print(f"Penalty Set: {self.penalty_set.get('name', 'unnamed')}")
-        print("-" * 60)
-
-        # Build QUBO once
-        Q = self.builder.build()
-
-        # Run multiple trials
-        for run_id in range(1, self.num_runs + 1):
-            start_time = time.time()
-            solution = self.solver.solve_qubo(Q)
-            duration = time.time() - start_time
-
-            validation = is_solution_valid(solution["solution"], self.problem)
-
-            result = {
-                "run_id": run_id,
-                "timestamp": datetime.now().isoformat(),
-                "solution": solution,
-                "validation": validation,
-                "energy": solution["energy"],
-                "success": validation["valid"],
-                "execution_time_sec": round(duration, 3),
-            }
-
-            self.results["runs"].append(result)
-
-            status = "✅ Valid" if validation["valid"] else "❌ Invalid"
-            print(f"Run {run_id}: {status} | Time: {duration:.2f}s | Energy: {solution['energy']:.4f}")
-            print(f"Path: {self.solver.decode_path(solution['solution'], self.problem)}")
-
-        self.save_results()
-        return self.results
-    
     def run_build(self):
         """Run the benchmark multiple times and store results"""
         print(f"\nBenchmarking Problem: {self.problem.name}")
@@ -80,9 +43,9 @@ class BenchmarkRunner:
             build_start = time.time()
             self.builder.build()
             build_duration = time.time() - build_start
-
+        
             solve_start = time.time()
-            solution = self.solver.solve_qubo(self.builder)
+            solution = self.solver.solve_qubo_smart(self.builder, False)
             solve_duration = time.time() - solve_start
 
             print(f"Build time: {build_duration:.4f}s, Solve time: {solve_duration:.4f}s")
@@ -90,7 +53,7 @@ class BenchmarkRunner:
             path = self.solver.decode_path(solution["solution"], self.problem)
             # path = self.solver.merge_path_segments(path)
             # print("Decoded Path:", path)
-            validation = is_solution_valid(path, self.problem)
+            validation = is_solution_valid(path, self.builder)
             # print("Validation:", validation)
 
             result = {
@@ -106,8 +69,12 @@ class BenchmarkRunner:
             self.results["runs"].append(result)
 
             status = "✅ Valid" if validation["valid"] else "❌ Invalid"
+            if not validation["valid"]:
+                print("Validation details:", validation["details"])
+                print("Reason:", validation["reason"])
             print(f"Run {run_id}: {status} | Time: {solve_duration:.2f}s | Energy: {self.solver.total_energy(solution):.4f}")
             print(f"Path: {path}")
+            # print("Raw solution:", solution["solution"])
 
         self.save_results()
         return self.results
@@ -122,7 +89,7 @@ class BenchmarkRunner:
 
 
 
-def is_solution_valid(solution, problem):
+def is_solution_valid(solution, builder):
     """
     Checks if the decoded path represents a valid path from start to goal.
     Accepts a list of (i, j, t) tuples (decoded path), or a list of such paths.
@@ -133,11 +100,12 @@ def is_solution_valid(solution, problem):
     Returns:
         dict: Validation result with 'valid' flag and optional error details
     """
+    problem = builder.problem
     grid = problem.grid
     M = grid.M
     N = grid.N
-    T = problem.T
-    start = problem.start
+    T = problem.T - builder.iter + 1  # You need to substract one per window 
+    start = builder.initial_pos
     goal = problem.end
     obstacles = grid.obstacles
 

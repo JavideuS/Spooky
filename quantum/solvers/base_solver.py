@@ -113,15 +113,23 @@ class BaseSolver(ABC):
             else:
                 t_offset_running = t_offset
                 path = []
-                for s in sample:
+                for  index, s in enumerate(sample):
                     sub_path = self.decode_path(s, problem, t_offset=t_offset_running)
                     if sub_path:
                         max_t = max(x[2] for x in sub_path)
                         t_offset_running = max_t + 1
+                    if path:
+                        # Avoid duplicating the last position of the previous segment
+                        print("Paths:", path[-1], sub_path[0])
+                        if path and path[-1][:2] == sub_path[0][:2]:
+                            # Updating time steps
+                            # Else each would be off by one
+                            sub_path = [(sb[0], sb[1], sb[2] - index) for sb in sub_path[1:]]
                     path.extend(sub_path)
                 return path
 
         # If sample is a dict, process as before
+        # This would be single window scenario
         if isinstance(sample, dict):
             M = problem.grid.M
             N = problem.grid.N

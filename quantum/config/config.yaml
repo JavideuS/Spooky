@@ -24,6 +24,14 @@ problems:
     start: (1, 0)
     goal: (0, 1)
     T: 3
+  grid_3x2_no_obs:
+    grid:
+      M: 3
+      N: 2
+      obstacles:
+    start: (2, 0)
+    goal: (0, 1)
+    T: 4
   grid_5x5_default:
     grid:
       M: 5
@@ -63,7 +71,7 @@ problems:
       obstacles:
     start: (4, 0)
     goal: (1, 4)
-    T: 9 #8 without time-window
+    T: 8 #8 without time-window
   grid_5x5_medium:
     grid:
       M: 5
@@ -75,6 +83,18 @@ problems:
     start: (4, 0)
     goal: (0, 4)
     T: None
+  grid_5x5_mediumv1:
+    grid:
+      M: 5
+      N: 5
+      obstacles: #[(1, 1), (2, 2), (3, 3)]
+        - [1, 1]
+        - [2, 2]
+        - [3, 3]
+    start: (4, 0)
+    goal: (0, 1)
+    T: 6
+
   grid_5x5_hard:
     grid:
       M: 5
@@ -87,7 +107,48 @@ problems:
         - [1, 3]
     start: (4, 3)
     goal: (4, 0)
-    T: 15
+    T: 18 # 14 perfect route # 17 da erroes
+
+  grid_5x5_hard_alt:
+    grid:
+      M: 5
+      N: 5
+      # obstacles: [[4, 2], [3, 3], [2, 3], [1,3]]
+      obstacles:
+        - [4, 2]
+        - [3, 3]
+        - [2, 3]
+        - [1, 3]
+    start: (4, 0)
+    goal: (4, 3)
+    T: 18 # 14 perfect route # 17 da erroes
+  
+  grid_10x10_no_obs:
+    grid:
+      M: 10
+      N: 10
+      obstacles:
+    start: (9, 0)
+    goal: (0, 9)
+    T: None
+
+  grid_100x100_no_obs:
+    grid:
+      M: 100
+      N: 100
+      obstacles:
+    start: (99, 0)
+    goal: (0, 99)
+    T: None
+
+  grid_1000x1000_no_obs:
+    grid:
+      M: 1000
+      N: 1000
+      obstacles:
+    start: (3, 0)
+    goal: (0, 3)
+    T: None
 
 penalty_sets:
 
@@ -146,6 +207,28 @@ penalty_sets:
     K_lock: 4
     K_bt: 2.3
     K_tp: 1.2
+
+  alt_later_bt2:
+    K_hot: 9
+    K_adj: 4.8
+    K_start: 6.5
+    K_goal: 2.7
+    K_lock: 4
+    K_bt: 2.3
+    K_tp: 1.2
+    K_goal_approx: 0.7
+    K_obs: 0
+
+  obs:
+    K_hot: 10
+    K_adj: 6.2
+    K_start: 6.5
+    K_goal: 3.8
+    K_lock: 4.7
+    K_bt: 2.3
+    K_tp: 1.2
+    K_goal_approx: 0.9
+    K_obs: 1.5
 
   alt_latercopyy:
     K_hot: 9
