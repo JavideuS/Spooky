@@ -67,6 +67,40 @@ def load_map_from_hdf5(h5_source):
 
         return result
 
+def load_graph_from_hdf5(h5_source):
+    with h5py.File(h5_source, "r") as f:
+        nodes = f["graph/nodes"][:]   # shape (N, 2)
+        edges = f["graph/edges"][:]   # shape (E, 3)
+
+        # Load metadata
+        map_name = f.attrs.get('map_name', None)
+        
+        # Only use filename stem if map_name not set AND source is a path
+        # Note that path stem was giving problem with fastApi
+        if map_name is None:
+            # Try to get filename only if h5_source is a string or has name
+            try:
+                if isinstance(h5_source, (str, Path)):
+                    map_name = Path(h5_source).stem
+                elif hasattr(h5_source, 'name') and isinstance(h5_source.name, str):
+                    map_name = Path(h5_source.name).stem
+                else:
+                    map_name = "unknown_map"
+            except Exception:
+                map_name = "unknown_map"
+
+        resolution = f.attrs.get('resolution', 1.0)
+
+        result = {
+            'name': map_name,
+            'edges': edges,
+            'nodes': nodes,
+            'resolution': resolution,
+        }
+
+        return result
+
+    
 # Example usage
 if __name__ == "__main__":
     import sys

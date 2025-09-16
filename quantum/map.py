@@ -128,3 +128,81 @@ class Grid:
         """Get color of material by name"""
         name = self.get_material_name(index)
         return self.materials_data[name].get("color", "white")
+
+
+class Graph:
+    """Graph representation for pathfinding problems."""
+    
+    def __init__(self, nodes, edges, weights=None, name="unnamed"):
+        """
+        Initialize a graph with nodes and edges.
+        
+        Args:
+            nodes: List of (x, y) coordinates or node data
+            edges: List of (i, j) or (i, j, weight) tuples
+            weights: Optional edge weights (if not provided in edges)
+            name: Graph name
+        """
+        self.nodes = nodes
+        self.edges = edges
+        self.weights = weights or {}
+        self.name = name
+        self.adjacency = self._build_adjacency()
+    
+    def _build_adjacency(self):
+        """Build adjacency list from edges."""
+        adjacency = {}
+        for i in range(len(self.nodes)):
+            adjacency[i] = []
+        
+        for edge in self.edges:
+            if len(edge) == 2:
+                i, j = edge
+                weight = 1.0
+            else:
+                i, j, weight = edge
+            
+            if i < len(self.nodes) and j < len(self.nodes):
+                adjacency[i].append((j, weight))
+                # For undirected graphs, add both directions
+                adjacency[j].append((i, weight))
+        
+        return adjacency
+    
+    @classmethod
+    def from_hdf5_data(cls, graph_data, name=None):
+        """Create Graph from HDF5-loaded data dict."""
+        nodes = graph_data.get('nodes', [])
+        edges = graph_data.get('edges', [])
+        resolution = graph_data.get('resolution', 1.0)
+        
+        return cls(
+            nodes=nodes,
+            edges=edges,
+            name=name or graph_data.get('name', 'unnamed')
+        )
+    
+    def get_node_position(self, node_id):
+        """Get (x, y) position of a node."""
+        if 0 <= node_id < len(self.nodes):
+            return tuple(self.nodes[node_id])
+        return None
+    
+    def get_edge_weight(self, i, j):
+        """Get weight of edge between nodes i and j."""
+        for edge in self.edges:
+            if len(edge) == 2:
+                if (edge[0] == i and edge[1] == j) or (edge[0] == j and edge[1] == i):
+                    return 1.0
+            else:
+                if (edge[0] == i and edge[1] == j) or (edge[0] == j and edge[1] == i):
+                    return edge[2]
+        return float('inf')  # No edge exists
+    
+    def to_dict(self):
+        """Convert to dictionary representation."""
+        return {
+            "nodes": self.nodes,
+            "edges": self.edges,
+            "name": self.name
+        }
