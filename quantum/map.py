@@ -153,7 +153,7 @@ class Graph:
         """Build adjacency list from edges."""
         adjacency = {}
         for i in range(len(self.nodes)):
-            adjacency[i] = []
+            adjacency[i] = set()
         
         for edge in self.edges:
             if len(edge) == 2:
@@ -163,9 +163,9 @@ class Graph:
                 i, j, weight = edge
             
             if i < len(self.nodes) and j < len(self.nodes):
-                adjacency[i].append((j, weight))
+                adjacency[i].add((j, weight))
                 # For undirected graphs, add both directions
-                adjacency[j].append((i, weight))
+                adjacency[j].add((i, weight))
         
         return adjacency
     
@@ -186,6 +186,13 @@ class Graph:
         """Get (x, y) position of a node."""
         if 0 <= node_id < len(self.nodes):
             return tuple(self.nodes[node_id])
+        return None
+    
+    def get_node_from_position(self, position):
+        """Get node index from (x, y) position."""
+        for idx, pos in enumerate(self.nodes):
+            if tuple(pos) == tuple(position):
+                return idx
         return None
     
     def get_edge_weight(self, i, j):

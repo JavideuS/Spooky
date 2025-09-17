@@ -22,7 +22,7 @@ class GridQUBOBuilder(BaseQUBO):
         problem,
         penalties,
         name="grid",
-        var_limit=601,
+        var_limit=151, # 605 10x10
         window_max_steps=None,
         distance_scaling="enhanced_linear",
     ):
@@ -39,6 +39,7 @@ class GridQUBOBuilder(BaseQUBO):
             self.problem.grid.N,
             self.problem.grid.obstacles,
         )
+        print("Window max steps:", self.max_window_size())
 
     def calculate_manhattan_penalty(self, raw_dist, K_goal_approx, time_factor):
         """
