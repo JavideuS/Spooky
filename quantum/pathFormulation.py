@@ -107,7 +107,7 @@ class PathfindingProblem:
         if data['has_map'] and data['map_data']:
             grid = map.Grid.from_hdf5_data(
                 data['map_data'],
-                # materials_data=materials_data,
+                materials_data=materials_data,
                 name=problem_name
             )
         
@@ -193,6 +193,33 @@ class PathfindingProblem:
     def can_use_graph(self):
         """Check if graph representation is available."""
         return self.graph is not None
+
+    def as_grid_only(self):
+        """Return a new problem instance restricted to the grid representation."""
+        if self.grid is None:
+            raise ValueError("Grid representation not available in this problem")
+        return PathfindingProblem(
+            start=self.start,
+            end=self.end,
+            grid=self.grid,
+            graph=None,
+            T=self.T,
+            name=self.name,
+        )
+
+    def as_graph_only(self):
+        """Return a new problem instance restricted to the graph representation."""
+        if self.graph is None:
+            raise ValueError("Graph representation not available in this problem")
+        g_start, g_end = self.get_graph_start_end()
+        return PathfindingProblem(
+            start=g_start,
+            end=g_end,
+            grid=None,
+            graph=self.graph,
+            T=self.T,
+            name=self.name,
+        )
 
     def to_dict(self):
         """

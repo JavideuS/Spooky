@@ -25,18 +25,21 @@ import time
 conf = config_parser.load_config("config/config.yaml", sections=["problems", "penalty_sets"])
 
 # map_hdf5 = load_both_from_hdf5("maps/synthetic/3x3/obs3x3_standard.h5")
-# map_hdf5 = load_map_from_hdf5("maps/synthetic/3x3/no_obs3x3.h5")
+# print("Double load from HDF5:", map_hdf5["map_data"])
+# map_hdf5 = load_map_from_hdf5("maps/synthetic/3x3/obs3x3_standard.h5")
+# print("Map loaded from HDF5:", map_hdf5)
 # map_hdf5 = load_map_from_hdf5("maps/synthetic/3x2/no_obs3x2.h5")
 # map_hdf5 = load_map_from_hdf5("maps/synthetic/5x5/obs5x5_hard.h5")
 # map_hdf5 = load_map_from_hdf5("maps/synthetic/10x10/no_obs10x10.h5")
 # print("Map loaded from HDF5:", map_hdf5["name"])
 
-# graph_data = load_graph_from_hdf5("maps/synthetic/3x3/no_obs3x3.h5")
+# graph_data = load_graph_from_hdf5("maps/synthetic/3x3/obs3x3_standard.h5")
+# graph = map.Graph.from_hdf5_data(graph_data)
 
 # map_conf = conf["problems"]["grid_5x5_medium"]
-map_conf = conf["problems"]["grid_5x5_hard"]
+# map_conf = conf["problems"]["grid_5x5_hard"]
 # map_conf = conf["problems"]["grid_5x5_easyv2_alt"]
-# map_conf = conf["problems"]["grid_3x3_default"]
+map_conf = conf["problems"]["grid_3x3_default"]
 # map_conf = conf["problems"]["grid_10x10_no_obs"]
 materials_data = config_parser.load_config("config/materials.yaml")["materials"]
 
@@ -46,20 +49,21 @@ materials_data = config_parser.load_config("config/materials.yaml")["materials"]
 # problem = pathFormulation.PathfindingProblem.from_dict(map_conf)
 # problem = PathfindingProblem.from_grid_dict(grid, map_conf)
 # problem = PathfindingProblem.from_graph_data(
-#     graph_data, start_node=[2, 0], end_node=[0, 2], T=6
+#     graph_data, start_node=(2, 0), end_node=(0, 2), T=6
 # )
-print("Problem:", map_conf)
+# print("Problem:", map_conf)
 start = map_conf["start"]
 end = map_conf["goal"]
 T = map_conf["T"]
 
 problem = PathfindingProblem.from_unified_data(
-        "maps/synthetic/5x5/obs5x5_hard.h5",
+        "maps/synthetic/3x3/obs3x3_standard.h5",
         start=start,
         end=end,
-        T=T,
+        T=6,
         name="unified"
     )
+# print("Problem", problem.to_dict())
 
 # print("Materials:", grid.materials)
 # print("Problem ter:", problem.grid.terrain)
@@ -79,10 +83,13 @@ penalties_conf = conf["penalty_sets"]["graph"]
 
 # Choose QUBO builder based on problem format:
 # For grid problems:
-# builder = QUBOBuilder(problem, penalties=penalties_conf, name="standard", distance_scaling="enhanced_linear")
+p_grid = problem.as_grid_only()
+builder = QUBOBuilder(p_grid, penalties=penalties_conf, name="standard", distance_scaling="enhanced_linear")
 
 # For graph problems:
-builder = GraphQUBO(problem, penalties=penalties_conf, name="graph_problem")
+# p_graph = problem.as_graph_only()
+# builder = GraphQUBO(p_graph, penalties=penalties_conf, name="graph_problem")
+# print(builder.max_window_size())
 
 # start_time = time.time()
 # Q = builder.build()
