@@ -1,3 +1,5 @@
+import time
+from autoray.lazy.core import max_
 import pennylane as qml
 import numpy as np
 from abc import ABC, abstractmethod
@@ -37,6 +39,7 @@ class BaseQUBO(ABC):
         self.initial_pos = getattr(problem, "start", None)
         # QUBO dict
         self.Q = {}
+        self.initial_num_vars = 0  # To be set by subclass during build
         # Optional knob used by grid subclass
         self.distance_scaling = distance_scaling
 
@@ -173,6 +176,91 @@ class BaseQUBO(ABC):
                 for k in keys_to_remove:
                     Q.pop(k, None)
         return Q, const_offset
+
+    def diag_fixed_vars(self):
+        """
+        Identify fixed variables based on outliers in diagonal coefficients
+        per time step.
+
+        For each time step:
+        1. Collect all diagonal coefficients for variables in that time step
+        2. If there are multiple variables with different coefficients:
+           - Variables with smaller coefficients are fixed to 0 (outliers)
+           - If one variable has a significantly larger coefficient,
+             it's fixed to 1
+        3. If there's only one variable in a time step, it's fixed to 1
+
+        Note that this functions works better when there was already a pre-reduction
+        And be mind that it is iterative, when it clears at one iteration, it updates
+        coefficient so it can find more fixed variables in the next iteration.
+
+        Returns:
+            dict: {variable_index: fixed_value} where fixed_value is 0 or 1
+        """
+        from collections import Counter
+        fixed = {}
+        # We could get all dictionary items, but it simpler to iterate over known qubit numbers
+        n = self.initial_num_vars
+        type = self.problem.get_format_type()
+        if type == "grid":
+            M, N = self.problem.grid.M, self.problem.grid.N
+            vars_per_time = M * N
+        elif type == "graph":
+            vars_per_time = self.num_nodes
+        time_step_vars = {}
+        for i in range(n):
+            if (i, i) in self.Q:
+                diag_coeff = self.Q[(i, i)]
+                if diag_coeff != 0:
+                    t = i // vars_per_time
+                    if t not in time_step_vars:
+                        time_step_vars[t] = []
+                    time_step_vars[t].append((i, diag_coeff))
+        for t in time_step_vars:
+            # print(f"Time step {t}: vars and diag coeffs: {time_step_vars[t]}")
+            # If only one variable, fix to 1
+            if len(time_step_vars[t]) == 1:
+                var_idx = time_step_vars[t][0][0]
+                fixed[var_idx] = 1
+            
+            counts = Counter([v[1] for v in time_step_vars[t]])
+            # If all coefficients are the same, skip
+            if len(counts) <= 1:
+                continue
+            else:
+                # Since we are minimizing, the minimum is the best (set to 1)
+                min_coeff = min(counts)
+                if counts[min_coeff] == 1:
+                    for var_idx, coeff in time_step_vars[t]:
+                        if coeff == min_coeff:
+                            fixed[var_idx] = 1
+                        else:
+                            fixed[var_idx] = 0
+                else:
+                    # These are the worst (largest) coeffs, set to 0
+                    max_coeff = max(counts)
+                    for var_idx, coeff in time_step_vars[t]:
+                        if coeff == max_coeff:
+                            fixed[var_idx] = 0
+
+            # print(counts)
+        return fixed
+
+    def reduce_diag_fixed_vars_iterative(self):
+        """
+        Iteratively apply diag_fixed_vars until no new fixed variables are found.
+
+        Returns:
+            dict: {variable_index: fixed_value} where fixed_value is 0 or 1
+        """
+        total_fixed = {}
+        while True:
+            new_fixed = self.diag_fixed_vars()
+            if not new_fixed:
+                break
+            total_fixed.update(new_fixed)
+            self.Q, _ = self.reduce_qubo(new_fixed)
+        return total_fixed
 
     def list_to_dict_solution(self, solution_list):
         if isinstance(solution_list, list) and len(solution_list) > 0:

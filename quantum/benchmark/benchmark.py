@@ -2,7 +2,6 @@ from pathlib import Path
 from datetime import datetime
 import json
 import time
-from tracemalloc import start
 
 
 class BenchmarkRunner:
@@ -241,7 +240,8 @@ def _is_grid_solution_valid(solution, problem, builder):
 def _is_graph_solution_valid(solution, problem, builder):
     graph = problem.graph
     T = problem.T - builder.iter + 1
-    start_node = problem.get_graph_start_end()[0]
+    
+    start_node = builder.initial_pos
     goal_node = problem.get_graph_start_end()[1]
 
     result = {"valid": True, "details": {}}

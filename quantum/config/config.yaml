@@ -219,6 +219,15 @@ penalty_sets:
     K_goal_approx: 0.7
     K_obs: 0
 
+  graph:
+    K_hot: 9
+    K_adj: 4.8
+    K_start: 6.5
+    K_goal: 2.7
+    K_lock: 4
+    K_bt: 2.3
+    K_goal_approx: 0.7
+
   obs:
     K_hot: 10
     K_adj: 6.2

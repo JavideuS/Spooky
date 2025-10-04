@@ -158,9 +158,14 @@ class Graph:
         for edge in self.edges:
             if len(edge) == 2:
                 i, j = edge
+                i = int(i)
+                j = int(j)
                 weight = 1.0
             else:
                 i, j, weight = edge
+                i = int(i)
+                j = int(j)
+                weight = float(weight)
             
             if i < len(self.nodes) and j < len(self.nodes):
                 adjacency[i].add((j, weight))

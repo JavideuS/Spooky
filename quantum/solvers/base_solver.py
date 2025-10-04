@@ -26,6 +26,7 @@ class BaseSolver(ABC):
         self.name = f"{self.backend}_reads{num_reads}"
         self._backend_params = kwargs
 
+    # Config file already returns dict for penalties; no new constructor needed
     @classmethod
     def from_config(cls, config: Dict[str, Any]):
         """
@@ -84,6 +85,11 @@ class BaseSolver(ABC):
         Returns:
             Tuple of (i, j, t) coordinates
         """
+        if problem.get_format_type() == "graph":
+            t = idx // len(problem.graph.nodes)
+            graph_idx = idx % len(problem.graph.nodes)
+            pos = problem.graph.get_node_position(graph_idx)
+            return int(pos[0]), int(pos[1]), t
         M = problem.grid.M
         N = problem.grid.N
         t = idx // (M * N)
@@ -131,10 +137,16 @@ class BaseSolver(ABC):
         # If sample is a dict, process as before
         # This would be single window scenario
         if isinstance(sample, dict):
-            M = problem.grid.M
-            N = problem.grid.N
-            T = problem.T
-            for idx in range(M * N * T):
+            qubo_type = problem.get_format_type()
+            if qubo_type == "grid":
+                M = problem.grid.M
+                N = problem.grid.N
+                T = problem.T
+                total_vars = M * N * T
+            # elif qubo_type == "graph":
+            else:
+                total_vars = len(problem.graph.nodes) * problem.T 
+            for idx in range(total_vars):
                 if sample.get(idx, 0) == 1:
                     i, j, t = self.decode_position(idx, problem)
                     path.append((i, j, t + t_offset))

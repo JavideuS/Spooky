@@ -47,8 +47,15 @@ class DWaveSolver(BaseSolver):
             # print("Pre Num wires", builder.get_num_wires())
             if self.norm_scale != 0:
                 fixed_vars = builder.get_fixed_variables()
-                Q, offset = builder.reduce_qubo(fixed_vars)
-                Q = self.normalize_qubo(Q, self.norm_scale)
+                builder.Q, offset = builder.reduce_qubo(fixed_vars)
+                # builder.Q = Q
+                # numerical_fixes = builder.diag_fixed_vars()
+                # print(numerical_fixes)
+                # Q, offset2 = builder.reduce_qubo(numerical_fixes)
+                # fixed_vars.update(numerical_fixes)
+                diag_fixed = builder.reduce_diag_fixed_vars_iterative()
+                fixed_vars.update(diag_fixed)
+                Q = self.normalize_qubo(builder.Q, self.norm_scale)
             # builder.Q = Q
             # print("Num wires", builder.get_num_wires())
             print("Start position:", builder.problem.start, "Iteration:", builder.iter)
@@ -62,10 +69,10 @@ class DWaveSolver(BaseSolver):
             full_sol = builder.reconstruct_solution(
                 first.sample,
                 fixed_vars,
-                total_vars=builder.get_num_wires()
+                total_vars=builder.initial_num_vars
             )
             best_sample.append(full_sol)
-            best_energy.append(response.first.energy + (offset if self.norm_scale != 0 else 0))
+            best_energy.append(response.first.energy)
             last_pos = self.decode_path(full_sol, builder.problem)[-1]
             builder.update_problem(last_pos[:2])
 

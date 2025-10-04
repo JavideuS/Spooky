@@ -22,7 +22,7 @@ class GridQUBOBuilder(BaseQUBO):
         problem,
         penalties,
         name="grid",
-        var_limit=151, # 605 10x10
+        var_limit=1510, # 605 10x10
         window_max_steps=None,
         distance_scaling="enhanced_linear",
     ):
@@ -34,6 +34,7 @@ class GridQUBOBuilder(BaseQUBO):
             window_max_steps=window_max_steps,
             distance_scaling=distance_scaling,
         )
+        self.initial_num_vars = problem.grid.M * problem.grid.N * problem.T
         self.P_obs = compute_obstacle_potential_field(
             self.problem.grid.M,
             self.problem.grid.N,

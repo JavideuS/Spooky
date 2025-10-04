@@ -1,3 +1,4 @@
+from mimetypes import init
 from .base_qubo import BaseQUBO
 
 
@@ -7,7 +8,7 @@ class GraphQUBO(BaseQUBO):
         problem,
         penalties,
         name="graph",
-        var_limit=601,
+        var_limit=131,
         window_max_steps=None,
         distance_scaling=None,
     ):
@@ -21,6 +22,7 @@ class GraphQUBO(BaseQUBO):
             window_max_steps=window_max_steps,
             distance_scaling=distance_scaling,
         )
+        self.initial_num_vars = self.num_nodes * self.T
 
     def build(self, constraints_to_apply=None):
         """Build the QUBO dictionary for graph-based pathfinding."""
