@@ -84,16 +84,22 @@ class BaseQUBO(ABC):
         return Hc, constant
 
     # Shared: count wires from Q
-    def get_num_wires(self):
+    def get_wires(self):
         """
-        Return the number of unique variable indices in the current QUBO.
+        Return set of unique variable indices in the current QUBO.
         """
         if not self.Q:
             raise ValueError("QUBO dictionary is empty. Build the QUBO first.")
         qubit_indices = set()
         for (i, j) in self.Q.keys():
             qubit_indices.update([i, j])
-        return len(qubit_indices)
+        return qubit_indices
+
+    def get_num_wires(self):
+        """
+        Return the number of unique variable indices in the current QUBO.
+        """
+        return len(self.get_wires())
 
     # Shared: compute max window size based on var_limit
     def max_window_size(self):
