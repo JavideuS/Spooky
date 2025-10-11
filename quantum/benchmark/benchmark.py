@@ -47,6 +47,7 @@ class BenchmarkRunner:
             build_duration = time.time() - build_start
         
             solve_start = time.time()
+            # solution = self.solver.solve_qubo(self.builder, False)
             solution = self.solver.solve_qubo_smart(self.builder, False)
             solve_duration = time.time() - solve_start
 

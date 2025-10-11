@@ -282,6 +282,17 @@ class GridQUBOBuilder(BaseQUBO):
                         self.Q[(g_t, g_t2)] = (
                             self.Q.get((g_t, g_t2), 0) + K_bt
                         )
+        
+        if self.prev_solution:
+            len_sol = len(self.prev_solution)
+            for t in range(self.T):
+                h_num = 0
+                for pos in self.prev_solution:
+                    i, j = pos[:2]
+                    idx = i * N + j + M * N * t
+                    time_factor = (1 + (len_sol - h_num)) / len_sol
+                    self.Q[(idx, idx)] = self.Q.get((idx, idx), 0) + K_bt * time_factor
+                    h_num += 1
 
     def apply_tp_penalty(self):
         """
@@ -361,6 +372,18 @@ class GridQUBOBuilder(BaseQUBO):
                 self.Q[(obs_idx, obs_idx)] = (
                     self.Q.get((obs_idx, obs_idx), 0) + K_obs
                 )
+    
+    def apply_multi_robot_penalty(self):
+        M, N = self.problem.grid.M, self.problem.grid.N
+        K_crash = self.penalties.get('K_crash', 5)
+        for t in range(self.T):
+            for i in range(M):
+                for j in range(N):
+                    for r1 in range(num_robots):
+                        for r2 in range(r1 + 1, num_robots):
+                            idx1 = var_index_grid(r1, i, j, t)
+                            idx2 = var_index_grid(r2, i, j, t)
+                            self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_col
 
     def build(self, constraints_to_apply=None):
         if constraints_to_apply is None:

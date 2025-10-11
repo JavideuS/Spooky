@@ -173,6 +173,19 @@ class GraphQUBO(BaseQUBO):
                     n2 = node_i + (self.num_nodes * t2)
                     self.Q[(n1, n2)] = self.Q.get((n1, n2), 0) + K_bt
 
+        # Note that this will probably make them be removed by the pre-processing
+        # To try avoid that added weights to high penalize early positions and softly penalize early ones
+        # But not sure yet if the soft penalty is small enough to be not removed in cases where backtracking is needed
+        if self.prev_solution:
+            len_sol = len(self.prev_solution)
+            for t in range(self.T):
+                h_num = 0
+                for pos in self.prev_solution:
+                    node_id = self.graph.get_node_from_position(pos[:2])
+                    n = node_id + (self.num_nodes * t)
+                    time_factor = (1 + (len_sol - h_num)) / len_sol
+                    self.Q[(n, n)] = self.Q.get((n, n), 0) + K_bt * time_factor
+                    h_num += 1
 
     def get_fixed_variables(self):
         """Identify variables that can be fixed based on current problem state."""

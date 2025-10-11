@@ -66,15 +66,13 @@ class DWaveSolver(BaseSolver):
             first = response.first
             # sample_dict = dict(first.sample)  # OrderedDict → dict
             # print("Sample:", self.decode_path(sample_dict, builder.problem))
-            full_sol = builder.reconstruct_solution(
-                first.sample,
-                fixed_vars,
-                total_vars=builder.initial_num_vars
-            )
+            full_sol, success = self._handle_iteration_result(first.sample, fixed_vars, builder)
             best_sample.append(full_sol)
             best_energy.append(response.first.energy)
-            last_pos = self.decode_path(full_sol, builder.problem)[-1]
-            builder.update_problem(last_pos[:2])
+
+            if not success:
+                # Handle gracefully or break the loop
+                break
 
         return {
             'solution': best_sample,

@@ -220,17 +220,28 @@ class PennylaneSolver(BaseSolver):
         best_energy = []
 
         while (builder.total_t) > (builder.iter * builder.t_max):
-            # builder.build()
+
             if self.norm_scale != 0:
                 fixed_vars = builder.get_fixed_variables()
                 builder.Q, offset = builder.reduce_qubo(fixed_vars)
                 diag_fixed = builder.reduce_diag_fixed_vars_iterative()
                 fixed_vars.update(diag_fixed)
+
+                # In case the full qubo gets pre-processed
+                if len(builder.Q) == 0:
+                    print("Full QUBO gets pre-processed")
+                    full_sol, success = self._handle_iteration_result(
+                        {}, fixed_vars, builder)
+                    best_sample.append(full_sol)
+                    
+                    if not success:
+                        # Handle gracefully or break the loop
+                        break
+                    continue
                 builder.Q = self.normalize_qubo(builder.Q, self.norm_scale)
 
             # print("Start position:", builder.problem.start,
             #       "Iteration:", builder.iter)
-
             # Since pennylane doesn't inherently knows the index of the remember qubits, I need to pass them manually
             wires = builder.get_wires()
             print(f"Number of qubits: {len(wires)}")
@@ -334,23 +345,14 @@ class PennylaneSolver(BaseSolver):
 
             # Find best sample
             best_idx = np.argmin(energies)
-            full_sol = builder.reconstruct_solution(
-                samples[best_idx],
-                fixed_vars,
-                total_vars=builder.initial_num_vars
-            )
+            full_sol, success = self._handle_iteration_result(samples[best_idx], fixed_vars, builder)
             best_sample.append(full_sol)
             best_energy.append(energies[best_idx])
             
             # print(f"Best energy this iteration: {energies[best_idx]}")
             # print(f"Best sample: {samples[best_idx]}")
 
-            # Update problem for next iteration
-            try:
-                last_pos = self.decode_path(samples[best_idx], builder.problem)[-1]
-                builder.update_problem(last_pos[:2])
-            except Exception as e:
-                print(f"Warning: Could not decode path: {e}")
+            if not success:
                 # Handle gracefully or break the loop
                 break
 

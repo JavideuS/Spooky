@@ -62,6 +62,10 @@ class BaseSolver(ABC):
         Returns:
             Normalized QUBO dictionary
         """
+        # In case the QUBO is empty
+        # It could happen in cases where the whole window gets pre-processed
+        if len(Q) == 0:
+            return Q
         # Extract values
         values = np.array(list(Q.values()))
 
@@ -229,3 +233,33 @@ class BaseSolver(ABC):
             "name": self.name,
             "parameters": self._backend_params
         }
+
+    def _handle_iteration_result(self, solution, fixed_vars, builder):
+        """
+        Handle the result of a QUBO iteration: reconstruct solution and 
+        update problem.
+        
+        Args:
+            solution: The solution dictionary or sample
+            fixed_vars: Fixed variables from preprocessing
+            builder: QUBOBuilder instance
+            
+        Returns:
+            tuple: (reconstructed_solution, success_flag)
+        """
+        # Reconstruct full solution
+        full_sol = builder.reconstruct_solution(
+            solution,
+            fixed_vars,
+            total_vars=builder.initial_num_vars
+        )
+        
+        # Update problem for next iteration
+        try:
+            path = self.decode_path(full_sol, builder.problem)
+            last_pos = path[-1]
+            builder.update_problem(last_pos[:2], path)
+            return full_sol, True
+        except Exception as e:
+            print(f"Warning: Could not decode path: {e}")
+            return full_sol, False

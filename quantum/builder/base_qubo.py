@@ -42,6 +42,7 @@ class BaseQUBO(ABC):
         self.initial_num_vars = 0  # To be set by subclass during build
         # Optional knob used by grid subclass
         self.distance_scaling = distance_scaling
+        self.prev_solution = []
 
     # Subclasses must implement build to populate self.Q
     @abstractmethod
@@ -83,7 +84,6 @@ class BaseQUBO(ABC):
         Hc = qml.Hamiltonian(coeffs, observables)
         return Hc, constant
 
-    # Shared: count wires from Q
     def get_wires(self):
         """
         Return set of unique variable indices in the current QUBO.
@@ -95,6 +95,7 @@ class BaseQUBO(ABC):
             qubit_indices.update([i, j])
         return qubit_indices
 
+    # Shared: count wires from Q
     def get_num_wires(self):
         """
         Return the number of unique variable indices in the current QUBO.
@@ -118,11 +119,13 @@ class BaseQUBO(ABC):
         return 1
 
     # Shared: window update/reset
-    def update_problem(self, new_start):
+    def update_problem(self, new_start, solution=[]):
         """Advance window and optionally update start state for next build."""
         self.iter += 1
         new_T = min(self.t_max, self.total_t - (self.iter * self.t_max))
         if new_T > 0:
+            self.prev_solution.extend(solution)
+            # print(f"Previous solution: {self.prev_solution}")
             self.problem.start = new_start
             self.T = new_T
             self.build()
@@ -131,6 +134,7 @@ class BaseQUBO(ABC):
         """Reset windowing and restore initial start position if available."""
         self.problem.start = self.initial_pos
         self.iter = 0
+        self.prev_solution = []
         self.T = min(self.t_max, self.total_t - (self.iter * self.t_max))
 
     # Shared utilities for Q manipulation

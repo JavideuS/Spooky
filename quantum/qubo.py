@@ -1,5 +1,3 @@
-from multiprocessing import reducer
-from numpy._core import numeric
 from pennylane import numpy as np
 from solvers import SolverFactory, DynamicSolver
 
@@ -39,10 +37,10 @@ conf = config_parser.load_config("config/config.yaml", sections=["problems", "pe
 # graph = map.Graph.from_hdf5_data(graph_data)
 
 # map_conf = conf["problems"]["grid_5x5_medium"]
-# map_conf = conf["problems"]["grid_5x5_hard"]
+map_conf = conf["problems"]["grid_5x5_hard_alt"]
 # map_conf = conf["problems"]["grid_5x5_easyv2_alt"]
-map_conf = conf["problems"]["grid_3x3_default"]
-# map_conf = conf["problems"]["grid_10x10_no_obs"]
+# map_conf = conf["problems"]["grid_3x3_default"]
+# map_conf = conf["problems"]["grid_3x3_no_obs"]
 materials_data = config_parser.load_config("config/materials.yaml")["materials"]
 
 # grid = map.Grid.from_hdf5_data(map_hdf5, materials_data)
@@ -59,7 +57,7 @@ end = map_conf["goal"]
 T = map_conf["T"]
 
 problem = PathfindingProblem.from_unified_data(
-        "maps/synthetic/3x3/no_obs3x3.h5",
+        "maps/synthetic/5x5/obs5x5_hard.h5",
         start=start,
         end=end,
         T=T,
@@ -85,12 +83,12 @@ penalties_conf = conf["penalty_sets"]["graph"]
 
 # Choose QUBO builder based on problem format:
 # For grid problems:
-# p_grid = problem.as_grid_only()
-# builder = QUBOBuilder(p_grid, penalties=penalties_conf, name="standard", distance_scaling="enhanced_linear")
+p_grid = problem.as_grid_only()
+builder = QUBOBuilder(p_grid, penalties=penalties_conf, name="standard", distance_scaling="enhanced_linear")
 
 # For graph problems:
-p_graph = problem.as_graph_only()
-builder = GraphQUBO(p_graph, penalties=penalties_conf, name="graph_problem")
+# p_graph = problem.as_graph_only()
+# builder = GraphQUBO(p_graph, penalties=penalties_conf, name="graph_problem")
 # print(builder.max_window_size())
 
 # start_time = time.time()
@@ -99,18 +97,23 @@ builder = GraphQUBO(p_graph, penalties=penalties_conf, name="graph_problem")
 # print(f"QUBO built in {duration:.4f} seconds")
 
 # Solver (Quantum annealing)
-dwave_solver = SolverFactory.create_solver(backend="dwave", normalize_scale=2.0, num_reads=15)  # 20 5x5 without pre-processing
-
+dwave_solver = SolverFactory.create_solver(backend="dwave", normalize_scale=2.0, num_reads=9)  # 20 5x5 without pre-processing
+# Smart reads with pre-processing
+# < 9 qubits -> 9 reads (Still not perfect)
 
 # init_params = np.array([[1.182179, 0.78571062], [0.36629231, 0.59672656]], requires_grad=True)
 # init_params = np.array([[1.702179, 0.74571062], [0.45629231, 0.49672656]], requires_grad=True)
 init_params = np.array([[1.70579, 0.70321062], [0.49879231, 0.49412656]], requires_grad=True)
 pennylane_solver = SolverFactory.create_solver(
-        backend="pennylane", normalize_scale=1.0, num_reads=13000,
+        backend="pennylane", normalize_scale=1.0, num_reads=8000,
         layers=2, optimizer="QNG", opt_steps=30,
         device="lightning.gpu", params=init_params)
+# General reads withour pre-processing
 # 1500 2x2
 # 13000 3x2
+# Smart reads with pre-processing based on final qubo size
+# < 9 qubits -> 500 reads
+# <= 16 qubits -> 8000 reads (16 errors on 10k attemps)
 
 # Q = builder.build()
 # solution = dwave_solver.solve_qubo(builder, False)
@@ -118,45 +121,5 @@ pennylane_solver = SolverFactory.create_solver(
 # print("Path:", dwave_solver.decode_path(solution["solution"], problem))
 # print(f"Energy: {dwave_solver.total_energy(solution):.4f}")
 
-benchmark = benchmark.BenchmarkRunner(builder, dwave_solver, num_runs=100)
+benchmark = benchmark.BenchmarkRunner(builder, pennylane_solver, num_runs=10000)
 benchmark.run_build()
-
-# import qubo_reducer
-
-# # reduced_Q, determined_vars, obj_value, stats = qubo_reducer.reduce_qubo(builder.build(), builder.get_num_wires())
-# # print("Reduction stats:", stats)
-# # print("Determined vars:", determined_vars)
-# # print("Objective value from reduction:", obj_value)
-# # print(builder.get_num_wires())
-
-# Q = builder.build()
-# # Q = dwave_solver.normalize_qubo(Q, 2.0)
-# fixed_vars = builder.get_fixed_variables()
-# Q, offset = builder.reduce_qubo(fixed_vars)
-# n = builder.initial_num_vars
-# # builder.Q = Q
-# # numeric_fixes = builder.diag_fixed_vars()
-# # Q, offset2 = builder.reduce_qubo(numeric_fixes)
-
-# pos_sums = [0.0] * n
-# neg_sums = [0.0] * n
-# for (i, j), coeff in Q.items():
-#     print(i, j, coeff)
-#     if i != j and coeff < 0:
-#         neg_sums[i] += coeff
-#         neg_sums[j] += coeff
-#     elif i != j and coeff > 0:
-#         pos_sums[i] += coeff
-#         pos_sums[j] += coeff
-
-# for i in range(n):
-#     diag = Q.get((i, i), 0)
-#     if diag != 0:
-#         print(i, ": ", diag)
-#         print("Positive sums:", pos_sums[i])
-#         print("Negative sums:", neg_sums[i])
-#         L_i = diag + neg_sums[i]   # Best case: all negative interactions "active"
-#         U_i = diag + pos_sums[i]   # Worst case: all positive interactions "active"
-#         print(f"Variable {i}: L_i = {L_i}, U_i = {U_i}")
-#         print("Pos:", dwave_solver.decode_position(i, builder.problem))
-
