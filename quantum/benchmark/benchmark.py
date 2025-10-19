@@ -94,7 +94,8 @@ class BenchmarkRunner:
         filepath = self.output_dir / filename
         with open(filepath, "w") as f:
             json.dump(self.results["penalty_set"], f, indent=2, default=str)
-            json.dump(self.results["runs"], f, indent=2, default=str)  # Use `default=str` to serialize tuples
+            # Use `default=str` to serialize tuples
+            json.dump(self.results["runs"], f, indent=2, default=str)
         print(f"\nBenchmark complete. Results saved to {filepath}")
 
 
@@ -102,21 +103,21 @@ class BenchmarkRunner:
 def is_solution_valid(solution, builder):
     """
     Checks if the decoded path represents a valid path from start to goal.
-    Accepts a list of (i, j, t) tuples (decoded path), or a list of such paths.
+    Accepts a list of ((i, j, t), robot_num) tuples (decoded path), or a list of such paths.
     Args:
-        solution (list): List of (i, j, t) tuples, or list of such lists.
-        problem (PathfindingProblem): Problem definition including grid/graph,
-            start, goal, T
+        solution (list): List of ((i, j, t), robot_num) tuples, 
+            or list of such lists.
+        builder: QUBOBuilder instance containing problem and iteration info
     Returns:
         dict: Validation result with 'valid' flag and optional error details
     """
-
-    problem_type = builder.problem.get_format_type()
+    problem = builder.problem
+    problem_type = problem.get_format_type()
 
     if problem_type == "grid":
-        return _is_grid_solution_valid(solution, builder.problem, builder)
+        return _is_grid_solution_valid(solution, builder)
     elif problem_type == "graph" or problem_type == "both":
-        return _is_graph_solution_valid(solution, builder.problem, builder)
+        return _is_graph_solution_valid(solution, builder)
     else:
         return {
             "valid": False,
@@ -124,18 +125,15 @@ def is_solution_valid(solution, builder):
             "message": f"Unsupported problem type: {problem_type}",
         }
 
-def _is_grid_solution_valid(solution, problem, builder):
-    grid = problem.grid
-    T = problem.T - builder.iter + 1  # You need to substract one per window 
-    start = builder.initial_pos
-    goal = problem.end
-    obstacles = grid.obstacles
-
+def _is_grid_solution_valid(solution, builder):
+    problem = builder.problem
+    T = problem.T - builder.iter + 1  # Account for time horizon clipping
+    
     result = {"valid": True, "details": {}}
 
     # If input is a list of paths (list of lists of tuples)
     if solution and isinstance(solution[0], list):
-        return [is_solution_valid(path, problem, builder) for path in solution]
+        return [is_solution_valid(path, builder) for path in solution]
 
     # If input is a single path (list of tuples)
     positions = list(solution)
@@ -147,19 +145,74 @@ def _is_grid_solution_valid(solution, problem, builder):
 
     result["details"]["path"] = positions
 
+    # Group positions by robot
+    robot_positions = {}
+    for (i, j, t), robot_num in positions:
+        if robot_num not in robot_positions:
+            robot_positions[robot_num] = []
+        robot_positions[robot_num].append((i, j, t))
+
+    # Validate each robot's path using unified validation
+    for robot_num, robot_path in robot_positions.items():
+        robot_id = list(problem.robots.keys())[robot_num]
+        robot_result = _validate_single_robot_path_unified(
+            robot_path, problem, robot_id, robot_num, T)
+        if not robot_result["valid"]:
+            result["valid"] = False
+            result["reason"] = f"robot_{robot_num}_invalid"
+            result["message"] = f"❌ Robot {robot_num}: {robot_result['message']}"
+            result["details"][f"robot_{robot_num}"] = robot_result
+            return result
+        result["details"][f"robot_{robot_num}"] = robot_result
+
+    result["valid"] = True
+    result["message"] = "✅ Solution is valid"
+    return result
+
+def _validate_single_robot_path_unified(positions, problem, robot_id, 
+                                        robot_num, T=None):
+    """
+    Unified validation function for single robot paths in both grid and graph 
+    problems.
+    
+    Args:
+        positions: List of (i, j, t) tuples for one robot
+        problem: Problem instance (grid or graph)
+        robot_id: Robot identifier/name
+        robot_num: Robot number for error messages
+        T: Time horizon (if None, uses problem.T)
+        
+    Returns:
+        dict: Validation result
+    """
+    result = {"valid": True, "details": {}}
+    
+    # Get notation abstraction based on problem type
+    notation = _get_notation_abstraction(problem)
+    
+    if T is None:
+        T = problem.T
+    
+    if not positions:
+        result["valid"] = False
+        result["reason"] = "empty_path"
+        result["message"] = f"❌ Robot {robot_num}: No path positions found"
+        return result
+
     # 1. Sort by time step
     positions.sort(key=lambda x: x[2])
 
-    # 2. Check all time steps from 0 to T-1 are present
+    # 2. Get expected time range and check all time steps are present
+    expected_times = notation.get_expected_time_range(problem, robot_id, T)
     all_times = set(t for _, _, t in positions)
-    expected_times = set(range(T))
     missing_times = expected_times - all_times
     extra_times = all_times - expected_times
 
     if missing_times:
         result["valid"] = False
         result["reason"] = "missing_time_steps"
-        result["message"] = f"❌ Missing time steps: {missing_times}"
+        result["message"] = (f"❌ Robot {robot_num}: Missing time steps: "
+                             f"{missing_times}")
         result["details"]["missing_times"] = list(missing_times)
         result["details"]["extra_times"] = list(extra_times)
         return result
@@ -167,7 +220,8 @@ def _is_grid_solution_valid(solution, problem, builder):
     if extra_times:
         result["valid"] = False
         result["reason"] = "extra_time_steps"
-        result["message"] = f"❌ Extra time steps found: {extra_times}"
+        result["message"] = (f"❌ Robot {robot_num}: Extra time steps found: "
+                             f"{extra_times}")
         result["details"]["extra_times"] = list(extra_times)
         return result
 
@@ -177,78 +231,187 @@ def _is_grid_solution_valid(solution, problem, builder):
         time_to_positions.setdefault(t, []).append((i, j))
 
     for t, cells in time_to_positions.items():
-        if len(cells) != 1:
+        if len(cells) > 1:
             result["valid"] = False
-            result["reason"] = "multiple_cells_per_step"
-            result["message"] = f"❌ More than one cell selected at time {t}: {cells}"
-            result["details"]["time_to_positions"] = time_to_positions
+            result["reason"] = "multiple_positions_per_time"
+            result["message"] = f"❌ Robot {robot_num}: Multiple positions at time {t}: {cells}"
+            result["details"]["conflicts"] = {t: cells}
             return result
 
-    # 4. Start at correct position
-    first_time_cells = time_to_positions.get(0, [])
-    if not first_time_cells or first_time_cells[0] != start:
+    # 4. Start position check
+    start_time = notation.get_start_time(problem, robot_id)
+    start_positions = [(i, j) for i, j, t in positions if t == start_time]
+    if not start_positions:
         result["valid"] = False
-        result["reason"] = "start_mismatch"
-        result["message"] = f"❌ Start position mismatch: Expected {start}, got {first_time_cells}"
+        result["reason"] = "wrong_start"
+        result["message"] = f"❌ Robot {robot_num}: No start position found at time {start_time}"
+        return result
+    
+    expected_start = notation.get_start_position(problem, robot_id)
+    actual_start = notation.get_position_representation(problem, start_positions[0])
+    if actual_start != expected_start:
+        result["valid"] = False
+        result["reason"] = "wrong_start"
+        result["message"] = f"❌ Robot {robot_num}: Wrong start position. Expected {expected_start}, got {actual_start}"
+        result["details"]["expected_start"] = expected_start
+        result["details"]["actual_start"] = actual_start
         return result
 
-    # 5. Goal reached at some time step
-    goal_reached = any(i == goal[0] and j == goal[1] for i, j, t in positions)
+    # 5. Goal position check
+    expected_goal = notation.get_goal_position(problem, robot_id)
+    goal_reached = any(notation.get_position_representation(problem, (i, j)) == expected_goal for i, j, t in positions)
     if not goal_reached:
         result["valid"] = False
         result["reason"] = "goal_not_reached"
-        result["message"] = f"❌ Goal {goal} was never reached"
+        result["message"] = f"❌ Robot {robot_num}: Goal position {expected_goal} never reached"
+        result["details"]["goal"] = expected_goal
         return result
 
-    # 6. Movement must be valid (adjacent cells only)
+    # 6. Movement must be valid (adjacent positions only)
     last_pos = None
     for i, j, t in positions:
-        if last_pos is not None:
-            li, lj, lt = last_pos
-            # Obstacle collision check
-            if (i, j) in obstacles:
+        current_pos = (i, j)
+        
+        # Check for obstacles (grid only)
+        if notation.has_obstacle_check():
+            obstacles = notation.get_obstacles(problem)
+            if current_pos in obstacles:
                 result["valid"] = False
                 result["reason"] = "obstacle_collision"
-                result["message"] = f"❌ Path goes through obstacle at ({i}, {j}) at time {t}"
-                result["details"]["collisions"] = [(i, j, t)]
+                result["message"] = f"❌ Robot {robot_num}: Path goes through obstacle at {current_pos} at time {t}"
+                result["details"]["collisions"] = [(*current_pos, t)]
                 return result
+        
+        if last_pos is not None:
+            last_i, last_j, last_t = last_pos
+            
             # Goal-lock bypass: if both current and previous are goal, allow staying
-            if (li, lj) == goal and (i, j) == goal:
+            if (notation.get_position_representation(problem, (last_i, last_j)) == expected_goal and 
+                notation.get_position_representation(problem, current_pos) == expected_goal):
                 last_pos = (i, j, t)
                 continue
-            # Valid move check using adjacency map from Grid class
-            if (i, j) not in grid.adjacency[(li, lj)]:
+            
+            # Valid move check using notation-specific adjacency
+            if not notation.is_valid_move(problem, (last_i, last_j), current_pos):
                 result["valid"] = False
                 result["reason"] = "invalid_move"
                 result["message"] = (
-                    f"❌ Invalid move from ({li}, {lj}, {lt}) to ({i}, {j}, {t}) "
-                    f"(Adjacency: {grid.adjacency.get((li, lj), 'N/A')})"
+                    f"❌ Robot {robot_num}: Invalid move from ({last_i}, {last_j}, {last_t}) to ({i}, {j}, {t})"
                 )
-                result["details"]["invalid_moves"] = [(li, lj, lt, i, j, t)]
+                result["details"]["invalid_moves"] = [(last_i, last_j, last_t, i, j, t)]
                 return result
         last_pos = (i, j, t)
 
-    # 7. Final check: Did we reach the goal at the right time?
-    goal_times = [t for i, j, t in positions if i == goal[0] and j == goal[1]]
+    # 7. Final check: Goal times
+    goal_times = [t for i, j, t in positions if notation.get_position_representation(problem, (i, j)) == expected_goal]
     result["details"]["goal_times"] = goal_times
 
     result["valid"] = True
     result["reason"] = "valid_path"
-    result["message"] = "✅ Solution is valid"
-
+    result["message"] = f"✅ Robot {robot_num}: Solution is valid"
     return result
 
-def _is_graph_solution_valid(solution, problem, builder):
-    graph = problem.graph
-    T = problem.T - builder.iter + 1
-    
-    start_node = builder.initial_pos
-    goal_node = problem.get_graph_start_end()[1]
 
+def _get_notation_abstraction(problem):
+    """Get the appropriate notation abstraction for the problem type."""
+    problem_type = problem.get_format_type()
+    
+    if problem_type == "grid":
+        return GridNotation()
+    elif problem_type in ["graph", "both"]:
+        return GraphNotation()
+    else:
+        raise ValueError(f"Unsupported problem type: {problem_type}")
+
+
+class BaseNotation:
+    """Base notation abstraction with common methods."""
+    
+    def get_expected_time_range(self, problem, robot_id, T):
+        """Get expected time range for robot."""
+        robot = problem.robots[robot_id]
+        return set(range(robot.start_time, T))
+    
+    def get_start_time(self, problem, robot_id):
+        """Get start time for robot."""
+        robot = problem.robots[robot_id]
+        return robot.start_time
+
+
+class GridNotation(BaseNotation):
+    """Notation abstraction for grid problems."""
+    
+    def get_start_position(self, problem, robot_id):
+        """Get start position for robot."""
+        robot = problem.robots[robot_id]
+        return robot.start
+    
+    def get_goal_position(self, problem, robot_id):
+        """Get goal position for robot."""
+        robot = problem.robots[robot_id]
+        return robot.goal
+    
+    def get_position_representation(self, problem, position):
+        """Get position representation (coordinates for grid)."""
+        return position
+    
+    def has_obstacle_check(self):
+        """Whether this notation checks for obstacles."""
+        return True
+    
+    def get_obstacles(self, problem):
+        """Get obstacles for the problem."""
+        return problem.grid.obstacles
+    
+    def is_valid_move(self, problem, from_pos, to_pos):
+        """Check if move is valid using grid adjacency."""
+        return to_pos in problem.grid.adjacency[from_pos]
+
+
+class GraphNotation(BaseNotation):
+    """Notation abstraction for graph problems."""
+    
+    def get_start_position(self, problem, robot_id):
+        """Get start node for robot."""
+        robot = problem.robots[robot_id]
+        start_node = (robot.start if isinstance(robot.start, int)
+                      else problem.graph.get_node_from_position(robot.start))
+        return start_node
+    
+    def get_goal_position(self, problem, robot_id):
+        """Get goal node for robot."""
+        _, goal_node = problem.get_graph_robot_current_goal(robot_id)
+        return goal_node
+    
+    def get_position_representation(self, problem, position):
+        """Get position representation (node ID for graph)."""
+        return problem.graph.get_node_from_position(position)
+    
+    def has_obstacle_check(self):
+        """Whether this notation checks for obstacles (graphs don't)."""
+        return False
+    
+    def get_obstacles(self, problem):
+        """Get obstacles for the problem (not used for graphs)."""
+        return set()
+    
+    def is_valid_move(self, problem, from_pos, to_pos):
+        """Check if move is valid using graph adjacency."""
+        from_node = problem.graph.get_node_from_position(from_pos)
+        to_node = problem.graph.get_node_from_position(to_pos)
+        # Adjacency list stores (neighbor_node, weight) tuples
+        return any(neighbor_node == to_node for (neighbor_node, weight) in problem.graph.adjacency[from_node])
+
+
+
+def _is_graph_solution_valid(solution, builder):
+    problem = builder.problem
+    T = problem.T - builder.iter + 1  # Account for time horizon clipping
+    
     result = {"valid": True, "details": {}}
 
     if solution and isinstance(solution[0], list):
-        return [is_solution_valid(path, problem, builder) for path in solution]
+        return [is_solution_valid(path, builder) for path in solution]
 
     positions = list(solution)
     if not positions:
@@ -259,94 +422,30 @@ def _is_graph_solution_valid(solution, problem, builder):
     
     result["details"]["path"] = positions
 
-    # 1. Sort by time step (node_idx, time)
-    positions.sort(key=lambda x: x[2])
+    # Group positions by robot
+    robot_positions = {}
+    for (i, j, t), robot_num in positions:
+        if robot_num not in robot_positions:
+            robot_positions[robot_num] = []
+        robot_positions[robot_num].append((i, j, t))
 
-    # 2. Check all time steps from 0 to T-1 are present
-    all_times = set(t for _, _, t in positions)
-    expected_times = set(range(T))
-    missing_times = expected_times - all_times
-    extra_times = all_times - expected_times
-
-    if missing_times:
-        result["valid"] = False
-        result["reason"] = "missing_time_steps"
-        result["message"] = f"❌ Missing time steps: {missing_times}"
-        result["details"]["missing_times"] = list(missing_times)
-        result["details"]["extra_times"] = list(extra_times)
-        return result
-
-    if extra_times:
-        result["valid"] = False
-        result["reason"] = "extra_time_steps"
-        result["message"] = f"❌ Extra time steps found: {extra_times}"
-        result["details"]["extra_times"] = list(extra_times)
-        return result
-
-    # 3. One-hot constraint per time step
-    time_to_nodes = {}
-    for i, j, t in positions:
-        node_i = problem.graph.get_node_from_position((i, j))
-        time_to_nodes.setdefault(t, []).append(node_i)
-
-    for t, nodes in time_to_nodes.items():
-        if len(nodes) != 1:
+    # Validate each robot's path using unified validation
+    for robot_num, robot_path in robot_positions.items():
+        robot_id = list(problem.robots.keys())[robot_num]
+        robot_result = _validate_single_robot_path_unified(
+            robot_path, problem, robot_id, robot_num, T)
+        if not robot_result["valid"]:
             result["valid"] = False
-            result["reason"] = "multiple_nodes_per_step"
-            result["message"] = f"❌ More than one node selected at time {t}: {nodes}"
-            result["details"]["time_to_nodes"] = time_to_nodes
+            result["reason"] = f"robot_{robot_num}_invalid"
+            result["message"] = f"❌ Robot {robot_num}: {robot_result['message']}"
+            result["details"][f"robot_{robot_num}"] = robot_result
             return result
-    
-    # 4. Start at correct position
-    first_time_node = time_to_nodes.get(0, [])
-    if not first_time_node or first_time_node[0] != start_node:
-        result["valid"] = False
-        result["reason"] = "start_mismatch"
-        result["message"] = f"❌ Start node mismatch: Expected {start_node}, got {first_time_node}"
-        return result
-
-    # 5. Goal reached at some time step
-    goal_reached = any(problem.graph.get_node_from_position((i, j)) == goal_node for i, j, t in positions)
-    if not goal_reached:
-        result["valid"] = False
-        result["reason"] = "goal_not_reached"
-        result["message"] = f"❌ Goal node {goal_node} was never reached"
-        return result
-
-    # 6. Movement must be valid (adjacent nodes only)
-    last_node_t = None
-    for i, j, t in positions:
-        node_i = problem.graph.get_node_from_position((i, j))
-        if last_node_t is not None:
-            last_node, last_t = last_node_t
-            
-            # Goal-lock bypass: if both current and previous are goal, allow staying
-            if last_node == goal_node and node_i == goal_node:
-                last_node_t = (node_i, t)
-                continue
-            
-            # Valid move check using adjacency map from Graph class
-            # Adjacency list stores (neighbor_node, weight) tuples
-            if not any(neighbor_node == node_i for (neighbor_node, weight) in graph.adjacency[last_node]):
-                result["valid"] = False
-                result["reason"] = "invalid_move"
-                result["message"] = (
-                    f"❌ Invalid move from node {last_node} at time {last_t} to node {node_i} at time {t} "
-                    f"(Adjacency: {graph.adjacency.get(last_node, 'N/A')})"
-                )
-                result["details"]["invalid_moves"] = [(last_node, last_t, node_i, t)]
-                return result
-        last_node_t = (node_i, t)
-
-    # 7. Final check: Did we reach the goal at the right time?
-    goal_times = [t for node_i, _, t in positions if node_i == goal_node]
-    result["details"]["goal_times"] = goal_times
+        result["details"][f"robot_{robot_num}"] = robot_result
 
     result["valid"] = True
-    result["reason"] = "valid_path"
     result["message"] = "✅ Solution is valid"
-
     return result
+
 
 
 def convert_tuple_keys_to_str(obj):

@@ -1,8 +1,10 @@
 import map
+from robotConfiguration import RobotConfig
 
 
 class PathfindingProblem:
-    def __init__(self, start, end, grid=None, graph=None, T=None, name="unnamed"):
+
+    def __init__(self, robots, grid=None, graph=None, T=None, name="unnamed"):
         # Support both grid and graph formats
         self.grid = grid
         self.graph = graph
@@ -10,22 +12,31 @@ class PathfindingProblem:
         # Validate that at least one format is provided
         if self.grid is None and self.graph is None:
             raise ValueError("Either grid or graph must be provided")
+    
+        self.robots = {}
+        if isinstance(robots, dict):
+            self.robots = robots
+            first_robot = next(iter(robots.values()))
+            print(first_robot.start)
+        elif isinstance(robots, RobotConfig):
+            self.robots[robots.robot_id] = robots
+        elif isinstance(robots, list):
+            for robot in robots:
+                self.robots[robot.robot_id] = robot
+        self.num_robots = len(self.robots)
+
+        if T is None:
+            T = self.calculate_timeline()
         
-        # Start and end can be coordinates (for grid) or node indices (for graph)
-        self.start = start
-        self.end = end
+        self.T = T
+        self.name = name
         
-        if T is not None:
-            self.T = T
-        else:
-            # Calculate T based on available format
-            if self.grid is not None:
-                self.T = int(self.manhattan_distance(start, end) * 1.5)
-            else:  # graph format
-                # For graphs, we can estimate based on shortest path or use a default
-                self.T = self._estimate_graph_time_horizon()
+    @classmethod
+    def general_init(cls, start, end, grid=None, graph=None, T=None, name="unnamed"):
+        # In this case we simply create a default robot configuration for single robot
+        robot = RobotConfig("Angie", start, end)
         
-        self.name = name  # Name for problem, maybe corridor, hall...
+        return cls(robot, grid, graph, T, name)
 
     @classmethod
     def from_grid_dict(cls, grid, problem_dict):
@@ -38,7 +49,7 @@ class PathfindingProblem:
         start = tuple(problem_dict["start"])
         end = tuple(problem_dict["goal"])
         T = problem_dict.get("T", None)
-        return cls(start, end, grid=grid, T=T)
+        return cls.general_init(start, end, grid=grid, T=T)
     
     @classmethod
     def from_dict(cls, problem_dict):
@@ -72,10 +83,8 @@ class PathfindingProblem:
             start_node = graph.get_node_from_position(start_node)
         if isinstance(end_node, (list, tuple)):
             end_node = graph.get_node_from_position(end_node)
-        
-        # print(start_node, end_node)
             
-        return cls(start_node, end_node, graph=graph, T=T, name=name)
+        return cls.general_init(start_node, end_node, graph=graph, T=T, name=name)
 
     @classmethod
     def from_unified_data(cls, h5_source, start, end, materials_data=None, T=None, name=None):
@@ -119,15 +128,8 @@ class PathfindingProblem:
                 name=problem_name
             )
         
-        # Convert coordinates to node indices for graph if needed
-        graph_start = start
-        graph_end = end
-        if graph is not None and isinstance(start, (list, tuple)):
-            graph_start = graph.get_node_from_position(start)
-            graph_end = graph.get_node_from_position(end)
-        
         # Create unified problem
-        problem = cls(
+        problem = cls.general_init(
             start=start,  # Keep original start for grid
             end=end,      # Keep original end for grid
             grid=grid,
@@ -136,27 +138,28 @@ class PathfindingProblem:
             name=problem_name
         )
         
-        # Store graph-specific start/end for convenience
-        if graph is not None:
-            problem.graph_start = graph_start
-            problem.graph_end = graph_end
-        
         return problem
-
-    def _estimate_graph_time_horizon(self):
-        """Estimate time horizon for graph-based problems."""
-        if self.graph is None:
-            return 10  # Default fallback
-        
-        # Simple estimation: number of nodes or a reasonable default
-        num_nodes = len(self.graph.nodes)
-        if num_nodes > 0:
-            return min(max(num_nodes // 2, 5), 20)  # Between 5 and 20
-        return 10
+    
+    def add_robot(self, robot: RobotConfig):
+        """Add a robot to the problem."""
+        self.robots[robot.robot_id] = robot
+        self.num_robots += 1
     
     def manhattan_distance(self, start, end):
         """Calculate Manhattan distance for grid coordinates."""
         return abs(start[0] - end[0]) + abs(start[1] - end[1])
+
+    def calculate_timeline(self):
+        if self.num_robots == 1:
+            # Calculate T based on available format
+            id = next(iter(self.robots), None)
+            robot = self.robots[id]
+            if self.grid is not None:
+                return int(self.manhattan_distance(robot.start, robot.goal) * 1.5)
+            else:  # graph format
+                # For graphs, we can estimate based on shortest path or use a default
+                return 10
+        return 5
     
     def get_format_type(self):
         """Return the format type: 'grid', 'graph', or 'both'."""
@@ -167,22 +170,17 @@ class PathfindingProblem:
         else:
             return 'graph'
     
-    def get_graph_start_end(self):
-        """Get graph-specific start and end node indices."""
-        if hasattr(self, 'graph_start') and hasattr(self, 'graph_end'):
-            return self.graph_start, self.graph_end
-        elif self.graph is not None:
+    def get_graph_robot_current_goal(self, robot_id):
+        """Get graph-specific current_position and goal node indices from a robot."""
+        if self.graph is not None:
             # Convert coordinates to node indices if not already done
-            start_node = self.graph.get_node_from_position(self.start) if isinstance(self.start, (list, tuple)) else self.start
-            end_node = self.graph.get_node_from_position(self.end) if isinstance(self.end, (list, tuple)) else self.end
+            robot = self.robots[robot_id]
+            start_node = (robot.current_position if isinstance(robot.current_position, int)
+                          else self.graph.get_node_from_position(robot.current_position))
+            
+            end_node = (robot.goal if isinstance(robot.goal, int)
+                        else self.graph.get_node_from_position(robot.goal))
             return start_node, end_node
-        else:
-            return None, None
-    
-    def get_grid_start_end(self):
-        """Get grid-specific start and end coordinates."""
-        if self.grid is not None:
-            return self.start, self.end
         else:
             return None, None
     
@@ -199,8 +197,7 @@ class PathfindingProblem:
         if self.grid is None:
             raise ValueError("Grid representation not available in this problem")
         return PathfindingProblem(
-            start=self.start,
-            end=self.end,
+            robots=self.robots,
             grid=self.grid,
             graph=None,
             T=self.T,
@@ -211,10 +208,8 @@ class PathfindingProblem:
         """Return a new problem instance restricted to the graph representation."""
         if self.graph is None:
             raise ValueError("Graph representation not available in this problem")
-        g_start, g_end = self.get_graph_start_end()
         return PathfindingProblem(
-            start=g_start,
-            end=g_end,
+            robots=self.robots,
             grid=None,
             graph=self.graph,
             T=self.T,
@@ -225,9 +220,12 @@ class PathfindingProblem:
         """
         Convert the problem instance to a dictionary representation.
         """
+        first_key = next(iter(self.robots))
         result = {
-            "start": self.start,
-            "goal": self.end,
+            "start": self.robots[first_key].start,
+            "robot_id": first_key,
+            "current_position": self.robots[first_key].current_position,
+            "goal": self.robots[first_key].goal,
             "T": self.T
         }
         

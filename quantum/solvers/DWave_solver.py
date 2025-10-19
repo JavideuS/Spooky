@@ -1,4 +1,5 @@
 # Solver (Quantum annealing)
+from tracemalloc import start
 from dimod import BinaryQuadraticModel, SimulatedAnnealingSampler
 from .base_solver import BaseSolver
 
@@ -43,28 +44,23 @@ class DWaveSolver(BaseSolver):
         response = None
 
         while (builder.total_t) > (builder.iter * builder.t_max):
-            Q = builder.Q
             # print("Pre Num wires", builder.get_num_wires())
             if self.norm_scale != 0:
                 fixed_vars = builder.get_fixed_variables()
                 builder.Q, offset = builder.reduce_qubo(fixed_vars)
-                # builder.Q = Q
-                # numerical_fixes = builder.diag_fixed_vars()
-                # print(numerical_fixes)
-                # Q, offset2 = builder.reduce_qubo(numerical_fixes)
-                # fixed_vars.update(numerical_fixes)
                 diag_fixed = builder.reduce_diag_fixed_vars_iterative()
                 fixed_vars.update(diag_fixed)
-                Q = self.normalize_qubo(builder.Q, self.norm_scale)
-            # builder.Q = Q
+                builder.Q = self.normalize_qubo(builder.Q, self.norm_scale)
+            # print(fixed_vars)
             # print("Num wires", builder.get_num_wires())
-            print("Start position:", builder.problem.start, "Iteration:", builder.iter)
-            bqm = BinaryQuadraticModel.from_qubo(Q)
+            for _, robot_id in enumerate(builder.problem.robots):
+                start_pos = builder.problem.robots[robot_id].current_position
+                print("Start position:", start_pos, "Iteration:", builder.iter)
+            bqm = BinaryQuadraticModel.from_qubo(builder.Q)
             sampler = SimulatedAnnealingSampler()
             response = sampler.sample(bqm, num_reads=self.num_reads)
 
             first = response.first
-            # sample_dict = dict(first.sample)  # OrderedDict → dict
             # print("Sample:", self.decode_path(sample_dict, builder.problem))
             full_sol, success = self._handle_iteration_result(first.sample, fixed_vars, builder)
             best_sample.append(full_sol)

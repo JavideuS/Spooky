@@ -1,5 +1,3 @@
-import time
-from autoray.lazy.core import max_
 import pennylane as qml
 import numpy as np
 from abc import ABC, abstractmethod
@@ -35,8 +33,6 @@ class BaseQUBO(ABC):
         self.total_t = getattr(self.problem, "T", 1)
         self.iter = 0
         self.T = min(self.t_max, self.total_t - (self.iter * self.t_max))
-        # Keep a copy of the initial start position if present
-        self.initial_pos = getattr(problem, "start", None)
         # QUBO dict
         self.Q = {}
         self.initial_num_vars = 0  # To be set by subclass during build
@@ -124,17 +120,21 @@ class BaseQUBO(ABC):
         self.iter += 1
         new_T = min(self.t_max, self.total_t - (self.iter * self.t_max))
         if new_T > 0:
-            self.prev_solution.extend(solution)
-            # print(f"Previous solution: {self.prev_solution}")
-            self.problem.start = new_start
+            for robot_id in self.problem.robots.keys():
+                self.problem.robots[robot_id].path.extend(solution)
+                # Update robot's start position to match the new start
+                self.problem.robots[robot_id].current_position = new_start
+                # print(f"Previous solution: {self.prev_solution}")
             self.T = new_T
             self.build()
 
     def reset_problem(self):
         """Reset windowing and restore initial start position if available."""
-        self.problem.start = self.initial_pos
+        for robot_id in self.problem.robots.keys():
+            robot = self.problem.robots[robot_id]
+            robot.path = []
+            robot.current_position = robot.start
         self.iter = 0
-        self.prev_solution = []
         self.T = min(self.t_max, self.total_t - (self.iter * self.t_max))
 
     # Shared utilities for Q manipulation
@@ -200,16 +200,18 @@ class BaseQUBO(ABC):
              it's fixed to 1
         3. If there's only one variable in a time step, it's fixed to 1
 
-        Note that this functions works better when there was already a pre-reduction
-        And be mind that it is iterative, when it clears at one iteration, it updates
-        coefficient so it can find more fixed variables in the next iteration.
+        Note that this functions works better when there was already a
+        pre-reduction. And be mind that it is iterative, when it clears at
+        one iteration, it updates coefficient so it can find more fixed
+        variables in the next iteration.
 
         Returns:
             dict: {variable_index: fixed_value} where fixed_value is 0 or 1
         """
         from collections import Counter
         fixed = {}
-        # We could get all dictionary items, but it simpler to iterate over known qubit numbers
+        # We could get all dictionary items, but it simpler to iterate
+        # over known qubit numbers
         n = self.initial_num_vars
         type = self.problem.get_format_type()
         if type == "grid":
