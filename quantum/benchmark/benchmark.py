@@ -99,7 +99,6 @@ class BenchmarkRunner:
         print(f"\nBenchmark complete. Results saved to {filepath}")
 
 
-
 def is_solution_valid(solution, builder):
     """
     Checks if the decoded path represents a valid path from start to goal.
@@ -113,21 +112,13 @@ def is_solution_valid(solution, builder):
     """
     problem = builder.problem
     problem_type = problem.get_format_type()
-
-    if problem_type == "grid":
-        return _is_grid_solution_valid(solution, builder)
-    elif problem_type == "graph" or problem_type == "both":
-        return _is_graph_solution_valid(solution, builder)
-    else:
+    
+    if problem_type != "grid" and problem_type != "graph":
         return {
             "valid": False,
             "reason": "unsupported_problem_type",
             "message": f"Unsupported problem type: {problem_type}",
         }
-
-def _is_grid_solution_valid(solution, builder):
-    problem = builder.problem
-    T = problem.T - builder.iter + 1  # Account for time horizon clipping
     
     result = {"valid": True, "details": {}}
 
@@ -155,6 +146,8 @@ def _is_grid_solution_valid(solution, builder):
     # Validate each robot's path using unified validation
     for robot_num, robot_path in robot_positions.items():
         robot_id = list(problem.robots.keys())[robot_num]
+        robot = problem.robots[robot_id]
+        T = robot.T + robot.start_time - builder.iter + 1  # Account for time horizon clipping
         robot_result = _validate_single_robot_path_unified(
             robot_path, problem, robot_id, robot_num, T)
         if not robot_result["valid"]:
@@ -191,7 +184,7 @@ def _validate_single_robot_path_unified(positions, problem, robot_id,
     notation = _get_notation_abstraction(problem)
     
     if T is None:
-        T = problem.T
+        T = problem.robots[robot_id].T
     
     if not positions:
         result["valid"] = False
@@ -401,51 +394,6 @@ class GraphNotation(BaseNotation):
         to_node = problem.graph.get_node_from_position(to_pos)
         # Adjacency list stores (neighbor_node, weight) tuples
         return any(neighbor_node == to_node for (neighbor_node, weight) in problem.graph.adjacency[from_node])
-
-
-
-def _is_graph_solution_valid(solution, builder):
-    problem = builder.problem
-    T = problem.T - builder.iter + 1  # Account for time horizon clipping
-    
-    result = {"valid": True, "details": {}}
-
-    if solution and isinstance(solution[0], list):
-        return [is_solution_valid(path, builder) for path in solution]
-
-    positions = list(solution)
-    if not positions:
-        result["valid"] = False
-        result["reason"] = "empty_path"
-        result["message"] = "❌ No path positions found. Invalid sample"
-        return result
-    
-    result["details"]["path"] = positions
-
-    # Group positions by robot
-    robot_positions = {}
-    for (i, j, t), robot_num in positions:
-        if robot_num not in robot_positions:
-            robot_positions[robot_num] = []
-        robot_positions[robot_num].append((i, j, t))
-
-    # Validate each robot's path using unified validation
-    for robot_num, robot_path in robot_positions.items():
-        robot_id = list(problem.robots.keys())[robot_num]
-        robot_result = _validate_single_robot_path_unified(
-            robot_path, problem, robot_id, robot_num, T)
-        if not robot_result["valid"]:
-            result["valid"] = False
-            result["reason"] = f"robot_{robot_num}_invalid"
-            result["message"] = f"❌ Robot {robot_num}: {robot_result['message']}"
-            result["details"][f"robot_{robot_num}"] = robot_result
-            return result
-        result["details"][f"robot_{robot_num}"] = robot_result
-
-    result["valid"] = True
-    result["message"] = "✅ Solution is valid"
-    return result
-
 
 
 def convert_tuple_keys_to_str(obj):

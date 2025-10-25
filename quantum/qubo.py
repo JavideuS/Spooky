@@ -68,6 +68,7 @@ problem = PathfindingProblem.from_unified_data(
 alele = RobotConfig("Alele", (2, 2), (0, 0), start_time=1, priority=1, safety_radius=0)
 # print(alele.to_dict())
 problem.add_robot(alele)
+# problem.add_robot(alele, True) # This alternative keeps predefined time when adding robots
 # print("Problem", problem.to_dict())
 
 # print("Materials:", grid.materials)
@@ -126,5 +127,5 @@ pennylane_solver = SolverFactory.create_solver(
 # print("Path:", dwave_solver.decode_path(solution["solution"], problem))
 # print(f"Energy: {dwave_solver.total_energy(solution):.4f}")
 
-benchmark = benchmark.BenchmarkRunner(builder, dwave_solver, num_runs=100)
+benchmark = benchmark.BenchmarkRunner(builder, dwave_solver, num_runs=1000)
 benchmark.run_build()

@@ -72,8 +72,9 @@ class GraphQUBO(BaseQUBO):
             robot_offset = robot_num * (self.num_nodes * self.T)
             robot = self.problem.robots[robot_id]
             start_time = robot.start_time
+            end_time = robot.T + start_time
 
-            for t in range(start_time, self.T):
+            for t in range(start_time, end_time):
                 # All node variables at time t for this robot
                 # Formula: node_id + num_nodes * t + robot_offset
                 indices = [node_id + (self.num_nodes * t) + robot_offset
@@ -109,13 +110,14 @@ class GraphQUBO(BaseQUBO):
             robot = self.problem.robots[robot_id]
             robot_offset = robot_num * (self.num_nodes * self.T)
             start_time = robot.start_time
+            end_time = robot.T + start_time
 
             # Get goal node for this robot
             goal_node = self.problem.get_graph_robot_current_goal(robot_id)[1]
 
-            for t in range(start_time + 1, self.T):
+            for t in range(start_time + 1, end_time):
                 goal_idx = goal_node + (self.num_nodes * t) + robot_offset
-                time_factor = 1 + ((t - start_time) / self.T)
+                time_factor = 1 + ((t - start_time) / (end_time - start_time))
                 self.Q[(goal_idx, goal_idx)] = (
                     self.Q.get((goal_idx, goal_idx), 0) - K_goal * time_factor
                 )
@@ -128,11 +130,12 @@ class GraphQUBO(BaseQUBO):
             robot = self.problem.robots[robot_id]
             robot_offset = robot_num * (self.num_nodes * self.T)
             start_time = robot.start_time
+            end_time = robot.T + start_time
 
             # Get goal node for this robot
             goal_node = self.problem.get_graph_robot_current_goal(robot_id)[1]
 
-            for t in range(start_time, self.T - 1):
+            for t in range(start_time, end_time - 1):
                 goal_idx_t = goal_node + (self.num_nodes * t) + robot_offset
                 goal_idx_t1 = goal_node + (self.num_nodes * (t + 1)) + robot_offset
                 self.Q[(goal_idx_t, goal_idx_t)] = (
@@ -154,8 +157,9 @@ class GraphQUBO(BaseQUBO):
             robot = self.problem.robots[robot_id]
             robot_offset = robot_num * (self.num_nodes * self.T)
             start_time = robot.start_time
+            end_time = robot.T + start_time
 
-            for t in range(start_time, self.T - 1):
+            for t in range(start_time, end_time - 1):
                 for node_i in range(self.num_nodes):
                     n = node_i + (self.num_nodes * t) + robot_offset
                     # Skip if no connections
@@ -183,8 +187,9 @@ class GraphQUBO(BaseQUBO):
             robot = self.problem.robots[robot_id]
             robot_offset = robot_num * (self.num_nodes * self.T)
             start_time = robot.start_time
+            end_time = robot.T + start_time
 
-            for t in range(start_time, self.T - 1):
+            for t in range(start_time, end_time - 1):
                 for node_i in range(self.num_nodes):
                     n = node_i + (self.num_nodes * t) + robot_offset
                     # Skip if no connections
@@ -206,6 +211,7 @@ class GraphQUBO(BaseQUBO):
             robot = self.problem.robots[robot_id]
             robot_offset = robot_num * (self.num_nodes * self.T)
             start_time = robot.start_time
+            end_time = robot.T + start_time
 
             # Get goal node for this robot
             goal_node = self.problem.get_graph_robot_current_goal(robot_id)[1]
@@ -216,9 +222,9 @@ class GraphQUBO(BaseQUBO):
                     continue
 
                 # For all time pairs t1 < t2
-                for t1 in range(start_time, self.T):
+                for t1 in range(start_time, end_time):
                     n1 = node_i + (self.num_nodes * t1) + robot_offset
-                    for t2 in range(t1 + 1, self.T):
+                    for t2 in range(t1 + 1, end_time):
                         n2 = node_i + (self.num_nodes * t2) + robot_offset
                         self.Q[(n1, n2)] = self.Q.get((n1, n2), 0) + K_bt
 
@@ -227,7 +233,7 @@ class GraphQUBO(BaseQUBO):
             # But not sure yet if the soft penalty is small enough to be not removed in cases where backtracking is needed
             if robot.active and robot.path:
                 len_sol = len(robot.path)
-                for t in range(start_time, self.T):
+                for t in range(start_time, end_time):
                     for p_idx, pos in enumerate(robot.path):
                         node_id = self.graph.get_node_from_position(pos[0][:2])
                         n = node_id + (self.num_nodes * t) + robot_offset
@@ -242,6 +248,7 @@ class GraphQUBO(BaseQUBO):
             robot = self.problem.robots[robot_id]
             robot_offset = robot_num * (self.num_nodes * self.T)
             start_time = robot.start_time
+            end_time = robot.T + start_time
 
             # Fix start node at start_time for this robot
             start_node = self.problem.get_graph_robot_current_goal(robot_id)[0]
@@ -258,14 +265,14 @@ class GraphQUBO(BaseQUBO):
             reachable_at_time = {start_time: {start_node}}
 
             # Perform a BFS-like traversal to find all reachable nodes at each time step
-            for t in range(start_time, self.T - 1):
+            for t in range(start_time, end_time - 1):
                 reachable_at_time[t + 1] = set()
                 for node_i in reachable_at_time[t]:
                     for node_j, _ in self.graph.adjacency.get(node_i, []):
                         reachable_at_time[t + 1].add(node_j)
 
             # Fix unreachable nodes to 0 for all time steps for this robot
-            for t in range(start_time + 1, self.T):
+            for t in range(start_time + 1, end_time):
                 for node_id in range(self.num_nodes):
                     var_idx = node_id + (self.num_nodes * t) + robot_offset
                     if node_id not in reachable_at_time.get(t, set()):

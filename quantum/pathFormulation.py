@@ -140,26 +140,37 @@ class PathfindingProblem:
         
         return problem
     
-    def add_robot(self, robot: RobotConfig):
+    def add_robot(self, robot: RobotConfig, keep_time=False):
         """Add a robot to the problem."""
         self.robots[robot.robot_id] = robot
         self.num_robots += 1
+        if not keep_time:
+            self.T = self.calculate_timeline()
     
     def manhattan_distance(self, start, end):
         """Calculate Manhattan distance for grid coordinates."""
         return abs(start[0] - end[0]) + abs(start[1] - end[1])
 
+    def set_robot_time(self):
+        """Set time horizon T for each robot if not already set."""
+        for robot in self.robots.values():
+            if robot.T is None:
+                if self.grid is not None:
+                    robot.T = int(self.manhattan_distance(robot.current_position, robot.goal) * 1.5)  # Simple heuristic
+                else:   # graph format
+                    # For graphs, I need to implement some heuristic like straight line from start to node
+                    # And make a conversion from like meters to time steps and some extra margin
+                    robot.T = 10
+
     def calculate_timeline(self):
-        if self.num_robots == 1:
-            # Calculate T based on available format
-            id = next(iter(self.robots), None)
-            robot = self.robots[id]
-            if self.grid is not None:
-                return int(self.manhattan_distance(robot.start, robot.goal) * 1.5)
-            else:  # graph format
-                # For graphs, we can estimate based on shortest path or use a default
-                return 10
-        return 5
+        total_time = 0
+        self.set_robot_time()
+        for robot in self.robots.values():
+            final_robot_time = robot.start_time + robot.T
+            print(robot.robot_id, final_robot_time)
+            if final_robot_time > total_time:
+                total_time = final_robot_time
+        return total_time
     
     def get_format_type(self):
         """Return the format type: 'grid', 'graph', or 'both'."""
