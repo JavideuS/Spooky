@@ -27,7 +27,11 @@ class PathfindingProblem:
 
         if T is None:
             T = self.calculate_timeline()
-        
+        else:
+            # Set individual robot times if not already set (and take the provided T as default)
+            for robot in self.robots.values():
+                if robot.T is None:
+                    robot.T = T
         self.T = T
         self.name = name
         
@@ -171,6 +175,29 @@ class PathfindingProblem:
             if final_robot_time > total_time:
                 total_time = final_robot_time
         return total_time
+
+    def get_robot_per_timestep(self):
+        """
+        Get a dictiorinary mapping each robot to that global timestep
+        If the robot is inactive for that timestep, it will not appear in the list
+        """
+        robot_per_timestep = {}
+        for t in range(self.T):
+            robot_per_timestep[t] = []
+            for robot in self.robots.values():
+                if robot.start_time <= t < robot.start_time + robot.T:
+                    robot_per_timestep[t].append(robot.robot_id)
+        return robot_per_timestep
+
+    def get_robot_nums(self):
+        """
+        Get the numberr associated to each robot id
+        This works when retrieving variables from the QUBO
+        """
+        robot_num = {}
+        for idx, robot_id in enumerate(self.robots.keys()):
+            robot_num[robot_id] = idx
+        return robot_num
     
     def get_format_type(self):
         """Return the format type: 'grid', 'graph', or 'both'."""
@@ -231,19 +258,16 @@ class PathfindingProblem:
         """
         Convert the problem instance to a dictionary representation.
         """
-        first_key = next(iter(self.robots))
         result = {
-            "start": self.robots[first_key].start,
-            "robot_id": first_key,
-            "current_position": self.robots[first_key].current_position,
-            "goal": self.robots[first_key].goal,
-            "T": self.T
+            "name": self.name,
+            "T": self.T,
+            "robots": {robot_id: robot.to_dict() for robot_id, robot in self.robots.items()},
         }
-        
+
         if self.grid is not None:
             result["grid"] = self.grid.to_dict()
 
         if self.graph is not None:
-            result["graph"] = self.graph
+            result["graph"] = self.graph.to_dict()
   
         return result

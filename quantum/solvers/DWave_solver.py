@@ -14,7 +14,7 @@ class DWaveSolver(BaseSolver):
         best_energy = []
         response = None
 
-        while (builder.total_t) > (builder.iter * builder.t_max):
+        while (builder.total_t) > (builder.current_T):
             Q = builder.Q
             if self.norm_scale != 0:
                 Q = self.normalize_qubo(builder.Q, self.norm_scale)
@@ -43,7 +43,7 @@ class DWaveSolver(BaseSolver):
         best_energy = []
         response = None
 
-        while (builder.total_t) > (builder.iter * builder.t_max):
+        while (builder.total_t) > (builder.current_T):
             # print("Pre Num wires", builder.get_num_wires())
             if self.norm_scale != 0:
                 fixed_vars = builder.get_fixed_variables()
@@ -62,17 +62,12 @@ class DWaveSolver(BaseSolver):
 
             first = response.first
             # print("Sample:", self.decode_path(sample_dict, builder.problem))
-            full_sol, success = self._handle_iteration_result(first.sample, fixed_vars, builder)
+            full_sol = self._handle_iteration_result(first.sample, fixed_vars, builder)
             best_sample.append(full_sol)
             best_energy.append(response.first.energy)
-
-            if not success:
-                # Handle gracefully or break the loop
-                break
 
         return {
             'solution': best_sample,
             'energy': best_energy,
-            # 'success': is_solution_valid(best_sample, M, N, T, s_i, s_j, e_i, e_j),
             'raw_response': response,
         }

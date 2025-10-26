@@ -38,10 +38,10 @@ conf = config_parser.load_config("config/config.yaml", sections=["problems", "pe
 # graph = map.Graph.from_hdf5_data(graph_data)
 
 # map_conf = conf["problems"]["grid_5x5_medium"]
-# map_conf = conf["problems"]["grid_5x5_hard"]
+map_conf = conf["problems"]["grid_5x5_hard"]
 # map_conf = conf["problems"]["grid_5x5_easyv2_alt"]
 # map_conf = conf["problems"]["grid_3x3_default"]
-map_conf = conf["problems"]["grid_3x3_no_obs"]
+# map_conf = conf["problems"]["grid_3x3_no_obs"]
 materials_data = config_parser.load_config("config/materials.yaml")["materials"]
 
 # grid = map.Grid.from_hdf5_data(map_hdf5, materials_data)
@@ -58,7 +58,7 @@ end = map_conf["goal"]
 T = map_conf["T"]
 
 problem = PathfindingProblem.from_unified_data(
-        "maps/synthetic/3x3/no_obs3x3.h5",
+        "maps/synthetic/5x5/obs5x5_hard.h5",
         start=start,
         end=end,
         T=T,
@@ -66,9 +66,10 @@ problem = PathfindingProblem.from_unified_data(
     )
 
 alele = RobotConfig("Alele", (2, 2), (0, 0), start_time=1, priority=1, safety_radius=0)
-# print(alele.to_dict())
 problem.add_robot(alele)
 # problem.add_robot(alele, True) # This alternative keeps predefined time when adding robots
+# print(alele.to_dict())
+
 # print("Problem", problem.to_dict())
 
 # print("Materials:", grid.materials)
@@ -84,18 +85,17 @@ material_costs = {
     "grass": 2.0
 }
 # problem.grid.material_cost = material_costs
-penalties_conf = conf["penalty_sets"]["graph"]
-# penalties_conf = conf["penalty_sets"]["alt_later_bt2"]
+# penalties_conf = conf["penalty_sets"]["graph"]
+penalties_conf = conf["penalty_sets"]["close_window"]
 
 # Choose QUBO builder based on problem format:
 # For grid problems:
-# p_grid = problem.as_grid_only()
-# builder = QUBOBuilder(p_grid, penalties=penalties_conf, name="standard", distance_scaling="enhanced_linear")
+p_grid = problem.as_grid_only()
+builder = QUBOBuilder(p_grid, penalties=penalties_conf, name="standard", distance_scaling="enhanced_linear")
 
 # For graph problems:
-p_graph = problem.as_graph_only()
-builder = GraphQUBO(p_graph, penalties=penalties_conf, name="graph_problem")
-# print(builder.max_window_size())
+# p_graph = problem.as_graph_only()
+# builder = GraphQUBO(p_graph, penalties=penalties_conf, name="graph_problem")
 
 # start_time = time.time()
 # Q = builder.build()
@@ -127,5 +127,5 @@ pennylane_solver = SolverFactory.create_solver(
 # print("Path:", dwave_solver.decode_path(solution["solution"], problem))
 # print(f"Energy: {dwave_solver.total_energy(solution):.4f}")
 
-benchmark = benchmark.BenchmarkRunner(builder, dwave_solver, num_runs=1000)
+benchmark = benchmark.BenchmarkRunner(builder, pennylane_solver, num_runs=1000)
 benchmark.run_build()

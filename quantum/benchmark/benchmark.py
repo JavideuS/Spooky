@@ -57,10 +57,7 @@ class BenchmarkRunner:
             )
 
             path = self.solver.decode_path(solution["solution"], self.problem)
-            # path = self.solver.merge_path_segments(path)
-            # print("Decoded Path:", path)
-            validation = is_solution_valid(path, self.builder)
-            # print("Validation:", validation)
+            validation = is_solution_valid(path, self.problem)
 
             result = {
                 "run_id": run_id,
@@ -84,6 +81,9 @@ class BenchmarkRunner:
                 f"Energy: {self.solver.total_energy(solution):.4f}"
             )
             print(f"Path: {path}")
+            # print(f"Robot paths: {self.solver.get_robot_paths(path)}")
+            for robot in self.problem.robots.values():
+                print(f" Robot {robot.robot_id} path: {robot.path}")
             # print("Raw solution:", solution["solution"])
 
         self.save_results()
@@ -99,18 +99,17 @@ class BenchmarkRunner:
         print(f"\nBenchmark complete. Results saved to {filepath}")
 
 
-def is_solution_valid(solution, builder):
+def is_solution_valid(solution, problem):
     """
     Checks if the decoded path represents a valid path from start to goal.
     Accepts a list of ((i, j, t), robot_num) tuples (decoded path), or a list of such paths.
     Args:
         solution (list): List of ((i, j, t), robot_num) tuples, 
             or list of such lists.
-        builder: QUBOBuilder instance containing problem and iteration info
+        problem: Problem instance (grid or graph)
     Returns:
         dict: Validation result with 'valid' flag and optional error details
     """
-    problem = builder.problem
     problem_type = problem.get_format_type()
     
     if problem_type != "grid" and problem_type != "graph":
@@ -124,7 +123,7 @@ def is_solution_valid(solution, builder):
 
     # If input is a list of paths (list of lists of tuples)
     if solution and isinstance(solution[0], list):
-        return [is_solution_valid(path, builder) for path in solution]
+        return [is_solution_valid(path, problem) for path in solution]
 
     # If input is a single path (list of tuples)
     positions = list(solution)
@@ -146,10 +145,8 @@ def is_solution_valid(solution, builder):
     # Validate each robot's path using unified validation
     for robot_num, robot_path in robot_positions.items():
         robot_id = list(problem.robots.keys())[robot_num]
-        robot = problem.robots[robot_id]
-        T = robot.T + robot.start_time - builder.iter + 1  # Account for time horizon clipping
         robot_result = _validate_single_robot_path_unified(
-            robot_path, problem, robot_id, robot_num, T)
+            robot_path, problem, robot_id, robot_num)
         if not robot_result["valid"]:
             result["valid"] = False
             result["reason"] = f"robot_{robot_num}_invalid"
@@ -163,7 +160,7 @@ def is_solution_valid(solution, builder):
     return result
 
 def _validate_single_robot_path_unified(positions, problem, robot_id, 
-                                        robot_num, T=None):
+                                        robot_num):
     """
     Unified validation function for single robot paths in both grid and graph 
     problems.
@@ -173,7 +170,6 @@ def _validate_single_robot_path_unified(positions, problem, robot_id,
         problem: Problem instance (grid or graph)
         robot_id: Robot identifier/name
         robot_num: Robot number for error messages
-        T: Time horizon (if None, uses problem.T)
         
     Returns:
         dict: Validation result
@@ -182,9 +178,8 @@ def _validate_single_robot_path_unified(positions, problem, robot_id,
     
     # Get notation abstraction based on problem type
     notation = _get_notation_abstraction(problem)
-    
-    if T is None:
-        T = problem.robots[robot_id].T
+
+    T = problem.robots[robot_id].T + problem.robots[robot_id].start_time
     
     if not positions:
         result["valid"] = False

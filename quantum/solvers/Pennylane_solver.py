@@ -75,7 +75,7 @@ class PennylaneSolver(BaseSolver):
         best_sample = []
         best_energy = []
 
-        while (builder.total_t) > (builder.iter * builder.t_max):
+        while (builder.total_t) > (builder.current_T):
             # builder.build()
             if self.norm_scale != 0:
                 builder.Q = self.normalize_qubo(builder.Q, self.norm_scale)
@@ -219,7 +219,7 @@ class PennylaneSolver(BaseSolver):
         best_sample = []
         best_energy = []
 
-        while (builder.total_t) > (builder.iter * builder.t_max):
+        while (builder.total_t) > (builder.current_T):
 
             if self.norm_scale != 0:
                 fixed_vars = builder.get_fixed_variables()
@@ -230,13 +230,10 @@ class PennylaneSolver(BaseSolver):
                 # In case the full qubo gets pre-processed
                 if len(builder.Q) == 0:
                     print("Full QUBO gets pre-processed")
-                    full_sol, success = self._handle_iteration_result(
+                    full_sol = self._handle_iteration_result(
                         {}, fixed_vars, builder)
                     best_sample.append(full_sol)
                     
-                    if not success:
-                        # Handle gracefully or break the loop
-                        break
                     continue
                 builder.Q = self.normalize_qubo(builder.Q, self.norm_scale)
 
@@ -345,16 +342,12 @@ class PennylaneSolver(BaseSolver):
 
             # Find best sample
             best_idx = np.argmin(energies)
-            full_sol, success = self._handle_iteration_result(samples[best_idx], fixed_vars, builder)
+            full_sol = self._handle_iteration_result(samples[best_idx], fixed_vars, builder)
             best_sample.append(full_sol)
             best_energy.append(energies[best_idx])
             
             # print(f"Best energy this iteration: {energies[best_idx]}")
             # print(f"Best sample: {samples[best_idx]}")
-
-            if not success:
-                # Handle gracefully or break the loop
-                break
 
         return {
             'solution': best_sample,

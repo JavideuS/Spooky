@@ -1,6 +1,7 @@
 import pennylane as qml
 import numpy as np
 from abc import ABC, abstractmethod
+from quantum.utils import paths
 
 
 class BaseQUBO(ABC):
@@ -29,10 +30,10 @@ class BaseQUBO(ABC):
         self.name = name
         self.var_limit = var_limit
         # Windowing/time slicing support
-        self.t_max = window_max_steps or self.max_window_size()
+        self.current_T = 0  # This represents the current global time in the problem
         self.total_t = getattr(self.problem, "T", 1)
+        self.t_max = window_max_steps or self.max_window_size()
         self.iter = 0
-        self.T = min(self.t_max, self.total_t - (self.iter * self.t_max))
         # QUBO dict
         self.Q = {}
         self.initial_num_vars = 0  # To be set by subclass during build
@@ -104,28 +105,56 @@ class BaseQUBO(ABC):
         Estimate max window size using problem dimensions if available.
         Subclasses relying on non-grid encodings can override this.
         """
-        # Default grid-style estimation if attributes exist
-        grid = getattr(self.problem, "grid", None)
-        if grid is not None and hasattr(grid, "M") and hasattr(grid, "N"):
-            M = grid.M
-            N = grid.N
-            if M and N:
-                return max(1, self.var_limit // (M * N))
-        # Fallback: 1 time slice
-        return 1
+        if self.problem.get_format_type() == "graph":
+            vars_per_time = self.num_nodes
+        elif self.problem.get_format_type() == "grid":
+            M = self.problem.grid.M
+            N = self.problem.grid.N
+            vars_per_time = M * N
+        
+        robot_active_timeline = self.problem.get_robot_per_timestep()
+        needed_vars = 0
+        for t in range(self.current_T, self.total_t):
+            num_active_robots = len(robot_active_timeline[t])
+            needed_vars += num_active_robots * vars_per_time
+            if needed_vars > self.var_limit:
+                return t - self.current_T
+        # We need to substract initial offset from current_T
+        # The +1 is because range is exclusive at the end (else it would keep infinite loop)
+        return self.total_t - self.current_T + 1
+
+    def get_active_robot_in_window(self):
+        """
+        Get list of robot IDs that are active in the current window.
+        """
+        active_robots = set()
+        robot_active_timeline = self.problem.get_robot_per_timestep()
+        for t in range(self.current_T, self.current_T + self.t_max):
+            for robot_id in robot_active_timeline.get(t, []):
+                active_robots.add(robot_id)
+        return list(active_robots)
+
 
     # Shared: window update/reset
-    def update_problem(self, new_start, solution=[]):
+    def update_problem(self, solution=[]):
         """Advance window and optionally update start state for next build."""
-        self.iter += 1
-        new_T = min(self.t_max, self.total_t - (self.iter * self.t_max))
-        if new_T > 0:
-            for robot_id in self.problem.robots.keys():
-                self.problem.robots[robot_id].path.extend(solution)
-                # Update robot's start position to match the new start
-                self.problem.robots[robot_id].current_position = new_start
-                # print(f"Previous solution: {self.prev_solution}")
-            self.T = new_T
+        self.iter += 1  # Now iter is only used for information
+        # The new method to keep time is current_T which to keep track of overlapping first step with last step
+        # It simply does t_max - 1 (meaning that if you only can render one time step you will always be in that time)
+        # Because you need to render the step where you were and the following iteration (qubo renders the transition)
+        # Note that this also helps debug since now the global time don't care about iterations (which clipped time)
+        self.current_T += self.t_max - 1
+        # We update current time and recalculate t_max for next window
+        self.t_max = self.max_window_size()
+        if self.t_max > 0:
+            for robot_num, new_segment in solution.items():
+                robot_id = list(self.problem.robots.keys())[robot_num]
+                old_path = self.problem.robots[robot_id].path
+                merged = paths.merge_paths(old_path, new_segment)
+
+                self.problem.robots[robot_id].path = merged
+                self.problem.robots[robot_id].current_position = merged[-1][:2]
+
             self.build()
 
     def reset_problem(self):
@@ -135,7 +164,8 @@ class BaseQUBO(ABC):
             robot.path = []
             robot.current_position = robot.start
         self.iter = 0
-        self.T = min(self.t_max, self.total_t - (self.iter * self.t_max))
+        self.current_T = 0
+        self.t_max = self.max_window_size()
 
     # Shared utilities for Q manipulation
     def dict_to_array(self, fill_value=0):

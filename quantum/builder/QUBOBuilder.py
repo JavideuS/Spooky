@@ -22,7 +22,7 @@ class GridQUBOBuilder(BaseQUBO):
         problem,
         penalties,
         name="grid",
-        var_limit=601,  # 605 10x10
+        var_limit=151,  # 605 10x10
         window_max_steps=None,
         distance_scaling="enhanced_linear",
     ):
@@ -97,14 +97,24 @@ class GridQUBOBuilder(BaseQUBO):
         """
         M, N = self.problem.grid.M, self.problem.grid.N
         K_hot = self.penalties['K_hot']
+        robot_nums = self.problem.get_robot_nums()
         
-        for robot_num, robot_id in enumerate(self.problem.robots.keys()):
-            robot_offset = robot_num * (M * N * self.T)
+        for robot_id in self.get_active_robot_in_window():
+            robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
             robot = self.problem.robots[robot_id]
             start_time = robot.start_time
+            start = 0
+            if self.current_T < start_time:
+                start = start_time - self.current_T
+            # Note that if current_T > start_time then it is a continuation
             end_time = robot.T + start_time
+            end = end_time - self.current_T
+            # This would mean it doesn't finish in this window
+            if end_time > self.current_T + self.t_max:
+                end = self.t_max
 
-            for t in range(start_time, end_time):
+            for t in range(start, end):
+                # print(t)
                 indices = [i * N + j + (M * N) * t + robot_offset for i in range(M) for j in range(N)]
                 
                 for n in indices:
@@ -121,14 +131,22 @@ class GridQUBOBuilder(BaseQUBO):
         M, N = self.problem.grid.M, self.problem.grid.N
         adjacency = self.problem.grid.adjacency
         K_adj = self.penalties['K_adj']
+        robot_nums = self.problem.get_robot_nums()
         
-        for robot_num, robot_id in enumerate(self.problem.robots.keys()):
-            robot_offset = robot_num * (M * N * self.T)
+        for robot_id in self.get_active_robot_in_window():
+            robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
             robot = self.problem.robots[robot_id]
-            start_time = robot.start_time
-            end_time = robot.T + start_time
             
-            for t in range(start_time, end_time - 1):
+            start_time = robot.start_time
+            start = 0
+            if self.current_T < start_time:
+                start = start_time - self.current_T
+            end_time = robot.T + start_time
+            end = end_time - self.current_T
+            if end_time > self.current_T + self.t_max:
+                end = self.t_max
+            
+            for t in range(start, end - 1):
                 for i in range(M):
                     for j in range(N):
                         # This a consistent linear indexing for the grid
@@ -146,13 +164,22 @@ class GridQUBOBuilder(BaseQUBO):
         M, N = self.problem.grid.M, self.problem.grid.N
         adjacency = self.problem.grid.adjacency
         K_adj = self.penalties['K_adj']
-        for robot_num, robot_id in enumerate(self.problem.robots.keys()):
-            robot_offset = robot_num * (M * N * self.T)
+        robot_nums = self.problem.get_robot_nums()
+        
+        for robot_id in self.get_active_robot_in_window():
+            robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
             robot = self.problem.robots[robot_id]
+            
             start_time = robot.start_time
+            start = 0
+            if self.current_T < start_time:
+                start = start_time - self.current_T
             end_time = robot.T + start_time
+            end = end_time - self.current_T
+            if end_time > self.current_T + self.t_max:
+                end = self.t_max
 
-            for t in range(start_time, end_time - 1):
+            for t in range(start, end - 1):
                 for i in range(M):
                     for j in range(N):
                         n = i * N + j + M * N * t + robot_offset
@@ -176,18 +203,24 @@ class GridQUBOBuilder(BaseQUBO):
         """
         M, N = self.problem.grid.M, self.problem.grid.N
         K_start = self.penalties['K_start']
-
-        for robot_num, robot_id in enumerate(self.problem.robots.keys()):
+        robot_nums = self.problem.get_robot_nums()
+        
+        for robot_id in self.get_active_robot_in_window():
+            robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
+            
             robot = self.problem.robots[robot_id]
             s_i, s_j = robot.current_position
-            robot_time_start = robot.start_time
-            robot_offset = robot_num * (M * N * self.T)
-            start_idx = s_i * N + s_j + M * N * robot_time_start + robot_offset
+            start_time = robot.start_time
+            start = 0
+            if self.current_T < start_time:
+                start = start_time - self.current_T
+
+            start_idx = s_i * N + s_j + M * N * start + robot_offset
             self.Q[(start_idx, start_idx)] = (
                 self.Q.get((start_idx, start_idx), 0) - K_start
             )
 
-    def apply_goal_approximation_penalty(self):
+    def apply_goal_approximation_penalty(self, robot_id):
         """
         Apply goal approximation penalty: encourage getting near the goal.
         This is used when reaching goal is not possible in a single window.
@@ -197,38 +230,41 @@ class GridQUBOBuilder(BaseQUBO):
         M, N = self.problem.grid.M, self.problem.grid.N
         K_goal_approx = self.penalties['K_goal_approx']
         K_obs_repel = 0.4
+        robot_nums = self.problem.get_robot_nums()
         
-        # Apply to all robots
-        for robot_num, robot_id in enumerate(self.problem.robots.keys()):
-            robot = self.problem.robots[robot_id]
-            e_i, e_j = robot.goal
-            robot_time_start = robot.start_time
-            end_time = robot.T + robot_time_start
-            robot_offset = robot_num * (M * N * self.T)
+        robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
+
+        robot = self.problem.robots[robot_id]
+        e_i, e_j = robot.goal
+
+        start_time = robot.start_time
+        start = 0
+        if self.current_T < start_time:
+            start = start_time - self.current_T
             
-            for t in range(robot_time_start + 1, end_time):
-                time_factor = (1.2) ** (5 * (t - robot_time_start) / (end_time - robot_time_start))
-                for i in range(M):
-                    for j in range(N):
-                        n = i * N + j + M * N * t + robot_offset
+        for t in range(start + 1, self.t_max):
+            time_factor = (1.2) ** (5 * (t - start) / (self.t_max - start))
+            for i in range(M):
+                for j in range(N):
+                    n = i * N + j + M * N * t + robot_offset
                         
-                        # Skip obstacle cells entirely - let explicit obstacle 
-                        # constraint handle them
-                        if (i, j) in self.problem.grid.obstacles:
-                            continue
+                    # Skip obstacle cells entirely - let explicit obstacle 
+                    # constraint handle them
+                    if (i, j) in self.problem.grid.obstacles:
+                        continue
                         
-                        # Goal progress (Manhattan, time-weighted)
-                        # Use the configurable Manhattan distance scaling method
-                        raw_dist = self.problem.manhattan_distance((i, j), (e_i, e_j))
-                        K_dis = self.calculate_manhattan_penalty(raw_dist, K_goal_approx, time_factor)
+                    # Goal progress (Manhattan, time-weighted)
+                    # Use the configurable Manhattan distance scaling method
+                    raw_dist = self.problem.manhattan_distance((i, j), (e_i, e_j))
+                    K_dis = self.calculate_manhattan_penalty(raw_dist, K_goal_approx, time_factor)
 
-                        # Soft obstacle avoidance using potential field 
-                        # (for nearby obstacles)
+                    # Soft obstacle avoidance using potential field 
+                    # (for nearby obstacles)
 
-                        K_obs = K_obs_repel * self.P_obs[i, j]
-                        self.Q[(n, n)] = (
-                            self.Q.get((n, n), 0.0) - K_dis + K_obs
-                        )
+                    K_obs = K_obs_repel * self.P_obs[i, j]
+                    self.Q[(n, n)] = (
+                        self.Q.get((n, n), 0.0) - K_dis + K_obs
+                    )
         # for t in range(1, self.T):
         #     time_factor = (1.2) ** (5 * t / self.T)
         #     for i in range(M):
@@ -263,22 +299,34 @@ class GridQUBOBuilder(BaseQUBO):
         """
         M, N = self.problem.grid.M, self.problem.grid.N
         K_goal = self.penalties['K_goal']
-        if self.T + (self.iter * self.t_max) != self.total_t:
-            self.apply_goal_approximation_penalty()
-            # print("dx")
-        else:
-            for robot_num, robot_id in enumerate(self.problem.robots.keys()):
-                robot = self.problem.robots[robot_id]
+        robot_nums = self.problem.get_robot_nums()
+        
+        for robot_id in self.get_active_robot_in_window():
+            robot = self.problem.robots[robot_id]
+            start_time = robot.start_time
+            end_time = robot.T + start_time
+
+            if end_time > self.current_T + self.t_max:
+                # Had to make it single robot, else it would conflict with no approximation robots
+                self.apply_goal_approximation_penalty(robot_id)
+            else:
+                robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
                 e_i, e_j = robot.goal
-                robot_time_start = robot.start_time
-                robot_end_time = robot.T + robot_time_start
-                robot_offset = robot_num * (M * N * self.T)
-                for t in range(robot_time_start + 1, robot_end_time):
+
+                start = 0
+                if self.current_T < start_time:
+                    start = start_time - self.current_T
+                
+                end = end_time - self.current_T
+                # This is used because in small windows sometimes goal is not strong enough
+                # So I need to apply a multiplier based on how small is the window to not be constantly modifying penalties values
+                window_constant = 1 + (0.6 / end)
+                for t in range(start + 1, end):
                     goal_idx = e_i * N + e_j + M * N * t + robot_offset
                     # Note that since I initially considered all this time factor for single robot starting in t=-
                     # I adjust to keep the same growth by reducing time start to both)
-                    time_factor = 1 + ((t - robot_time_start) / (robot_end_time - robot_time_start))
-                    self.Q[(goal_idx, goal_idx)] += -K_goal * time_factor
+                    time_factor = 1 + ((t - start) / (end - start)) 
+                    self.Q[(goal_idx, goal_idx)] += -K_goal * time_factor * window_constant
 
     def apply_goal_early_penalty(self):
         """
@@ -299,14 +347,23 @@ class GridQUBOBuilder(BaseQUBO):
         """
         M, N = self.problem.grid.M, self.problem.grid.N
         K_lock = self.penalties['K_lock']
-
-        for robot_num, robot_id in enumerate(self.problem.robots.keys()):
-            robot_offset = robot_num * (M * N * self.T)
+        robot_nums = self.problem.get_robot_nums()
+        
+        for robot_id in self.get_active_robot_in_window():
+            robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
             robot = self.problem.robots[robot_id]
             e_i, e_j = robot.goal
+
             start_time = robot.start_time
+            start = 0
+            if self.current_T < start_time:
+                start = start_time - self.current_T
             end_time = robot.T + start_time
-            for t in range(start_time, end_time - 1):  # up to T-2 to reference t+1
+            end = end_time - self.current_T
+            if end_time > self.current_T + self.t_max:
+                end = self.t_max
+            
+            for t in range(start, end - 1):  # up to T-2 to reference t+1
                 g_t = e_i * N + e_j + M * N * t + robot_offset
                 g_t_next = e_i * N + e_j + M * N * (t + 1) + robot_offset
 
@@ -323,12 +380,21 @@ class GridQUBOBuilder(BaseQUBO):
         # Constraint: No backtracking (except at goal)
         M, N = self.problem.grid.M, self.problem.grid.N
         K_bt = self.penalties['K_bt']
+        robot_nums = self.problem.get_robot_nums()
         
-        for robot_num, robot_id in enumerate(self.problem.robots.keys()):
-            robot_offset = robot_num * (M * N * self.T)
+        for robot_id in self.get_active_robot_in_window():
+            robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
             robot = self.problem.robots[robot_id]
+
             start_time = robot.start_time
+            start = 0
+            if self.current_T < start_time:
+                start = start_time - self.current_T
             end_time = robot.T + start_time
+            end = end_time - self.current_T
+            if end_time > self.current_T + self.t_max:
+                end = self.t_max
+
             e_i, e_j = robot.goal  # Use robot's own goal
 
             for i in range(M):
@@ -338,9 +404,9 @@ class GridQUBOBuilder(BaseQUBO):
                         continue
 
                     # For all time pairs t1 < t2
-                    for t1 in range(start_time, end_time):
+                    for t1 in range(start, end):
                         g_t = i * N + j + M * N * t1 + robot_offset
-                        for t2 in range(t1 + 1, end_time):
+                        for t2 in range(t1 + 1, end):
                             g_t2 = i * N + j + M * N * t2 + robot_offset
                             self.Q[(g_t, g_t2)] = (
                                 self.Q.get((g_t, g_t2), 0) + K_bt
@@ -349,9 +415,10 @@ class GridQUBOBuilder(BaseQUBO):
             if robot.active and robot.path:
                 len_sol = len(robot.path)
                 # print("robot path", robot.path)
-                for t in range(start_time, end_time):
+                for t in range(start, end):
                     for p_idx, pos in enumerate(robot.path):
-                        i, j = pos[0][:2]
+                        # print(p_idx, pos)
+                        i, j = pos[:2]
                         idx = i * N + j + M * N * t + robot_offset
                         time_factor = (1 + (len_sol - p_idx)) / len_sol
                         self.Q[(idx, idx)] = self.Q.get((idx, idx), 0) + K_bt * time_factor
@@ -363,17 +430,26 @@ class GridQUBOBuilder(BaseQUBO):
         """
         M, N = self.problem.grid.M, self.problem.grid.N
         K_tp = self.penalties['K_tp']
-
-        for robot_num, robot_id in enumerate(self.problem.robots.keys()):
-            robot_offset = robot_num * (M * N * self.T)
+        robot_nums = self.problem.get_robot_nums()
+        
+        for robot_id in self.get_active_robot_in_window():
+            robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
             robot = self.problem.robots[robot_id]
+
             start_time = robot.start_time
-            end_time = robot.T - start_time
+            start = 0
+            if self.current_T < start_time:
+                start = start_time - self.current_T
+            end_time = robot.T + start_time
+            end = end_time - self.current_T
+            if end_time > self.current_T + self.t_max:
+                end = self.t_max
+            
             e_i, e_j = robot.goal
             min_steps = self.problem.manhattan_distance(
                 robot.current_position, robot.goal
             )
-            for t in range(start_time, min(min_steps + start_time, end_time)):
+            for t in range(start, min(min_steps + start, end)):
                 goal_idx = e_i * N + e_j + M * N * t + robot_offset
                 self.Q[(goal_idx, goal_idx)] += K_tp  # Penalty for arriving to soon
 
@@ -384,12 +460,22 @@ class GridQUBOBuilder(BaseQUBO):
         """
         M, N = self.problem.grid.M, self.problem.grid.N
         K_ter = self.penalties['K_ter']
-        for robot_num, robot_id in enumerate(self.problem.robots.keys()):
-            robot_offset = robot_num * (M * N * self.T)
+        robot_nums = self.problem.get_robot_nums()
+        
+        for robot_id in self.get_active_robot_in_window():
+            robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
             robot = self.problem.robots[robot_id]
+
             start_time = robot.start_time
-            end_time = robot.T - start_time
-            for t in range(start_time, end_time):
+            start = 0
+            if self.current_T < start_time:
+                start = start_time - self.current_T
+            end_time = robot.T + start_time
+            end = end_time - self.current_T
+            if end_time > self.current_T + self.t_max:
+                end = self.t_max
+            
+            for t in range(start, end):
                 for i in range(M):
                     for j in range(N):
                         material = self.problem.grid.get_terrain_at(i, j)
@@ -408,13 +494,22 @@ class GridQUBOBuilder(BaseQUBO):
         M, N = self.problem.grid.M, self.problem.grid.N
         adjacency = self.problem.grid.adjacency
         K_elev = self.penalties['K_elev']
-
-        for robot_num, robot_id in enumerate(self.problem.robots.keys()):
-            robot_offset = robot_num * (M * N * self.T)
+        robot_nums = self.problem.get_robot_nums()
+        
+        for robot_id in self.get_active_robot_in_window():
+            robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
             robot = self.problem.robots[robot_id]
+
             start_time = robot.start_time
-            end_time = robot.T - start_time
-            for t in range(start_time, end_time - 1):
+            start = 0
+            if self.current_T < start_time:
+                start = start_time - self.current_T
+            end_time = robot.T + start_time
+            end = end_time - self.current_T
+            if end_time > self.current_T + self.t_max:
+                end = self.t_max
+
+            for t in range(start, end - 1):
                 for i in range(M):
                     for j in range(N):
                         hi = self.problem.grid.get_elevation_at(i, j)
@@ -444,12 +539,22 @@ class GridQUBOBuilder(BaseQUBO):
         """
         M, N = self.problem.grid.M, self.problem.grid.N
         K_obs = self.penalties.get('K_obs', 2)
-        for robot_num, robot_id in enumerate(self.problem.robots.keys()):
-            robot_offset = robot_num * (M * N * self.T)
+        robot_nums = self.problem.get_robot_nums()
+
+        for robot_id in self.get_active_robot_in_window():
+            robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
             robot = self.problem.robots[robot_id]
+
             start_time = robot.start_time
-            end_time = robot.T - start_time
-            for t in range(start_time, end_time):
+            start = 0
+            if self.current_T < start_time:
+                start = start_time - self.current_T
+            end_time = robot.T + start_time
+            end = end_time - self.current_T
+            if end_time > self.current_T + self.t_max:
+                end = self.t_max
+
+            for t in range(start, end):
                 for (obs_i, obs_j) in self.problem.grid.obstacles:
                     obs_idx = obs_i * N + obs_j + M * N * t + robot_offset
                     self.Q[(obs_idx, obs_idx)] = (
@@ -459,14 +564,20 @@ class GridQUBOBuilder(BaseQUBO):
     def apply_multi_robot_penalty(self):
         M, N = self.problem.grid.M, self.problem.grid.N
         K_crash = self.penalties.get('K_crash', 5)
-        for t in range(self.T):
+        robot_nums = self.problem.get_robot_nums()
+        
+        for t in range(self.t_max):
             for i in range(M):
                 for j in range(N):
-                    for r1 in range(num_robots):
-                        for r2 in range(r1 + 1, num_robots):
-                            idx1 = var_index_grid(r1, i, j, t)
-                            idx2 = var_index_grid(r2, i, j, t)
-                            self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_col
+                    for robot_id1 in self.get_active_robot_in_window():
+                        for robot_id2 in self.get_active_robot_in_window():
+                            if robot_id1 >= robot_id2:
+                                continue
+                            robot_offset1 = robot_nums[robot_id1] * (M * N * self.total_t)
+                            robot_offset2 = robot_nums[robot_id2] * (M * N * self.total_t)
+                            idx1 = i * N + j + M * N * t + robot_offset1
+                            idx2 = i * N + j + M * N * t + robot_offset2
+                            self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_crash
 
     def build(self, constraints_to_apply=None):
         if constraints_to_apply is None:
@@ -480,6 +591,8 @@ class GridQUBOBuilder(BaseQUBO):
                 "K_tp": "tp",
                 "K_ter": "terrain",
                 "K_elev": "elevation",
+                "K_obs": "obstacle",
+                "K_crash": "multi_robot",
             }
             constraints_to_apply = [
                 v for k, v in penalty_to_constraint.items()
@@ -515,28 +628,39 @@ class GridQUBOBuilder(BaseQUBO):
             self.apply_elevation_penalty()
         if "obstacle" in constraints_to_apply:
             self.apply_obstacle_penalty()
+        if "multi_robot" in constraints_to_apply:
+            self.apply_multi_robot_penalty()
 
         return self.Q
 
     def get_fixed_variables(self):
         M, N = self.problem.grid.M, self.problem.grid.N
         fixed = {}
+        robot_nums = self.problem.get_robot_nums()
 
         # Fix start position at time 0
-        for robot_num, robot_id in enumerate(self.problem.robots.keys()):
-            robot_offset = robot_num * (M * N * self.T)
+        for robot_id in self.get_active_robot_in_window():
+            robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
             robot = self.problem.robots[robot_id]
+
             s_i, s_j = robot.current_position
+
             start_time = robot.start_time
+            start = 0
+            if self.current_T < start_time:
+                start = start_time - self.current_T
             end_time = robot.T + start_time
-            start_idx = s_i * N + s_j + M * N * start_time + robot_offset
+            end = end_time - self.current_T
+            if end_time > self.current_T + self.t_max:
+                end = self.t_max
+            start_idx = s_i * N + s_j + M * N * start + robot_offset
 
             fixed[start_idx] = 1
             print(start_idx, "fixed to 1 for robot", robot_id)
             # fix all other time=0 cells
             for i in range(M):
                 for j in range(N):
-                    n = i * N + j + M * N * start_time + robot_offset
+                    n = i * N + j + M * N * start + robot_offset
                     if n != start_idx:
                         fixed[n] = 0
 
@@ -547,18 +671,14 @@ class GridQUBOBuilder(BaseQUBO):
         #     fixed[goal_idx] = 1
 
         # Fix obstacle cells to 0 at all time steps
-        # for robot_num, robot_id in enumerate(self.problem.robots.keys()):
-            # robot_offset = robot_num * (M * N * self.T)
-            # start_time = self.problem.robots[robot_id].start_time
-            for t in range(start_time, self.end_time):
+            for t in range(start, end):
                 for (obs_i, obs_j) in self.problem.grid.obstacles:
                     obs_idx = obs_i * N + obs_j + M * N * t + robot_offset
                     fixed[obs_idx] = 0
 
         # Now we can also fix unreachable cells to 0
         # Based on bfs (this essentially complies with adjacency and tp constraints)
-        # for robot_num, robot_id in enumerate(self.problem.robots.keys()):
-            reachable = self.reachable_mask(robot)
+            reachable = self.reachable_mask(robot, start, end)
             for t in reachable:
                 for i in range(M):
                     for j in range(N):
@@ -568,25 +688,20 @@ class GridQUBOBuilder(BaseQUBO):
 
         return fixed
 
-    def reachable_mask(self, robot):
+    def reachable_mask(self, robot, start_time, end_time):
         """
         Compute reachable positions per time step.
         Note that it is aggresive, since this one is based on my adjacency map, which does not include staying in place.
         This is the ideal scenario of always keep moving, but when implementing dynamic obstacles, we may want to consider staying in place as well.
 
         Args:
-            T: number of time steps
-            start: (i, j) tuple for start position
-            adjacency: dict mapping (i,j) -> list of neighbor (i,j)
-            obstacles: list of blocked (i,j), optional
+
 
         Returns:
             A dict: {t: set((i, j), ...)} of reachable positions per time step.
         """
 
         start = robot.current_position
-        start_time = robot.start_time
-        end_time = robot.T + start_time
         adjacency = self.problem.grid.adjacency  # Note that my adjacency map don't include obstacles
         obstacles = self.problem.grid.obstacles
 

@@ -107,7 +107,7 @@ problems:
         - [1, 3]
     start: (4, 3)
     goal: (4, 0)
-    T: 18 # 14 perfect route # 17 da erroes
+    T: 14
 
   grid_5x5_hard_alt:
     grid:
@@ -121,7 +121,7 @@ problems:
         - [1, 3]
     start: (4, 0)
     goal: (4, 3)
-    T: 18 # 14 perfect route # 17 da erroes
+    T: 14
   
   grid_10x10_no_obs:
     grid:
@@ -213,6 +213,17 @@ penalty_sets:
     K_adj: 4.8
     K_start: 6.5
     K_goal: 2.7
+    K_lock: 4
+    K_bt: 2.3
+    K_tp: 1.2
+    K_goal_approx: 0.7
+    K_obs: 0
+
+  close_window: # alt later bt2 struggles with short windows
+    K_hot: 9
+    K_adj: 4.8
+    K_start: 6.5
+    K_goal: 2.7  # Max goal penalty without invalid moves
     K_lock: 4
     K_bt: 2.3
     K_tp: 1.2

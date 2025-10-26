@@ -28,7 +28,6 @@ class RobotConfig:
         # Dynamic state tracking
         self.current_position = start
         self.path = []
-        self.goal_reached = False
         self.active = True  # Whether robot is actively planning
         
     def is_at_goal(self) -> bool:
@@ -44,6 +43,6 @@ class RobotConfig:
             'priority': self.priority,
             'safety_radius': self.safety_radius,
             'current_position': self.current_position,
-            'goal_reached': self.goal_reached,
+            'path': self.path,
             'active': self.active
         }

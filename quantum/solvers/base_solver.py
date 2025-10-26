@@ -111,41 +111,60 @@ class BaseSolver(ABC):
     def decode_path(self, sample: Dict, problem, t_offset: int = 0) -> List[Tuple[Tuple[int, int, int], int]]:
         """
         Decode the binary sample into a path of ((i, j, t), robot_num) tuples.
-
-        Args:
-            sample: Binary solution as dict or list
-            problem: Problem instance
-            t_offset: Time offset for path segments
-
-        Returns:
-            List of ((i, j, t), robot_num) tuples representing the path
+        Merges multiple time-window samples while ensuring continuity per robot.
         """
         path = []
 
-        # If sample is a list, process each element in order
+        # Handle multiple segments (list of samples)
         if isinstance(sample, list):
             if len(sample) == 1:
                 sample = sample[0]
-            else:  # Multiple segments (Time windows)
+            else:
                 t_offset_running = t_offset
                 path = []
-                for  index, s in enumerate(sample):
+                # Store last position per robot
+                last_positions = {}
+
+                for index, s in enumerate(sample):
                     sub_path = self.decode_path(s, problem, t_offset=t_offset_running)
-                    if sub_path:
-                        max_t = max(x[0][2] for x in sub_path)
+                    if not sub_path:
+                        continue
+
+                    # Organize by robot for continuity checking
+                    sub_robot_paths = self.get_robot_paths(sub_path)
+
+                    # For each robot, check if we can clip the start
+                    for robot_num, robot_path in sub_robot_paths.items():
+                        if robot_num in last_positions:
+                            last_pos = last_positions[robot_num]
+                            first_pos = robot_path[0][:2]
+                            if last_pos == first_pos:
+                                # Same position continuity → remove first from subpath
+                                sub_robot_paths[robot_num] = robot_path[1:]
+
+                                # Also adjust time for continuity
+                                sub_robot_paths[robot_num] = [
+                                    (i, j, t - 1) for (i, j, t) in sub_robot_paths[robot_num]
+                                ]
+                    
+                    # We have been working with dict num_robot: path
+                    # So we flatten sub_robot_paths back to list of ((i,j,t), robot_num)
+                    merged_sub_path = [((i, j, t), r) for r, coords in sub_robot_paths.items() for (i, j, t) in coords]
+
+                    # Update last_positions
+                    for (i, j, t), r in merged_sub_path:
+                        last_positions[r] = (i, j)
+
+                    # Update running time offset
+                    if merged_sub_path:
+                        max_t = max(x[0][2] for x in merged_sub_path)
                         t_offset_running = max_t + 1
-                    if path:
-                        # Avoid duplicating the last position of the previous segment
-                        print("Paths:", path[-1], sub_path[0])
-                        if path and path[-1][0][:2] == sub_path[0][0][:2]:
-                            # Updating time steps
-                            # Else each would be off by one
-                            sub_path = [((sb[0][0], sb[0][1], sb[0][2] - index), sb[1]) for sb in sub_path[1:]]
-                    path.extend(sub_path)
+
+                    path.extend(merged_sub_path)
+
                 return path
 
-        # If sample is a dict, process as before
-        # This would be single window scenario
+        # Handle single dict sample
         if isinstance(sample, dict):
             qubo_type = problem.get_format_type()
             num_robots = problem.num_robots
@@ -156,47 +175,15 @@ class BaseSolver(ABC):
                 total_vars = M * N * T * num_robots
             else:
                 total_vars = len(problem.graph.nodes) * problem.T * num_robots
+
             for idx in range(total_vars):
                 if sample.get(idx, 0) == 1:
                     i, j, t, robot_num = self.decode_position(idx, problem)
                     path.append(((i, j, t + t_offset), robot_num))
+
             return path
 
         return []
-
-    def merge_path_segments(self, path: List[Tuple[Tuple[int, int, int], int]]) -> List[Tuple[Tuple[int, int, int], int]]:
-        """
-        Merge path segments and reindex time to be continuous.
-
-        Args:
-            path: List of ((i, j, t), robot_num) tuples
-
-        Returns:
-            Merged path with continuous time indexing
-        """
-        if not path:
-            return []
-
-        merged = [path[0]]
-        for point in path[1:]:
-            if (point[0][0], point[0][1], point[1]) == (merged[-1][0][0], merged[-1][0][1], merged[-1][1]):
-                continue  # skip duplicate position for same robot
-            merged.append(point)
-
-        # Reindex t for each robot separately
-        robot_paths = {}
-        for (i, j, t), robot_num in merged:
-            if robot_num not in robot_paths:
-                robot_paths[robot_num] = []
-            robot_paths[robot_num].append((i, j, t))
-        
-        # Reindex time for each robot
-        result = []
-        for robot_num, robot_path in robot_paths.items():
-            for t, (i, j, _) in enumerate(robot_path):
-                result.append(((i, j, t), robot_num))
-        
-        return result
 
     def get_combined_path(self, path: List[Tuple[Tuple[int, int, int], int]]) -> List[Tuple[int, int, int]]:
         """
@@ -311,14 +298,9 @@ class BaseSolver(ABC):
             total_vars=builder.initial_num_vars
         )
         
-        # Update problem for next iteration
-        try:
-            path = self.decode_path(full_sol, builder.problem)
-            last_pos = path[-1]
-            print("Decoded path:", path)
-            print("Last position:", last_pos)
-            builder.update_problem(last_pos[0][:2], path)
-            return full_sol, True
-        except Exception as e:
-            print(f"Warning: Could not decode path: {e}")
-            return full_sol, False
+        path = self.decode_path(full_sol, builder.problem)
+        robot_paths = self.get_robot_paths(path)
+        # print("Decoded path:", path)
+        print("Robots paths", robot_paths)
+        builder.update_problem(robot_paths)
+        return full_sol
