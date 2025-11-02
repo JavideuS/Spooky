@@ -235,6 +235,7 @@ class PennylaneSolver(BaseSolver):
                     best_sample.append(full_sol)
                     
                     continue
+                # print(fixed_vars)
                 builder.Q = self.normalize_qubo(builder.Q, self.norm_scale)
 
             # print("Start position:", builder.problem.start,

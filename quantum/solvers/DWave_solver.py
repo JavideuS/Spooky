@@ -50,6 +50,7 @@ class DWaveSolver(BaseSolver):
                 builder.Q, offset = builder.reduce_qubo(fixed_vars)
                 diag_fixed = builder.reduce_diag_fixed_vars_iterative()
                 fixed_vars.update(diag_fixed)
+                # print(fixed_vars)
                 builder.Q = self.normalize_qubo(builder.Q, self.norm_scale)
             # print(fixed_vars)
             # print("Num wires", builder.get_num_wires())

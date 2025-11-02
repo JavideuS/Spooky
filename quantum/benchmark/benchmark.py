@@ -155,6 +155,34 @@ def is_solution_valid(solution, problem):
             return result
         result["details"][f"robot_{robot_num}"] = robot_result
 
+    # multi-robot vertex conflict check (same cell at same time)
+    occupancy = {}  # (i, j, t) -> [robot_num, ...]
+    for robot_num, robot_path in robot_positions.items():
+        for (i, j, t) in robot_path:
+            key = (i, j, t)
+            occupancy.setdefault(key, []).append(robot_num)
+
+    # Find collisions where two or more robots occupy same cell at same time
+    conflicts = []
+    for (i, j, t), robots in occupancy.items():
+        if len(robots) > 1:
+            conflicts.append({
+                "cell": (i, j),
+                "time": t,
+                "robots": sorted(robots)
+            })
+
+    if conflicts:
+        # Sort conflicts by time then cell for deterministic output
+        conflicts.sort(key=lambda c: (c["time"], c["cell"]))
+        result["valid"] = False
+        result["reason"] = "vertex_conflict"
+        result["message"] = (
+            f"❌ Vertex conflict detected: {len(conflicts)} collision(s) found"
+        )
+        result["details"]["conflicts"] = conflicts
+        return result
+
     result["valid"] = True
     result["message"] = "✅ Solution is valid"
     return result
@@ -298,7 +326,6 @@ def _validate_single_robot_path_unified(positions, problem, robot_id,
     result["reason"] = "valid_path"
     result["message"] = f"✅ Robot {robot_num}: Solution is valid"
     return result
-
 
 def _get_notation_abstraction(problem):
     """Get the appropriate notation abstraction for the problem type."""

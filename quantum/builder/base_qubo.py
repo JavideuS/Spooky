@@ -133,7 +133,21 @@ class BaseQUBO(ABC):
             for robot_id in robot_active_timeline.get(t, []):
                 active_robots.add(robot_id)
         return list(active_robots)
+    
+    def get_active_robots_per_timestep_in_window(self):
+        """
+        Get a dict mapping each timestep in the current window
+        to the list of active robot IDs at that timestep.
+        """
+        robot_active_timeline = self.problem.get_robot_per_timestep()
+        active_per_timestep = {}
 
+        for t in range(self.current_T, self.current_T + self.t_max):
+            active_robots = robot_active_timeline.get(t, [])
+            if active_robots:  # only include if something active
+                active_per_timestep[t] = active_robots
+
+        return active_per_timestep
 
     # Shared: window update/reset
     def update_problem(self, solution=[]):
@@ -154,7 +168,6 @@ class BaseQUBO(ABC):
 
                 self.problem.robots[robot_id].path = merged
                 self.problem.robots[robot_id].current_position = merged[-1][:2]
-
             self.build()
 
     def reset_problem(self):
@@ -181,12 +194,12 @@ class BaseQUBO(ABC):
     def reduce_qubo(self, fixed_vars):
         """
         Reduce a QUBO dictionary by fixing variables.
-
+        Assumes Q uses upper triangular form: (i,j) with i <= j only.
+        
         fixed_vars can be:
         - dict {idx: value}
-        - numpy array of length total_vars, with 0/1 for fixed vars and np.nan
-          for free ones
-
+        - numpy array of length total_vars, with 0/1 for fixed vars and np.nan for free ones
+        
         Returns: (reduced_Q, const_offset)
         """
         if isinstance(fixed_vars, np.ndarray):
@@ -195,26 +208,30 @@ class BaseQUBO(ABC):
             }
         else:
             fixed_dict = fixed_vars
-        Q = self.Q.copy()
+        
+        Q = {}
         const_offset = 0
-        for var, val in fixed_dict.items():
-            if val == 0:
-                keys_to_remove = [k for k in Q if var in k]
-                for k in keys_to_remove:
-                    Q.pop(k, None)
-            elif val == 1:
-                neighbors = [
-                    j for (i, j) in Q if i == var and j != var
-                ] + [
-                    i for (i, j) in Q if j == var and i != var
-                ]
-                for nb in neighbors:
-                    coeff = Q.get((var, nb), 0) + Q.get((nb, var), 0)
-                    Q[(nb, nb)] = Q.get((nb, nb), 0) + coeff
-                const_offset += Q.get((var, var), 0)
-                keys_to_remove = [k for k in Q if var in k]
-                for k in keys_to_remove:
-                    Q.pop(k, None)
+        
+        for key, coeff in self.Q.items():
+            i, j = key
+            i_fixed = i in fixed_dict
+            j_fixed = j in fixed_dict
+            
+            if not i_fixed and not j_fixed:
+                # Both free: keep as is
+                Q[key] = coeff
+            elif i_fixed and j_fixed:
+                # Both fixed: add to constant
+                const_offset += coeff * fixed_dict[i] * fixed_dict[j]
+            elif i_fixed:
+                # Only i fixed
+                if fixed_dict[i] == 1:
+                    Q[(j, j)] = Q.get((j, j), 0) + coeff
+            else:  # j_fixed
+                # Only j fixed
+                if fixed_dict[j] == 1:
+                    Q[(i, i)] = Q.get((i, i), 0) + coeff
+        
         return Q, const_offset
 
     def diag_fixed_vars(self):
@@ -250,6 +267,7 @@ class BaseQUBO(ABC):
         elif type == "graph":
             vars_per_time = self.num_nodes
         time_step_vars = {}
+        
         for i in range(n):
             if (i, i) in self.Q:
                 diag_coeff = self.Q[(i, i)]
@@ -258,6 +276,7 @@ class BaseQUBO(ABC):
                     if t not in time_step_vars:
                         time_step_vars[t] = []
                     time_step_vars[t].append((i, diag_coeff))
+                
         for t in time_step_vars:
             # print(f"Time step {t}: vars and diag coeffs: {time_step_vars[t]}")
             # If only one variable, fix to 1
@@ -281,9 +300,11 @@ class BaseQUBO(ABC):
                 else:
                     # These are the worst (largest) coeffs, set to 0
                     max_coeff = max(counts)
-                    for var_idx, coeff in time_step_vars[t]:
-                        if coeff == max_coeff:
-                            fixed[var_idx] = 0
+                    # print("ddx")
+                    if counts[max_coeff] >= 1:
+                        for var_idx, coeff in time_step_vars[t]:
+                            if coeff == max_coeff:
+                                fixed[var_idx] = 0
 
             # print(counts)
         return fixed

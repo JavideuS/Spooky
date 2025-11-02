@@ -38,9 +38,9 @@ conf = config_parser.load_config("config/config.yaml", sections=["problems", "pe
 # graph = map.Graph.from_hdf5_data(graph_data)
 
 # map_conf = conf["problems"]["grid_5x5_medium"]
-map_conf = conf["problems"]["grid_5x5_hard"]
+# map_conf = conf["problems"]["grid_5x5_hard"]
 # map_conf = conf["problems"]["grid_5x5_easyv2_alt"]
-# map_conf = conf["problems"]["grid_3x3_default"]
+map_conf = conf["problems"]["grid_3x3_default"]
 # map_conf = conf["problems"]["grid_3x3_no_obs"]
 materials_data = config_parser.load_config("config/materials.yaml")["materials"]
 
@@ -58,18 +58,21 @@ end = map_conf["goal"]
 T = map_conf["T"]
 
 problem = PathfindingProblem.from_unified_data(
-        "maps/synthetic/5x5/obs5x5_hard.h5",
+        "maps/synthetic/3x3/obs3x3_standard.h5",
         start=start,
         end=end,
         T=T,
         name="unified"
     )
 
-alele = RobotConfig("Alele", (2, 2), (0, 0), start_time=1, priority=1, safety_radius=0)
+alele = RobotConfig("Alele", (2, 2), (0, 0), start_time=0, priority=1, safety_radius=0)
 problem.add_robot(alele)
+showmaker = RobotConfig("Showmaker", (0, 2), (2, 0), start_time=0, priority=1, safety_radius=0)
+problem.add_robot(showmaker)
+caps = RobotConfig("Caps", (0, 0), (2, 2), start_time=0, priority=1, safety_radius=0)
+problem.add_robot(caps)
 # problem.add_robot(alele, True) # This alternative keeps predefined time when adding robots
 # print(alele.to_dict())
-
 # print("Problem", problem.to_dict())
 
 # print("Materials:", grid.materials)
@@ -86,16 +89,16 @@ material_costs = {
 }
 # problem.grid.material_cost = material_costs
 # penalties_conf = conf["penalty_sets"]["graph"]
-penalties_conf = conf["penalty_sets"]["close_window"]
+penalties_conf = conf["penalty_sets"]["crash"]
 
 # Choose QUBO builder based on problem format:
 # For grid problems:
-p_grid = problem.as_grid_only()
-builder = QUBOBuilder(p_grid, penalties=penalties_conf, name="standard", distance_scaling="enhanced_linear")
+# p_grid = problem.as_grid_only()
+# builder = QUBOBuilder(p_grid, penalties=penalties_conf, name="standard", distance_scaling="enhanced_linear")
 
 # For graph problems:
-# p_graph = problem.as_graph_only()
-# builder = GraphQUBO(p_graph, penalties=penalties_conf, name="graph_problem")
+p_graph = problem.as_graph_only()
+builder = GraphQUBO(p_graph, penalties=penalties_conf, name="graph_problem")
 
 # start_time = time.time()
 # Q = builder.build()
@@ -103,15 +106,17 @@ builder = QUBOBuilder(p_grid, penalties=penalties_conf, name="standard", distanc
 # print(f"QUBO built in {duration:.4f} seconds")
 
 # Solver (Quantum annealing)
-dwave_solver = SolverFactory.create_solver(backend="dwave", normalize_scale=2.0, num_reads=9)  # 20 5x5 without pre-processing
+dwave_solver = SolverFactory.create_solver(backend="dwave", normalize_scale=2.0, num_reads=12)  # 20 5x5 without pre-processing
 # Smart reads with pre-processing
 # < 9 qubits -> 9 reads (Still not perfect)
+# <= 18 qubits -> 12 reads
+# Note that 9 reads also work fine for 18 qubits (12 errors on 1k attempts), but dwave tend to always fail even a bit
 
 # init_params = np.array([[1.182179, 0.78571062], [0.36629231, 0.59672656]], requires_grad=True)
 # init_params = np.array([[1.702179, 0.74571062], [0.45629231, 0.49672656]], requires_grad=True)
 init_params = np.array([[1.70579, 0.70321062], [0.49879231, 0.49412656]], requires_grad=True)
 pennylane_solver = SolverFactory.create_solver(
-        backend="pennylane", normalize_scale=1.0, num_reads=8000,
+        backend="pennylane", normalize_scale=1.0, num_reads=500,
         layers=2, optimizer="QNG", opt_steps=30,
         device="lightning.gpu", params=init_params)
 # General reads withour pre-processing
@@ -119,7 +124,9 @@ pennylane_solver = SolverFactory.create_solver(
 # 13000 3x2
 # Smart reads with pre-processing based on final qubo size
 # < 9 qubits -> 500 reads
+# <= 12 qubits -> 2500 reads
 # <= 16 qubits -> 8000 reads (16 errors on 10k attemps)
+# <= 18 qubits -> 17000 reads
 
 # Q = builder.build()
 # solution = dwave_solver.solve_qubo(builder, False)

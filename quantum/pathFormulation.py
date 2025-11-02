@@ -16,8 +16,6 @@ class PathfindingProblem:
         self.robots = {}
         if isinstance(robots, dict):
             self.robots = robots
-            first_robot = next(iter(robots.values()))
-            print(first_robot.start)
         elif isinstance(robots, RobotConfig):
             self.robots[robots.robot_id] = robots
         elif isinstance(robots, list):
@@ -171,7 +169,7 @@ class PathfindingProblem:
         self.set_robot_time()
         for robot in self.robots.values():
             final_robot_time = robot.start_time + robot.T
-            print(robot.robot_id, final_robot_time)
+            # print(robot.robot_id, final_robot_time)
             if final_robot_time > total_time:
                 total_time = final_robot_time
         return total_time

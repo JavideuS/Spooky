@@ -219,16 +219,17 @@ penalty_sets:
     K_goal_approx: 0.7
     K_obs: 0
 
-  close_window: # alt later bt2 struggles with short windows
+  crash:
     K_hot: 9
     K_adj: 4.8
     K_start: 6.5
-    K_goal: 2.7  # Max goal penalty without invalid moves
+    K_goal: 2.7
     K_lock: 4
     K_bt: 2.3
     K_tp: 1.2
     K_goal_approx: 0.7
     K_obs: 0
+    K_crash: 3 # Crash cant be higher thand adjacency, then there is no point
 
   graph:
     K_hot: 9

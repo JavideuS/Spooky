@@ -28,8 +28,7 @@ def merge_paths(old_path: List[Tuple[int, int, int]], new_path: List[Tuple[int, 
             trimmed_new = trimmed_new[1:]
 
         # Offset new times so continuity holds
-        time_offset = last_t + 1
-        adjusted_new = [(i, j, t + time_offset) for (i, j, t) in trimmed_new]
+        adjusted_new = [(i, j, t + last_t) for (i, j, t) in trimmed_new]
 
         merged.extend(adjusted_new)
         return merged

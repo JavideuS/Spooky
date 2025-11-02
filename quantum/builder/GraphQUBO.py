@@ -7,7 +7,7 @@ class GraphQUBO(BaseQUBO):
         problem,
         penalties,
         name="graph",
-        var_limit=131,
+        var_limit=65,  # 131
         window_max_steps=None,
         distance_scaling=None,
     ):
@@ -59,7 +59,7 @@ class GraphQUBO(BaseQUBO):
         if "backtracking" in constraints_to_apply:
             self.apply_backtracking_penalty()
         if "multi_robot_collision" in constraints_to_apply:
-            self.apply_multi_robot_collision_penalty()
+            self.apply_multi_robot_penalty()
         if "multi_robot_proximity" in constraints_to_apply:
             self.apply_multi_robot_proximity_penalty()
 
@@ -298,6 +298,24 @@ class GraphQUBO(BaseQUBO):
                         n = node_id + (self.num_nodes * t) + robot_offset
                         time_factor = (1 + (len_sol - p_idx)) / len_sol
                         self.Q[(n, n)] = self.Q.get((n, n), 0) + K_bt * time_factor
+    
+    def apply_multi_robot_penalty(self):
+        K_crash = self.penalties.get('K_crash', 0)
+        robot_nums = self.problem.get_robot_nums()
+        active_robots_per_timestep = self.get_active_robots_per_timestep_in_window()
+        for t, active_robots in active_robots_per_timestep.items():
+            if len(active_robots) < 2:
+                continue  # no collision possible
+            for node_i in range(self.num_nodes):
+                for robot_id1 in active_robots:
+                    for robot_id2 in active_robots:
+                        if robot_nums[robot_id1] >= robot_nums[robot_id2]:
+                            continue
+                        robot_offset1 = robot_nums[robot_id1] * (self.num_nodes * self.total_t)
+                        robot_offset2 = robot_nums[robot_id2] * (self.num_nodes * self.total_t)
+                        idx1 = node_i + (self.num_nodes * (t - self.current_T)) + robot_offset1
+                        idx2 = node_i + (self.num_nodes * (t - self.current_T)) + robot_offset2
+                        self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_crash
 
     def get_fixed_variables(self):
         """Identify variables that can be fixed based on current problem state for all robots."""
@@ -329,16 +347,37 @@ class GraphQUBO(BaseQUBO):
                     n = node_i + (self.num_nodes * start) + robot_offset
                     fixed[n] = 0
 
-            # Initialize reachable set with the start node at start_time
+            # # Initialize reachable set with the start node at start_time
+            # reachable_at_time = {start: {start_node}}
+
+            # # Perform a BFS-like traversal to find all reachable nodes at each time step
+            # for t in range(start, end - 1):
+            #     reachable_at_time[t + 1] = set()
+            #     for node_i in reachable_at_time[t]:
+            #         for node_j, _ in self.graph.adjacency.get(node_i, []):
+            #             reachable_at_time[t + 1].add(node_j)
+
+            # Aggresive version
             reachable_at_time = {start: {start_node}}
+            visited = {start_node}  # Prevent revisiting previously reached nodes
 
-            # Perform a BFS-like traversal to find all reachable nodes at each time step
             for t in range(start, end - 1):
-                reachable_at_time[t + 1] = set()
-                for node_i in reachable_at_time[t]:
-                    for node_j, _ in self.graph.adjacency.get(node_i, []):
-                        reachable_at_time[t + 1].add(node_j)
+                prev_layer = reachable_at_time[t]
+                curr_layer = set()
 
+                for node_i in prev_layer:
+                    for node_j, _ in self.graph.adjacency.get(node_i, []):
+                        # Only expand to new nodes not yet visited
+                        if node_j not in visited:
+                            curr_layer.add(node_j)
+                            visited.add(node_j)
+
+                # Stop early if no new nodes are reachable
+                if not curr_layer:
+                    break
+
+                reachable_at_time[t + 1] = curr_layer
+            # print(reachable_at_time)
             # Fix unreachable nodes to 0 for all time steps for this robot
             for t in range(start + 1, end):
                 for node_id in range(self.num_nodes):
@@ -347,25 +386,6 @@ class GraphQUBO(BaseQUBO):
                         fixed[var_idx] = 0
 
         return fixed
-
-    # def apply_multi_robot_collision_penalty(self):
-    #     """Apply collision avoidance penalty: prevent robots from occupying the same node at the same time."""
-    #     K_crash = self.penalties.get('K_crash', 5)
-
-    #     # For each time step, check all pairs of robots
-    #     for t in range(self.T):
-    #         for node_id in range(self.num_nodes):
-    #             # Get all robot pairs that could collide at this node and time
-    #             for r1_num in range(self.problem.num_robots):
-    #                 for r2_num in range(r1_num + 1, self.problem.num_robots):
-    #                     robot1_offset = r1_num * (self.num_nodes * self.T)
-    #                     robot2_offset = r2_num * (self.num_nodes * self.T)
-
-    #                     idx1 = node_id + (self.num_nodes * t) + robot1_offset
-    #                     idx2 = node_id + (self.num_nodes * t) + robot2_offset
-
-    #                     # Add penalty for both robots being at the same node
-    #                     self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_crash
 
     # def apply_multi_robot_proximity_penalty(self):
     #     """Apply proximity penalty: discourage robots from being too close to each other."""
