@@ -123,27 +123,32 @@ class GraphQUBO(BaseQUBO):
         robot_nums = self.problem.get_robot_nums()
         
         for robot_id in self.get_active_robot_in_window():
-            robot_offset = robot_nums[robot_id] * (self.num_nodes * self.total_t)
             robot = self.problem.robots[robot_id]
-
             start_time = robot.start_time
-            start = 0
-            if self.current_T < start_time:
-                start = start_time - self.current_T
-
             end_time = robot.T + start_time
-            end = end_time - self.current_T
+
             if end_time > self.current_T + self.t_max:
-                end = self.t_max
-            # Get goal node for this robot
-            goal_node = self.problem.get_graph_robot_current_goal(robot_id)[1]
-            window_constant = 1 + (0.6 / end)
-            for t in range(start + 1, end):
-                goal_idx = goal_node + (self.num_nodes * t) + robot_offset
-                time_factor = 1 + ((t - start) / (end - start))
-                self.Q[(goal_idx, goal_idx)] = (
-                    self.Q.get((goal_idx, goal_idx), 0) - K_goal * time_factor * window_constant
-                )
+                # Goal not reachable in this window, use approximation
+                self.apply_goal_approximation_penalty(robot_id)
+            else:
+                # Goal is reachable, apply standard goal penalty
+                robot_offset = robot_nums[robot_id] * (self.num_nodes * self.total_t)
+                
+                start = 0
+                if self.current_T < start_time:
+                    start = start_time - self.current_T
+
+                end = end_time - self.current_T
+                goal_node = self.problem.get_graph_robot_current_goal(robot_id)[1]
+                window_constant = 1 + (0.6 / end)
+                
+                for t in range(start + 1, end):
+                    goal_idx = goal_node + (self.num_nodes * t) + robot_offset
+                    time_factor = 1 + ((t - start) / (end - start))
+                    self.Q[(goal_idx, goal_idx)] = (
+                        self.Q.get((goal_idx, goal_idx), 0) - K_goal * time_factor * window_constant
+                    )
+
 
     def apply_lock_after_goal(self):
         """Apply lock-after-goal constraint: once at goal, stay there for each robot."""
@@ -252,6 +257,88 @@ class GraphQUBO(BaseQUBO):
                     for (node_j, weight) in adjacency[node_i]:
                         m = node_j + (self.num_nodes * (t + 1)) + robot_offset
                         self.Q[(n, m)] = self.Q.get((n, m), 0) - K_adj * weight
+
+    def calculate_euclidean_penalty(self, raw_dist, K_goal_approx, time_factor):
+        """
+        Calculate Euclidean distance penalty using the specified scaling method.
+        
+        Args:
+            raw_dist: Raw Euclidean distance
+            K_goal_approx: Goal approximation penalty coefficient
+            time_factor: Time-based scaling factor
+            
+        Returns:
+            K_dis: Calculated distance penalty
+        """
+        if self.distance_scaling == "enhanced_linear":
+            dist_to_goal = raw_dist * 0.165
+            K_dis = K_goal_approx * (1/(0.7 + dist_to_goal)) * time_factor
+            
+        elif self.distance_scaling == "exponential":
+            dist_to_goal = raw_dist * 1.2
+            K_dis = K_goal_approx * (1 / (1 + dist_to_goal)) * time_factor
+            
+        elif self.distance_scaling == "quadratic":
+            dist_to_goal = raw_dist ** 1.3
+            K_dis = K_goal_approx * (1/(1 + dist_to_goal)) * time_factor
+            
+        elif self.distance_scaling == "logarithmic":
+            import numpy as np
+            dist_to_goal = np.log(1 + raw_dist * 2)
+            K_dis = K_goal_approx * (1/(1 + dist_to_goal)) * time_factor
+            
+        elif self.distance_scaling == "adaptive":
+            num_nodes = self.num_nodes
+            if num_nodes <= 9:
+                dist_to_goal = raw_dist * 0.4
+                K_dis = K_goal_approx * (1/(0.2 + dist_to_goal)) * time_factor
+            elif num_nodes <= 25:
+                dist_to_goal = raw_dist * 0.8
+                K_dis = K_goal_approx * (1/(0.4 + dist_to_goal)) * time_factor
+            else:
+                dist_to_goal = raw_dist * 1.2
+                K_dis = K_goal_approx * (1/(0.8 + dist_to_goal)) * time_factor
+                
+        else:
+            dist_to_goal = raw_dist * 2
+            K_dis = K_goal_approx * (1 / (1 + dist_to_goal)) * time_factor
+            
+        return K_dis
+
+    def apply_goal_approximation_penalty(self, robot_id):
+        """
+        Apply goal approximation penalty using Euclidean distance heuristic.
+        Encourages getting closer to the goal when it cannot be reached in current window.
+        """
+        K_goal_approx = self.penalties.get('K_goal_approx', 0.5)
+        if K_goal_approx == 0:
+            return
+            
+        robot_nums = self.problem.get_robot_nums()
+        robot_offset = robot_nums[robot_id] * (self.num_nodes * self.total_t)
+        robot = self.problem.robots[robot_id]
+        
+        start_time = robot.start_time
+        start = 0
+        if self.current_T < start_time:
+            start = start_time - self.current_T
+        
+        goal_node = self.problem.get_graph_robot_current_goal(robot_id)[1]
+        goal_pos = self.graph.get_node_position(goal_node)
+        
+        for t in range(start + 1, self.t_max):
+            time_factor = (1.2) ** (5 * (t - start) / (self.t_max - start))
+            
+            for node_id in range(self.num_nodes):
+                node_pos = self.graph.get_node_position(node_id)
+                if node_pos is None or goal_pos is None:
+                    continue
+                
+                raw_dist = self.problem.euclidean_distance(node_pos, goal_pos)
+                K_dis = self.calculate_euclidean_penalty(raw_dist, K_goal_approx, time_factor)
+                
+                var_idx = node_id + (self.num_nodes * t) + robot_offset
+                self.Q[(var_idx, var_idx)] = self.Q.get((var_idx, var_idx), 0) - K_dis
 
     def apply_backtracking_penalty(self):
         """Apply backtracking penalty: discourage revisiting nodes for each robot."""

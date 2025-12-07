@@ -1,4 +1,5 @@
 import map
+import numpy as np
 from robotConfiguration import RobotConfig
 
 
@@ -152,6 +153,10 @@ class PathfindingProblem:
     def manhattan_distance(self, start, end):
         """Calculate Manhattan distance for grid coordinates."""
         return abs(start[0] - end[0]) + abs(start[1] - end[1])
+
+    def euclidean_distance(self, start, end):
+        """Calculate Euclidean distance for graph coordinates."""
+        return np.sqrt((start[0] - end[0]) * (start[0] - end[0]) + (start[1] - end[1]) * (start[1] - end[1]))
 
     def set_robot_time(self):
         """Set time horizon T for each robot if not already set."""
