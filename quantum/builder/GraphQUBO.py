@@ -337,7 +337,7 @@ class GraphQUBO(BaseQUBO):
                 end = self.t_max
 
             # Fix start node at start_time for this robot
-            start_node = self.problem.get_graph_robot_current_goal(robot_id)[0]
+            start_node, goal_node = self.problem.get_graph_robot_current_goal(robot_id)
             start_idx = start_node + (start * self.num_nodes) + robot_offset
             fixed[start_idx] = 1
 
@@ -375,6 +375,10 @@ class GraphQUBO(BaseQUBO):
                 # Stop early if no new nodes are reachable
                 if not curr_layer:
                     break
+
+                # To make sure goal is always reachable (and not conflict with goal lock)
+                if goal_node in visited:
+                    curr_layer.add(goal_node)
 
                 reachable_at_time[t + 1] = curr_layer
             # print(reachable_at_time)

@@ -688,7 +688,7 @@ class GridQUBOBuilder(BaseQUBO):
         # Now we can also fix unreachable cells to 0
         # Based on bfs (this essentially complies with adjacency and tp constraints)
             reachable = self.reachable_maskv2(robot, start, end)
-            print(reachable)
+            # print(reachable)
             for t in reachable:
                 for i in range(M):
                     for j in range(N):
@@ -749,6 +749,7 @@ class GridQUBOBuilder(BaseQUBO):
         """
 
         start = robot.current_position
+        goal = robot.goal
         adjacency = self.problem.grid.adjacency  # adjacency map without obstacles
         obstacles = set(self.problem.grid.obstacles or [])
 
@@ -769,6 +770,10 @@ class GridQUBOBuilder(BaseQUBO):
             # If no new cells are reachable, you can stop early
             if not curr_layer:
                 break
+
+            # To make sure goal is always reachable (and not conflict with goal lock)
+            if goal in visited:
+                curr_layer.add(goal)
 
             reachable[t] = curr_layer
 
