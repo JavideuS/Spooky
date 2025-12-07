@@ -9,7 +9,7 @@ class GraphQUBO(BaseQUBO):
         name="graph",
         var_limit=65,  # 131
         window_max_steps=None,
-        distance_scaling=None,
+        distance_scaling="enhanced_linear",
     ):
         self.graph = problem.graph
         self.num_nodes = len(self.graph.nodes)
@@ -141,7 +141,7 @@ class GraphQUBO(BaseQUBO):
                 end = end_time - self.current_T
                 goal_node = self.problem.get_graph_robot_current_goal(robot_id)[1]
                 window_constant = 1 + (0.6 / end)
-                
+
                 for t in range(start + 1, end):
                     goal_idx = goal_node + (self.num_nodes * t) + robot_offset
                     time_factor = 1 + ((t - start) / (end - start))
@@ -471,9 +471,10 @@ class GraphQUBO(BaseQUBO):
             # print(reachable_at_time)
             # Fix unreachable nodes to 0 for all time steps for this robot
             for t in range(start + 1, end):
+            # for t in reachable_at_time:
                 for node_id in range(self.num_nodes):
                     var_idx = node_id + (self.num_nodes * t) + robot_offset
-                    if node_id not in reachable_at_time.get(t, set()):
+                    if node_id not in reachable_at_time.get(t, set([(goal_node)])):
                         fixed[var_idx] = 0
 
         return fixed

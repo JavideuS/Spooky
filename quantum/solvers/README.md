@@ -76,16 +76,6 @@ dynamic_solver.switch_backend("pennylane", layers=2, optimizer="adam")
 solution_pennylane = dynamic_solver.solve_qubo(qubo_builder)
 ```
 
-### Method 4: Backward Compatibility
-
-The old `QUBOSolver` class is still available for backward compatibility:
-
-```python
-from solvers import QUBOSolver
-
-solver = QUBOSolver(normalize_scale=2.0, num_reads=10)
-```
-
 ## Adding New Backends
 
 To add a new quantum backend:
@@ -133,7 +123,6 @@ solver:
 - **Unified Interface**: All solvers implement the same interface
 - **Dynamic Switching**: Switch between backends at runtime
 - **Configuration Support**: Create solvers from configuration files
-- **Backward Compatibility**: Old code continues to work
 - **Extensible**: Easy to add new backends
 - **Type Safety**: Full type hints for better IDE support
 

@@ -653,6 +653,7 @@ class GridQUBOBuilder(BaseQUBO):
             robot = self.problem.robots[robot_id]
 
             s_i, s_j = robot.current_position
+            e_i, e_j = robot.goal
 
             start_time = robot.start_time
             start = 0
@@ -675,7 +676,6 @@ class GridQUBOBuilder(BaseQUBO):
 
         # Fix goal position at last time step if within window
         # if (self.T + (self.iter * self.t_max)) == self.total_t:
-        #     e_i, e_j = self.problem.end
         #     goal_idx = e_i * N + e_j + M * N * (self.T - 1)
         #     fixed[goal_idx] = 1
 
@@ -689,10 +689,13 @@ class GridQUBOBuilder(BaseQUBO):
         # Based on bfs (this essentially complies with adjacency and tp constraints)
             reachable = self.reachable_maskv2(robot, start, end)
             # print(reachable)
-            for t in reachable:
+            # for t in reachable:
+            for t in range(start + 1, end):
                 for i in range(M):
                     for j in range(N):
-                        if not (i, j) in reachable[t]:
+                        # By default is there if it visited all nodes it stops the BFS
+                        # Instead of returning empty set, return goal (to keep goal lock constraint)
+                        if not (i, j) in reachable.get(t, set([(e_i, e_j)])):
                             n = i * N + j + M * N * t + robot_offset
                             fixed[n] = 0
 
