@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 import numpy as np
 from typing import Dict, Any, List, Tuple
-
+from quantum.utils.paths import decode_position
 
 class BaseSolver(ABC):
     """
@@ -9,22 +9,22 @@ class BaseSolver(ABC):
     Defines the common interface that all solvers must implement.
     """
 
-    def __init__(self, backend: str, normalize_scale: float = 0,
+    def __init__(self, solver: str, normalize_scale: float = 0,
                  num_reads: int = 10, **kwargs):
         """
         Initialize the base solver.
 
         Args:
-            backend: Name of the backend (e.g., "dwave", "pennylane", "qiskit")
+            solver: Name of the solver (e.g., "dwave", "pennylane", "qiskit")
             normalize_scale: Scale factor for QUBO normalization
             num_reads: Number of reads/samples to take
-            **kwargs: Additional backend-specific parameters
+            **kwargs: Additional solver-specific parameters
         """
-        self.backend = backend
+        self.solver = solver
         self.norm_scale = normalize_scale
         self.num_reads = num_reads
-        self.name = f"{self.backend}_reads{num_reads}"
-        self._backend_params = kwargs
+        self.name = f"{self.solver}_reads{num_reads}"
+        self._solver_params = kwargs
 
     # Config file already returns dict for penalties; no new constructor needed
     @classmethod
@@ -41,15 +41,15 @@ class BaseSolver(ABC):
         norm_scale = config.get("normalization_scale", 0)
         num_reads = config.get("num_reads", 15)
 
-        # Extract backend-specific parameters
-        backend_params = {
+        # Extract solver-specific parameters
+        solver_params = {
             k: v for k, v in config.items() 
-            if k not in ["backend", "normalization_scale", "num_reads"]
+            if k not in ["solver", "normalization_scale", "num_reads"]
         }
 
-        # Each class expects to run its own backend
+        # Each class expects to run its own solver
         return cls(normalize_scale=norm_scale,
-                   num_reads=num_reads, **backend_params)
+                   num_reads=num_reads, **solver_params)
 
     def normalize_qubo(self, Q: Dict, scale: float = 1.0) -> Dict:
         """
@@ -77,36 +77,6 @@ class BaseSolver(ABC):
         # Scale all values to [-scale, scale]
         scale_factor = scale / max_val
         return {k: v * scale_factor for k, v in Q.items()}
-
-    def decode_position(self, idx: int, problem) -> Tuple[int, int, int, int]:
-        """
-        Decode variable index to position, time, and robot number.
-
-        Args:
-            idx: Variable index
-            problem: Problem instance
-
-        Returns:
-            Tuple of (i, j, t, robot_num) coordinates
-        """
-        if problem.get_format_type() == "graph":
-            nodes_per_robot = len(problem.graph.nodes) * problem.T
-            robot_num = idx // nodes_per_robot
-            reduced_idx = idx % nodes_per_robot
-            t = reduced_idx // len(problem.graph.nodes)
-            graph_idx = reduced_idx % len(problem.graph.nodes)
-            pos = problem.graph.get_node_position(graph_idx)
-            return int(pos[0]), int(pos[1]), t, robot_num
-        M = problem.grid.M
-        N = problem.grid.N
-        T = problem.T
-        robot_num = idx // (M * N * T)
-        reduced_idx = idx % (M * N * T)
-        t = reduced_idx // (M * N)
-        pos = reduced_idx % (M * N)
-        i = pos // N
-        j = pos % N
-        return i, j, t, robot_num
 
     def decode_path(self, sample: Dict, problem, t_offset: int = 0) -> List[Tuple[Tuple[int, int, int], int]]:
         """
@@ -178,7 +148,7 @@ class BaseSolver(ABC):
 
             for idx in range(total_vars):
                 if sample.get(idx, 0) == 1:
-                    i, j, t, robot_num = self.decode_position(idx, problem)
+                    i, j, t, robot_num = decode_position(idx, problem)
                     path.append(((i, j, t + t_offset), robot_num))
 
             return path
@@ -258,24 +228,24 @@ class BaseSolver(ABC):
             Dictionary representation of solver parameters
         """
         result = {
-            "backend": self.backend,
+            "solver": self.solver,
             "normalization_scale": self.norm_scale,
             "num_reads": self.num_reads,
         }
-        result.update(self._backend_params)
+        result.update(self._solver_params)
         return result
 
-    def get_backend_info(self) -> Dict[str, Any]:
+    def get_solver_info(self) -> Dict[str, Any]:
         """
-        Get backend-specific information.
+        Get solver-specific information.
 
         Returns:
-            Dictionary with backend information
+            Dictionary with solver information
         """
         return {
-            "backend": self.backend,
+            "solver": self.solver,
             "name": self.name,
-            "parameters": self._backend_params
+            "parameters": self._solver_params
         }
 
     def _handle_iteration_result(self, solution, fixed_vars, builder):

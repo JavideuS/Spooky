@@ -22,7 +22,7 @@ class GridQUBOBuilder(BaseQUBO):
         problem,
         penalties,
         name="grid",
-        var_limit=101,  # 605 10x10
+        var_limit=251,  # 101 605 10x10
         window_max_steps=None,
         distance_scaling="enhanced_linear",
     ):
@@ -687,7 +687,7 @@ class GridQUBOBuilder(BaseQUBO):
 
         # Now we can also fix unreachable cells to 0
         # Based on bfs (this essentially complies with adjacency and tp constraints)
-            reachable = self.reachable_maskv2(robot, start, end)
+            reachable = self.reachable_positions_aggressive(robot,robot.current_position, start, end)
             # print(reachable)
             # for t in reachable:
             for t in range(start + 1, end):
@@ -701,7 +701,7 @@ class GridQUBOBuilder(BaseQUBO):
 
         return fixed
 
-    def reachable_mask(self, robot, start_time, end_time):
+    def reachable_positions(self, robot, start_time, end_time):
         """
         Compute reachable positions per time step.
         Note that it is aggresive, since this one is based on my adjacency map, which does not include staying in place.
@@ -737,7 +737,7 @@ class GridQUBOBuilder(BaseQUBO):
 
         return reachable
     
-    def reachable_maskv2(self, robot, start_time, end_time):
+    def reachable_positions_aggressive(self, robot,start, start_time, end_time):
         """
         Compute reachable positions per time step without backtracking.
         That means once a cell is reached, it won't be revisited in future time steps.
@@ -751,7 +751,6 @@ class GridQUBOBuilder(BaseQUBO):
             dict[int, set[tuple[int, int]]]: {t: {(i, j), ...}} reachable positions per time step.
         """
 
-        start = robot.current_position
         goal = robot.goal
         adjacency = self.problem.grid.adjacency  # adjacency map without obstacles
         obstacles = set(self.problem.grid.obstacles or [])
@@ -780,6 +779,7 @@ class GridQUBOBuilder(BaseQUBO):
 
             reachable[t] = curr_layer
 
+        # print(reachable)
         return reachable
 
 

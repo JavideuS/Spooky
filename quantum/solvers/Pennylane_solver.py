@@ -1,23 +1,41 @@
 import pennylane as qml
 from pennylane import numpy as np
 from .base_solver import BaseSolver
-
+from qiskit_ibm_runtime import QiskitRuntimeService
+import time
 
 class PennylaneSolver(BaseSolver):
-    def __init__(self, normalize_scale=0, num_reads=100, layers=2,
+    def __init__(self, normalize_scale=0, num_reads="auto", layers=2,
                  optimizer="GradientDescent", opt_steps=10,
                  device="default.qubit",
                  params=None, **kwargs):
-        super().__init__(backend="pennylane", normalize_scale=normalize_scale,
+        super().__init__(solver="pennylane", normalize_scale=normalize_scale,
                          num_reads=num_reads, **kwargs)
         self.optimizer_name = optimizer
         self.p = layers  # Number of QAOA layers
         self.dev = device
+        if device == "qiskit.remote":
+            self.service = QiskitRuntimeService()
+            # self.backend = self.service.least_busy(operational=True, simulator=False, min_num_qubits=100)
         # Parameters for the QAOA circuit
         self.params = (params if params is not None else
                        np.random.rand(layers, 2))
         self.optimizer_steps = opt_steps  # Number of optimization steps
         self.shots = num_reads  # Number of shots for sampling
+
+    def get_shots(self, num_qubits):
+        if self.shots == "auto":
+            if num_qubits <= 9:
+                return 500
+            elif num_qubits <= 12:
+                return 2500
+            elif num_qubits <= 16:
+                return 15000 #8000
+            elif num_qubits <= 18:
+                return 17000
+            else:
+                return 25000
+        return self.shots
 
     @classmethod
     def from_config(cls, config):
@@ -34,9 +52,9 @@ class PennylaneSolver(BaseSolver):
         if optimizer not in ["GradientDescent", "Adam", "QNG", "SPSA", "QNSPSA"]:
             raise ValueError("Optimizer must be either 'GradientDescent', "
                              "'QNG', 'SPSA', 'QNSPSA' or 'Adam'")
-        if device not in ["default.qubit", "lightning.qubit", "lightning.gpu"]:
+        if device not in ["default.qubit", "lightning.qubit", "lightning.gpu", "qiskit.remote"]:
             raise ValueError("Device must be either 'default.qubit' "
-                             "or 'lightning'")
+                             "or 'lightning' or 'qiskit.remote'")
         return cls(normalize_scale=norm_scale, num_reads=num_reads,
                    layers=layers, optimizer=optimizer, device=device,
                    params=params, opt_steps=opt_steps)
@@ -220,16 +238,20 @@ class PennylaneSolver(BaseSolver):
         best_energy = []
 
         while (builder.total_t) > (builder.current_T):
+            # Track iteration time for quantum hardware
+            if self.dev == "qiskit.remote":
+                iteration_start = time.time()
+
 
             if self.norm_scale != 0:
                 fixed_vars = builder.get_fixed_variables()
-                builder.Q, offset = builder.reduce_qubo(fixed_vars)
-                diag_fixed = builder.reduce_diag_fixed_vars_iterative()
+                builder.Q, offset, initial_log = builder.reduce_qubo(fixed_vars)
+                diag_fixed = builder.reduce_diag_fixed_vars_iterative(initial_reduction_log=initial_log)
                 fixed_vars.update(diag_fixed)
 
                 # In case the full qubo gets pre-processed
                 if len(builder.Q) == 0:
-                    print("Full QUBO gets pre-processed")
+                    print("Full QUBO gets pre-processed", builder.current_T)
                     full_sol = self._handle_iteration_result(
                         {}, fixed_vars, builder)
                     best_sample.append(full_sol)
@@ -242,21 +264,87 @@ class PennylaneSolver(BaseSolver):
             #       "Iteration:", builder.iter)
             # Since pennylane doesn't inherently knows the index of the remember qubits, I need to pass them manually
             wires = builder.get_wires()
-            print(f"Number of qubits: {len(wires)}")
+            num_qubits = len(wires)
+            print(f"Number of qubits: {num_qubits}")
+            
+            # Determine if we need to remap wires for qiskit.remote
+            if self.dev == "qiskit.remote":
+                # Note that you need the final wires to be sequential, but that doesnt mean you need to sort the original
+                # (Although it would make more sense there is no real reason to do that)
+                # Diagrams are not even consistent so it doesn't really make a difference 
+                # Create mapping from original wire labels to SEQUENTIAL indices (0, 1, 2, ...)
+                wire_remap = {orig_wire: idx for idx, orig_wire in enumerate(wires)}
+                # print(f"Wire remap: {wire_remap}")
+            else:
+                wire_remap = None
             
             Hc, constant = builder.qubo_to_ising()
-            Hmix = qml.qaoa.x_mixer(wires)
+            
+            # Remap Hamiltonian if using qiskit.remote
+            if wire_remap is not None:
+                # Remap the Hamiltonian to use sequential indices (0, 1, 2, ...)
+                new_coeffs = []
+                new_observables = []
+                for coeff, obs in zip(Hc.coeffs, Hc.ops):
+                    # Get the wires used in this observable
+                    obs_wires = obs.wires
+                    if len(obs_wires) == 1:
+                        # Single qubit Pauli-Z - map to sequential index
+                        new_wire = wire_remap[obs_wires[0]]
+                        new_observables.append(qml.PauliZ(new_wire))
+                    elif len(obs_wires) == 2:
+                        # Two-qubit Pauli-Z tensor product - map both to sequential indices
+                        new_wire1 = wire_remap[obs_wires[0]]
+                        new_wire2 = wire_remap[obs_wires[1]]
+                        new_observables.append(qml.PauliZ(new_wire1) @ qml.PauliZ(new_wire2))
+                    new_coeffs.append(coeff)
+                Hc = qml.Hamiltonian(new_coeffs, new_observables)
+                
+                # Use sequential indices for mixer and circuit
+                circuit_wires = range(num_qubits)
+                Hmix = qml.qaoa.x_mixer(circuit_wires)
+            else:
+                Hmix = qml.qaoa.x_mixer(wires)
+                circuit_wires = wires
 
             # Callable function to then be passed to qml.layer
             def qaoa_layer(gamma, beta):
                 qml.qaoa.cost_layer(gamma, Hc)
                 qml.qaoa.mixer_layer(beta, Hmix)
 
-            ansatz_circuit = self.create_ansatz(wires, qaoa_layer)
+            if self.dev == "qiskit.remote":
+                
+                print("=" * 60)
+                print("🔍 Searching for available quantum hardware...")
+                backend_start = time.time()
+                backend = self.service.least_busy(operational=True, simulator=False, min_num_qubits=num_qubits)
+                backend_time = time.time() - backend_start
+                print(f"✓ Backend selected: {backend.name}")
+                print(f"  Backend selection time: {backend_time:.2f}s")
+                print("=" * 60)
+    
+                # Use sequential indices for qiskit.remote (circuit_wires is already sorted)
+                print("🔧 Initializing quantum device connection...")
+                dev_start = time.time()
+                dev = qml.device('qiskit.remote', wires=circuit_wires, backend=backend)
+                dev_time = time.time() - dev_start
+                print(f"✓ Device initialized in {dev_time:.2f}s")
+                print("=" * 60)
+            else:
+                dev_start = time.time()
+                dev = qml.device(self.dev, wires=circuit_wires)
+                dev_time = time.time() - dev_start
+                print(f"✓ Device initialized in {dev_time:.2f}s")
+                print("=" * 60)
+            
+            # Create ansatz with the appropriate wire labels
+            ansatz_circuit = self.create_ansatz(circuit_wires, qaoa_layer)
 
-            dev = qml.device(self.dev, wires=wires, shots=self.shots)
-
+            shots = self.get_shots(num_qubits)
+            print(f"Number of shots: {shots}")
+            @qml.set_shots(shots)
             @qml.qnode(dev)
+            # Note that this one is simply used for the optimization circuit
             def cost_function(params):
                 ansatz_circuit(params)
                 return qml.expval(Hc)
@@ -275,16 +363,24 @@ class PennylaneSolver(BaseSolver):
 
             if optimization:
                 # prev_cost = 0
+
                 for step in range(self.optimizer_steps):
                     # Retrieving optimal parameters
+                    step_start = time.time()
                     self.params, cost = optimizer.step_and_cost(
                         cost_function, self.params)
+                    step_time = time.time() - step_start
+                    
                     if step % 10 == 0:
-                        print(f"Step {step}, ⟨H_C⟩ = {cost:.6f}")
+                        if self.dev == "qiskit.remote":
+                            print(f"Step {step}, ⟨H_C⟩ = {cost:.6f}, Time: {step_time:.2f}s")
+                        else:
+                            print(f"Step {step}, ⟨H_C⟩ = {cost:.6f}")
                     # if step > 3 and abs(cost - prev_cost) < 1e-4:
                     #     break
                     # prev_cost = cost
 
+            @qml.set_shots(shots)
             @qml.qnode(dev)
             def sample_circuit(params):
                 ansatz_circuit(params)
@@ -298,7 +394,19 @@ class PennylaneSolver(BaseSolver):
             energies = []
             
             # Get samples from the quantum circuit
-            raw_samples = sample_circuit(self.params)
+            if self.dev == "qiskit.remote":
+                print("\n" + "=" * 60)
+                print(f"⏳ Collecting {shots} samples from quantum hardware...")
+                print("   Waiting for quantum job to complete...")
+                print("=" * 60)
+                sample_start = time.time()
+                raw_samples = sample_circuit(self.params)
+                sample_time = time.time() - sample_start
+                print("=" * 60)
+                print(f"✓ Samples collected in {sample_time:.2f}s")
+                print("=" * 60)
+            else:
+                raw_samples = sample_circuit(self.params)
             
             # Handle different output formats
             if raw_samples.ndim == 1:
@@ -306,16 +414,23 @@ class PennylaneSolver(BaseSolver):
                 raw_samples = raw_samples.reshape(1, -1)
             
             # Process each sample
-            for shot_idx in range(min(len(raw_samples), self.shots)):
+            for shot_idx in range(min(len(raw_samples), shots)):
                 sample_data = raw_samples[shot_idx]
                 
                 # Convert from {-1, 1} to {0, 1} format
                 binary_sample = {}
-                for i, wire in enumerate(wires):
+                for i, wire in enumerate(circuit_wires):
                     # Handle potential measurement outcomes
                     measurement = sample_data[i] if hasattr(sample_data, '__getitem__') else sample_data
                     # Convert Pauli-Z eigenvalues {-1, 1} to binary {0, 1}
                     binary_sample[wire] = int((measurement + 1) // 2)
+                
+                # If using qiskit.remote, map sequential indices back to original wire labels
+                if wire_remap is not None:
+                    # Create reverse mapping: sequential index -> original wire label
+                    reverse_map = {idx: orig_wire for orig_wire, idx in wire_remap.items()}
+                    # Remap the binary sample to use original wire labels
+                    binary_sample = {reverse_map[seq_idx]: value for seq_idx, value in binary_sample.items()}
                 
                 samples.append(binary_sample)
                 
@@ -349,6 +464,14 @@ class PennylaneSolver(BaseSolver):
             
             # print(f"Best energy this iteration: {energies[best_idx]}")
             # print(f"Best sample: {samples[best_idx]}")
+            
+            # Print iteration summary for quantum hardware
+            if self.dev == "qiskit.remote":
+                iteration_time = time.time() - iteration_start
+                print("\n" + "=" * 60)
+                print(f"✓ Iteration completed in {iteration_time:.2f}s")
+                print(f"  Best energy: {energies[best_idx]:.6f}")
+                print("=" * 60 + "\n")
 
         return {
             'solution': best_sample,

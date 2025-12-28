@@ -1,4 +1,5 @@
 from .base_qubo import BaseQUBO
+import numpy as np
 
 
 class GraphQUBO(BaseQUBO):
@@ -7,7 +8,7 @@ class GraphQUBO(BaseQUBO):
         problem,
         penalties,
         name="graph",
-        var_limit=65,  # 131
+        var_limit=241   ,  #65 131
         window_max_steps=None,
         distance_scaling="enhanced_linear",
     ):
@@ -24,6 +25,14 @@ class GraphQUBO(BaseQUBO):
         # Multi-robot support: calculate total variables for all robots
         self.initial_num_vars = (self.num_nodes * self.total_t *
                                  self.problem.num_robots)
+        
+        # Compute goal-oriented connectivity potential for each robot
+        # This helps avoid dead-ends by identifying nodes where neighbors lead away from goal
+        # Store per-robot potentials for multi-robot scenarios
+        self.P_connectivity_per_robot = {}
+        self.P_obs = self.compute_spatial_obstacle_potential()
+        
+        print("Window max steps:", self.max_window_size())
 
     def build(self, constraints_to_apply=None):
         """Build the QUBO dictionary for graph-based pathfinding."""
@@ -305,15 +314,196 @@ class GraphQUBO(BaseQUBO):
             
         return K_dis
 
+    def _compute_node_connectivity_potential(self, goal_node=None, start_node=None):
+        """
+        Compute goal-oriented and directionally-aware connectivity potential for each node.
+        
+        This measures TWO factors:
+        1. How many neighbors move you CLOSER to the goal (goal-oriented)
+        2. How many neighbors are DIRECTIONALLY ALIGNED with the path from start to goal
+        
+        Nodes whose neighbors point away from the start→goal direction get higher potential.
+        
+        Args:
+            goal_node: Target node ID (if None, uses simple degree-based)
+            start_node: Current position node ID (if None, ignores directional factor)
+        
+        Returns:
+            Array of potential values, one per node.
+        """
+        P_nodes = np.zeros(self.num_nodes)
+        
+        # If no specific goal, compute general connectivity
+        if goal_node is None:
+            # Use simple degree-based for general case
+            degrees = np.zeros(self.num_nodes)
+            for node_id in range(self.num_nodes):
+                degrees[node_id] = len(self.graph.adjacency.get(node_id, []))
+            
+            max_degree = max(degrees) if max(degrees) > 0 else 1
+            
+            for node_id in range(self.num_nodes):
+                normalized_degree = degrees[node_id] / max_degree
+                P_nodes[node_id] = np.exp(-(normalized_degree ** 2))
+        else:
+            # Goal-oriented: count neighbors that move you CLOSER to goal
+            goal_pos = self.graph.get_node_position(goal_node)
+            if goal_pos is None:
+                return P_nodes  # Fallback to zeros
+            
+            # Get start position if provided (for directional alignment)
+            start_pos = None
+            if start_node is not None:
+                start_pos = self.graph.get_node_position(start_node)
+            
+            for node_id in range(self.num_nodes):
+                node_pos = self.graph.get_node_position(node_id)
+                if node_pos is None:
+                    continue
+                
+                # Factor 1: Goal-oriented connectivity
+                # Distance from current node to goal
+                current_dist = self.problem.euclidean_distance(node_pos, goal_pos)
+                
+                # Count neighbors and how many lead closer to goal
+                neighbors = self.graph.adjacency.get(node_id, [])
+                total_neighbors = len(neighbors)
+                
+                if total_neighbors == 0:
+                    P_nodes[node_id] = 1.0  # Isolated node = maximum penalty
+                    continue
+                
+                # Count "good" neighbors (those closer to goal than current node)
+                good_neighbors = 0
+                for neighbor_id, _ in neighbors:
+                    neighbor_pos = self.graph.get_node_position(neighbor_id)
+                    if neighbor_pos is not None:
+                        neighbor_dist = self.problem.euclidean_distance(neighbor_pos, goal_pos)
+                        if neighbor_dist < current_dist:
+                            good_neighbors += 1
+                
+                # Ratio of good neighbors to total neighbors
+                good_ratio = good_neighbors / total_neighbors
+                
+                # Goal-oriented potential (inverse of good ratio)
+                P_goal = np.exp(-2 * good_ratio)
+                
+                # Factor 2: Directional alignment with start→goal vector
+                if start_pos is not None and total_neighbors > 0:
+                    # Vector from start to goal (desired direction)
+                    goal_vec = np.array([goal_pos[0] - start_pos[0], 
+                                        goal_pos[1] - start_pos[1]])
+                    goal_vec_norm = np.linalg.norm(goal_vec)
+                    
+                    if goal_vec_norm > 0:
+                        goal_vec = goal_vec / goal_vec_norm  # Normalize
+                        
+                        # Count neighbors aligned with start→goal direction
+                        aligned_neighbors = 0
+                        for neighbor_id, _ in neighbors:
+                            neighbor_pos = self.graph.get_node_position(neighbor_id)
+                            if neighbor_pos is not None:
+                                # Vector from current node to neighbor
+                                neighbor_vec = np.array([neighbor_pos[0] - node_pos[0],
+                                                        neighbor_pos[1] - node_pos[1]])
+                                neighbor_vec_norm = np.linalg.norm(neighbor_vec)
+                                
+                                if neighbor_vec_norm > 0:
+                                    neighbor_vec = neighbor_vec / neighbor_vec_norm
+                                    
+                                    # Dot product measures alignment (-1 to 1)
+                                    # 1 = same direction, 0 = perpendicular, -1 = opposite
+                                    alignment = np.dot(goal_vec, neighbor_vec)
+                                    
+                                    # Consider aligned if dot product > 0.3 (roughly same direction)
+                                    if alignment > 0.3:
+                                        aligned_neighbors += 1
+                        
+                        # Ratio of aligned neighbors
+                        aligned_ratio = aligned_neighbors / total_neighbors
+                        
+                        # Directional potential (inverse of alignment)
+                        P_direction = np.exp(-2 * aligned_ratio)
+                        
+                        # Combine both factors (weighted average)
+                        # Goal-oriented is more important (0.7) than directional alignment (0.3)
+                        P_nodes[node_id] = 0.7 * P_goal + 0.3 * P_direction
+                    else:
+                        # Start == goal, use only goal-oriented
+                        P_nodes[node_id] = P_goal
+                else:
+                    # No start position, use only goal-oriented potential
+                    P_nodes[node_id] = P_goal
+        
+        return P_nodes
+    
+    def compute_spatial_obstacle_potential(self, sigma=1.5, isolation_threshold=3):
+        """
+        Compute obstacle potential using node positions and connectivity patterns.
+        Nodes with few connections are likely near obstacles/boundaries and create
+        repulsive potential fields similar to the grid-based approach.
+        
+        Args:
+            sigma: Controls spatial decay (higher = wider influence)
+            isolation_threshold: Nodes with fewer neighbors are considered near obstacles
+        
+        Returns:
+            Array of potential values per node
+        """
+        P_nodes = np.zeros(self.num_nodes)
+        
+        # Collect positions and identify "obstacle-adjacent" nodes
+        obstacle_nodes = []
+        all_positions = {}
+        
+        for node_id in range(self.num_nodes):
+            pos = self.graph.get_node_position(node_id)
+            if pos is not None:
+                all_positions[node_id] = pos
+                
+                # Low connectivity suggests proximity to obstacles
+                neighbors = self.graph.adjacency.get(node_id, [])
+                if len(neighbors) <= isolation_threshold:
+                    obstacle_nodes.append((node_id, pos))
+        
+        if len(obstacle_nodes) == 0 or len(all_positions) == 0:
+            return P_nodes
+        
+        # Compute potential: each obstacle node creates Gaussian repulsion
+        for node_id, node_pos in all_positions.items():
+            potential = 0.0
+            
+            for obs_id, obs_pos in obstacle_nodes:
+                if node_id == obs_id:
+                    # Self-contribution (node is itself near obstacle)
+                    potential += 1.0
+                else:
+                    # Spatial distance-based Gaussian decay
+                    dist = self.problem.euclidean_distance(node_pos, obs_pos)
+                    potential += np.exp(-dist**2 / (2 * sigma**2))
+            
+            P_nodes[node_id] = potential
+        
+        # Normalize to [0, 1]
+        if np.max(P_nodes) > 0:
+            P_nodes /= np.max(P_nodes)
+        
+        return P_nodes
+    
     def apply_goal_approximation_penalty(self, robot_id):
         """
         Apply goal approximation penalty using Euclidean distance heuristic.
         Encourages getting closer to the goal when it cannot be reached in current window.
+        Includes goal-oriented connectivity potential to avoid dead-ends.
         """
         K_goal_approx = self.penalties.get('K_goal_approx', 0.5)
         if K_goal_approx == 0:
             return
-            
+        
+        K_deadend_repel = 0.4  # Dead-end repulsion strength (for low-connectivity nodes)
+        K_repel = 1.0 # Probably requires higher tuning, still need to ponder if higher means better
+        
+
         robot_nums = self.problem.get_robot_nums()
         robot_offset = robot_nums[robot_id] * (self.num_nodes * self.total_t)
         robot = self.problem.robots[robot_id]
@@ -326,6 +516,16 @@ class GraphQUBO(BaseQUBO):
         goal_node = self.problem.get_graph_robot_current_goal(robot_id)[1]
         goal_pos = self.graph.get_node_position(goal_node)
         
+        # Get current position (start node for this window)
+        start_node = self.problem.get_graph_robot_current_goal(robot_id)[0]
+        
+        # Compute goal-oriented and proximity-aware connectivity potential for this robot
+        # Cache it to avoid recomputation
+        if robot_id not in self.P_connectivity_per_robot:
+            self.P_connectivity_per_robot[robot_id] = self._compute_node_connectivity_potential(
+                goal_node, start_node
+            )
+        
         for t in range(start + 1, self.t_max):
             time_factor = (1.2) ** (5 * (t - start) / (self.t_max - start))
             
@@ -334,11 +534,18 @@ class GraphQUBO(BaseQUBO):
                 if node_pos is None or goal_pos is None:
                     continue
                 
+                # Goal attraction (distance-based)
                 raw_dist = self.problem.euclidean_distance(node_pos, goal_pos)
                 K_dis = self.calculate_euclidean_penalty(raw_dist, K_goal_approx, time_factor)
                 
+                # Dead-end repulsion (goal-oriented connectivity)
+                # Penalize nodes where neighbors lead away from goal
+                K_deadend = K_deadend_repel * self.P_connectivity_per_robot[robot_id][node_id] # This is goal-oriented
+                K_obs = K_repel * self.P_obs[node_id] # This is environment-oriented (avoid obstacles)
+                
                 var_idx = node_id + (self.num_nodes * t) + robot_offset
-                self.Q[(var_idx, var_idx)] = self.Q.get((var_idx, var_idx), 0) - K_dis
+                # Apply both goal attraction and dead-end repulsion
+                self.Q[(var_idx, var_idx)] = self.Q.get((var_idx, var_idx), 0) - K_dis + K_obs + K_deadend
 
     def apply_backtracking_penalty(self):
         """Apply backtracking penalty: discourage revisiting nodes for each robot."""
@@ -434,40 +641,11 @@ class GraphQUBO(BaseQUBO):
                     n = node_i + (self.num_nodes * start) + robot_offset
                     fixed[n] = 0
 
-            # # Initialize reachable set with the start node at start_time
-            # reachable_at_time = {start: {start_node}}
-
-            # # Perform a BFS-like traversal to find all reachable nodes at each time step
-            # for t in range(start, end - 1):
-            #     reachable_at_time[t + 1] = set()
-            #     for node_i in reachable_at_time[t]:
-            #         for node_j, _ in self.graph.adjacency.get(node_i, []):
-            #             reachable_at_time[t + 1].add(node_j)
+            # Standard BFS version
+            #reachable_at_time = self.reachable_positions(robot, start, end)
 
             # Aggresive version
-            reachable_at_time = {start: {start_node}}
-            visited = {start_node}  # Prevent revisiting previously reached nodes
-
-            for t in range(start, end - 1):
-                prev_layer = reachable_at_time[t]
-                curr_layer = set()
-
-                for node_i in prev_layer:
-                    for node_j, _ in self.graph.adjacency.get(node_i, []):
-                        # Only expand to new nodes not yet visited
-                        if node_j not in visited:
-                            curr_layer.add(node_j)
-                            visited.add(node_j)
-
-                # Stop early if no new nodes are reachable
-                if not curr_layer:
-                    break
-
-                # To make sure goal is always reachable (and not conflict with goal lock)
-                if goal_node in visited:
-                    curr_layer.add(goal_node)
-
-                reachable_at_time[t + 1] = curr_layer
+            reachable_at_time = self.reachable_positions_aggressive(robot, start_node, start, end)
             # print(reachable_at_time)
             # Fix unreachable nodes to 0 for all time steps for this robot
             for t in range(start + 1, end):
@@ -478,6 +656,49 @@ class GraphQUBO(BaseQUBO):
                         fixed[var_idx] = 0
 
         return fixed
+
+    def reachable_positions(self, robot, start_node, start, end):
+        # Initialize reachable set with the start node at start_time
+        reachable_at_time = {start: {start_node}}
+
+        # Perform a BFS-like traversal to find all reachable nodes at each time step
+        for t in range(start, end - 1):
+            reachable_at_time[t + 1] = set()
+            for node_i in reachable_at_time[t]:
+                for node_j, _ in self.graph.adjacency.get(node_i, []):
+                    reachable_at_time[t + 1].add(node_j)
+
+        return reachable_at_time
+
+    def reachable_positions_aggressive(self, robot, start_node, start_time, end_time):
+        
+        goal_node = self.problem.get_graph_robot_current_goal(robot.robot_id)[1]
+        reachable_at_time = {start_time: {start_node}}
+        visited = {start_node}  # Prevent revisiting previously reached nodes
+
+        # Match QUBOBuilder loop range: start at start_time + 1, end at end_time
+        for t in range(start_time + 1, end_time):
+            prev_layer = reachable_at_time[t - 1]
+            curr_layer = set()
+            
+            for node_i in prev_layer:
+                for node_j, _ in self.graph.adjacency.get(node_i, []):
+                    # Only expand to new nodes not yet visited
+                    if node_j not in visited:
+                        curr_layer.add(node_j)
+                        visited.add(node_j)
+            # Stop early if no new nodes are reachable
+            if not curr_layer:
+                break
+
+            # To make sure goal is always reachable (and not conflict with goal lock)
+            if goal_node in visited:
+                curr_layer.add(goal_node)
+
+            reachable_at_time[t] = curr_layer
+        
+        # print(reachable_at_time)
+        return reachable_at_time
 
     # def apply_multi_robot_proximity_penalty(self):
     #     """Apply proximity penalty: discourage robots from being too close to each other."""

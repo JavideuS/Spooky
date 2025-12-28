@@ -9,7 +9,7 @@ import benchmark.benchmark as benchmark
 from config.hdf5parser import load_both_from_hdf5, load_map_from_hdf5, load_graph_from_hdf5
 import time
 from robotConfiguration import RobotConfig
-
+import pennylane as qml
 # Example usage for both grid and graph formats:
 
 # GRID FORMAT (existing):
@@ -37,10 +37,10 @@ conf = config_parser.load_config("config/config.yaml", sections=["problems", "pe
 # graph_data = load_graph_from_hdf5("maps/synthetic/3x3/obs3x3_standard.h5")
 # graph = map.Graph.from_hdf5_data(graph_data)
 
-# map_conf = conf["problems"]["grid_5x5_medium"]
+map_conf = conf["problems"]["grid_5x5_medium"]
 # map_conf = conf["problems"]["grid_5x5_hard"]
 # map_conf = conf["problems"]["grid_5x5_easyv2_alt"]
-map_conf = conf["problems"]["grid_3x3_default"]
+# map_conf = conf["problems"]["grid_3x3_default"]
 # map_conf = conf["problems"]["grid_3x3_no_obs"]
 materials_data = config_parser.load_config("config/materials.yaml")["materials"]
 
@@ -56,24 +56,24 @@ materials_data = config_parser.load_config("config/materials.yaml")["materials"]
 start = map_conf["start"]
 end = map_conf["goal"]
 T = map_conf["T"]
-
 problem = PathfindingProblem.from_unified_data(
-        "maps/synthetic/3x3/obs3x3_standard.h5",
+        "maps/synthetic/5x5/obs5x5_medium.h5",
         start=start,
         end=end,
         T=T,
         name="unified"
     )
-
-alele = RobotConfig("Alele", (2, 2), (0, 0), start_time=0, priority=1, safety_radius=0)
-problem.add_robot(alele)
-showmaker = RobotConfig("Showmaker", (0, 2), (2, 0), start_time=0, priority=1, safety_radius=0)
-problem.add_robot(showmaker)
-caps = RobotConfig("Caps", (0, 0), (2, 2), start_time=0, priority=1, safety_radius=0)
-problem.add_robot(caps)
-# problem.add_robot(alele, True) # This alternative keeps predefined time when adding robots
-# print(alele.to_dict())
+problem.robots["Angie"].priority = 3
+anja = RobotConfig("Anja", (4, 4), (0, 0), start_time=0, priority=1, safety_radius=0)
+problem.add_robot(anja)
+# showmaker = RobotConfig("Showmaker", (0, 2), (2, 0), start_time=0, priority=1, safety_radius=0)
+# problem.add_robot(showmaker)
+# caps = RobotConfig("Caps", (0, 0), (2, 2), start_time=0, priority=1, safety_radius=0)
+# problem.add_robot(caps)
+# problem.add_robot(anja, True) # This alternative keeps predefined time when adding robots
+# print(anja.to_dict())
 # print("Problem", problem.to_dict())
+
 
 # print("Materials:", grid.materials)
 # print("Problem ter:", problem.grid.terrain)
@@ -106,7 +106,7 @@ builder = GraphQUBO(p_graph, penalties=penalties_conf, name="graph_problem")
 # print(f"QUBO built in {duration:.4f} seconds")
 
 # Solver (Quantum annealing)
-dwave_solver = SolverFactory.create_solver(backend="dwave", normalize_scale=2.0, num_reads=12)  # 20 5x5 without pre-processing
+dwave_solver = SolverFactory.create_solver(solver="dwave", normalize_scale=3, num_reads=12)  # 20 5x5 without pre-processing
 # Smart reads with pre-processing
 # < 9 qubits -> 9 reads (Still not perfect)
 # <= 18 qubits -> 12 reads
@@ -116,17 +116,17 @@ dwave_solver = SolverFactory.create_solver(backend="dwave", normalize_scale=2.0,
 # init_params = np.array([[1.702179, 0.74571062], [0.45629231, 0.49672656]], requires_grad=True)
 init_params = np.array([[1.70579, 0.70321062], [0.49879231, 0.49412656]], requires_grad=True)
 pennylane_solver = SolverFactory.create_solver(
-        backend="pennylane", normalize_scale=1.0, num_reads=500,
+        solver="pennylane", normalize_scale=1.0, num_reads="auto",
         layers=2, optimizer="QNG", opt_steps=30,
         device="lightning.gpu", params=init_params)
 # General reads withour pre-processing
 # 1500 2x2
 # 13000 3x2
-# Smart reads with pre-processing based on final qubo size
-# < 9 qubits -> 500 reads
-# <= 12 qubits -> 2500 reads
-# <= 16 qubits -> 8000 reads (16 errors on 10k attemps)
-# <= 18 qubits -> 17000 reads
+
+qiskit_hardware = SolverFactory.create_solver(
+        solver="pennylane", normalize_scale=1.0, num_reads="auto",
+        layers=2, optimizer="QNG", opt_steps=30,
+        device="qiskit.remote", params=init_params)
 
 # Q = builder.build()
 # solution = dwave_solver.solve_qubo(builder, False)
@@ -134,5 +134,5 @@ pennylane_solver = SolverFactory.create_solver(
 # print("Path:", dwave_solver.decode_path(solution["solution"], problem))
 # print(f"Energy: {dwave_solver.total_energy(solution):.4f}")
 
-benchmark = benchmark.BenchmarkRunner(builder, pennylane_solver, num_runs=1000)
+benchmark = benchmark.BenchmarkRunner(builder, dwave_solver, num_runs=100)
 benchmark.run_build()

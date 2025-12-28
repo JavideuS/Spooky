@@ -223,7 +223,7 @@ penalty_sets:
     K_hot: 9
     K_adj: 4.8
     K_start: 6.5
-    K_goal: 2.7
+    K_goal: 3 #2.7
     K_lock: 4
     K_bt: 2.3
     K_tp: 1.2

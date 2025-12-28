@@ -6,7 +6,7 @@ from .base_solver import BaseSolver
 
 class DWaveSolver(BaseSolver):
     def __init__(self, normalize_scale=0, num_reads=10, **kwargs):
-        super().__init__(backend="dwave", normalize_scale=normalize_scale,
+        super().__init__(solver="dwave", normalize_scale=normalize_scale,
                          num_reads=num_reads, **kwargs)
 
     def solve_qubo(self, builder, opt):
@@ -47,8 +47,8 @@ class DWaveSolver(BaseSolver):
             # print("Pre Num wires", builder.get_num_wires())
             if self.norm_scale != 0:
                 fixed_vars = builder.get_fixed_variables()
-                builder.Q, offset = builder.reduce_qubo(fixed_vars)
-                diag_fixed = builder.reduce_diag_fixed_vars_iterative()
+                builder.Q, const_offset, log = builder.reduce_qubo(fixed_vars)
+                diag_fixed = builder.reduce_diag_fixed_vars_iterative(log)
                 fixed_vars.update(diag_fixed)
                 # print(fixed_vars)
                 builder.Q = self.normalize_qubo(builder.Q, self.norm_scale)
@@ -71,4 +71,12 @@ class DWaveSolver(BaseSolver):
             'solution': best_sample,
             'energy': best_energy,
             'raw_response': response,
+            'metadata': {
+                'num_robots': builder.problem.num_robots,
+                'total_variables': builder.initial_num_vars,
+                'fixed_variables': len(fixed_vars),
+                'constant_offset': const_offset,
+                'solver_config': self.to_dict(),
+                'penalties': builder.penalties
+            }
         }

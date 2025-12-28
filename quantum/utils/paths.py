@@ -32,3 +32,33 @@ def merge_paths(old_path: List[Tuple[int, int, int]], new_path: List[Tuple[int, 
 
         merged.extend(adjusted_new)
         return merged
+
+def decode_position(idx: int, problem) -> Tuple[int, int, int, int]:
+        """
+        Decode variable index to position, time, and robot number.
+
+        Args:
+            idx: Variable index
+            problem: Problem instance
+
+        Returns:
+            Tuple of (i, j, t, robot_num) coordinates
+        """
+        if problem.get_format_type() == "graph":
+            nodes_per_robot = len(problem.graph.nodes) * problem.T
+            robot_num = idx // nodes_per_robot
+            reduced_idx = idx % nodes_per_robot
+            t = reduced_idx // len(problem.graph.nodes)
+            graph_idx = reduced_idx % len(problem.graph.nodes)
+            pos = problem.graph.get_node_position(graph_idx)
+            return int(pos[0]), int(pos[1]), t, robot_num
+        M = problem.grid.M
+        N = problem.grid.N
+        T = problem.T
+        robot_num = idx // (M * N * T)
+        reduced_idx = idx % (M * N * T)
+        t = reduced_idx // (M * N)
+        pos = reduced_idx % (M * N)
+        i = pos // N
+        j = pos % N
+        return i, j, t, robot_num

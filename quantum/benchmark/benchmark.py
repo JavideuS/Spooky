@@ -93,7 +93,9 @@ class BenchmarkRunner:
         filename = f"benchmark_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         filepath = self.output_dir / filename
         with open(filepath, "w") as f:
-            json.dump(self.results, f, indent=2, default=str)
+            # Convert tuple keys to strings for JSON serialization
+            serializable_results = convert_tuple_keys_to_str(self.results)
+            json.dump(serializable_results, f, indent=2, default=str)
         print(f"\nBenchmark complete. Results saved to {filepath}")
 
 

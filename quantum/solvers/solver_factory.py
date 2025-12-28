@@ -17,47 +17,47 @@ class SolverFactory:
     }
     
     @classmethod
-    def register_solver(cls, backend_name: str, solver_class: Type[BaseSolver]):
+    def register_solver(cls, solver_name: str, solver_class: Type[BaseSolver]):
         """
         Register a new solver backend.
         
         Args:
-            backend_name: Name of the backend
+            solver_name: Name of the solver
             solver_class: Solver class that inherits from BaseSolver
         """
-        cls._solvers[backend_name] = solver_class
+        cls._solvers[solver_name] = solver_class
     
     @classmethod
-    def get_available_backends(cls) -> list:
+    def get_available_solvers(cls) -> list:
         """
-        Get list of available backend names.
+        Get list of available solver names.
         
         Returns:
-            List of available backend names
+            List of available solver names
         """
         return list(cls._solvers.keys())
     
     @classmethod
-    def create_solver(cls, backend: str, **kwargs) -> BaseSolver:
+    def create_solver(cls, solver: str, **kwargs) -> BaseSolver:
         """
-        Create a solver instance for the specified backend.
+        Create a solver instance for the specified solver.
         
         Args:
-            backend: Name of the backend
+            solver: Name of the solver
             **kwargs: Solver-specific parameters
             
         Returns:
             Solver instance
             
         Raises:
-            ValueError: If backend is not supported
+            ValueError: If solver is not supported
         """
-        if backend not in cls._solvers:
-            available = ", ".join(cls.get_available_backends())
-            raise ValueError(f"Backend '{backend}' not supported. "
-                          f"Available backends: {available}")
+        if solver not in cls._solvers:
+            available = ", ".join(cls.get_available_solvers())
+            raise ValueError(f"Solver '{solver}' not supported. "
+                          f"Available solvers: {available}")
         
-        solver_class = cls._solvers[backend]
+        solver_class = cls._solvers[solver]
         return solver_class(**kwargs)
     
     @classmethod
@@ -71,26 +71,26 @@ class SolverFactory:
         Returns:
             Solver instance
         """
-        backend = config.get("backend", "dwave")
+        solver = config.get("solver", "dwave")
         
-        if backend not in cls._solvers:
-            available = ", ".join(cls.get_available_backends())
-            raise ValueError(f"Backend '{backend}' not supported. "
-                          f"Available backends: {available}")
+        if solver not in cls._solvers:
+            available = ", ".join(cls.get_available_solvers())
+            raise ValueError(f"Solver '{solver}' not supported. "
+                          f"Available solvers: {available}")
         
-        solver_class = cls._solvers[backend]
+        solver_class = cls._solvers[solver]
         return solver_class.from_config(config)
     
     @classmethod
-    def switch_backend(cls, solver: BaseSolver, new_backend: str, 
+    def switch_solver(cls, solver: BaseSolver, new_solver: str, 
                       **kwargs) -> BaseSolver:
         """
-        Switch a solver to a different backend while preserving common parameters.
+        Switch a solver to a different solver while preserving common parameters.
         
         Args:
             solver: Current solver instance
-            new_backend: New backend name
-            **kwargs: Additional parameters for the new backend
+            new_solver: New solver name
+            **kwargs: Additional parameters for the new solver
             
         Returns:
             New solver instance with the specified backend
@@ -104,50 +104,50 @@ class SolverFactory:
         # Update with new parameters
         common_params.update(kwargs)
         
-        return cls.create_solver(new_backend, **common_params)
+        return cls.create_solver(new_solver, **common_params)
 
 
 class DynamicSolver:
     """
-    A wrapper class that allows dynamic backend switching during runtime.
+    A wrapper class that allows dynamic solver switching during runtime.
     """
     
-    def __init__(self, initial_backend: str = "dwave", **kwargs):
+    def __init__(self, initial_solver: str = "dwave", **kwargs):
         """
-        Initialize with a specific backend.
+        Initialize with a specific solver.
         
         Args:
-            initial_backend: Initial backend to use
+            initial_solver: Initial solver to use
             **kwargs: Solver parameters
         """
-        self.current_backend = initial_backend
-        self.solver = SolverFactory.create_solver(initial_backend, **kwargs)
+        self.current_solver = initial_solver
+        self.solver = SolverFactory.create_solver(initial_solver, **kwargs)
     
-    def switch_backend(self, new_backend: str, **kwargs):
+    def switch_solver(self, new_solver: str, **kwargs):
         """
-        Switch to a different backend.
+        Switch to a different solver.
         
         Args:
-            new_backend: New backend name
-            **kwargs: Additional parameters for the new backend
+            new_solver: New solver name
+            **kwargs: Additional parameters for the new solver
         """
-        self.solver = SolverFactory.switch_backend(
-            self.solver, new_backend, **kwargs
+        self.solver = SolverFactory.switch_solver(
+            self.solver, new_solver, **kwargs
         )
-        self.current_backend = new_backend
+        self.current_solver = new_solver
     
-    def get_backend_info(self) -> Dict[str, Any]:
+    def get_solver_info(self) -> Dict[str, Any]:
         """
-        Get information about the current backend.
+        Get information about the current solver.
         
         Returns:
-            Dictionary with backend information
+            Dictionary with solver information
         """
-        return self.solver.get_backend_info()
+        return self.solver.get_solver_info()
     
     def solve_qubo(self, builder):
         """
-        Solve QUBO using the current backend.
+        Solve QUBO using the current solver.
         
         Args:
             builder: QUBOBuilder instance
