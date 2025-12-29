@@ -207,7 +207,9 @@ def _validate_single_robot_path_unified(positions, problem, robot_id,
     # Get notation abstraction based on problem type
     notation = _get_notation_abstraction(problem)
 
-    T = problem.robots[robot_id].T + problem.robots[robot_id].start_time
+    # Get robot's individual timeline end
+    robot = problem.robots[robot_id]
+    robot_end_time = robot.T + robot.start_time
     
     if not positions:
         result["valid"] = False
@@ -219,10 +221,36 @@ def _validate_single_robot_path_unified(positions, problem, robot_id,
     positions.sort(key=lambda x: x[2])
 
     # 2. Get expected time range and check all time steps are present
-    expected_times = notation.get_expected_time_range(problem, robot_id, T)
+    expected_times = notation.get_expected_time_range(problem, robot_id, robot_end_time)
+    expected_goal = notation.get_goal_position(problem, robot_id)
+    
+    # Early stop support: Check if robot reached goal early
+    goal_times = [t for i, j, t in positions 
+                  if notation.get_position_representation(problem, (i, j)) == expected_goal]
+    
+    if goal_times:
+        first_goal_time = min(goal_times)
+        # Only require timesteps up to when goal was first reached
+        expected_times = set(t for t in expected_times if t <= first_goal_time)
+        
+        # Verify robot stayed at goal if it has positions after reaching it
+        later_positions = [(i, j, t) for i, j, t in positions if t > first_goal_time]
+        for i, j, t in later_positions:
+            if notation.get_position_representation(problem, (i, j)) != expected_goal:
+                result["valid"] = False
+                result["reason"] = "left_goal_after_reaching"
+                result["message"] = (f"❌ Robot {robot_num}: Left goal position at time {t} "
+                                   f"after reaching it at time {first_goal_time}")
+                result["details"]["first_goal_time"] = first_goal_time
+                result["details"]["left_at_time"] = t
+                return result
+    
     all_times = set(t for _, _, t in positions)
     missing_times = expected_times - all_times
-    extra_times = all_times - expected_times
+    # Only flag as extra if timesteps exceed the robot's full timeline range
+    # Robot can have timesteps from start_time to (start_time + T - 1)
+    # Extra timesteps are those >= (start_time + T)
+    extra_times = set(t for t in all_times if t >= robot_end_time)
 
     if missing_times:
         result["valid"] = False
@@ -230,15 +258,15 @@ def _validate_single_robot_path_unified(positions, problem, robot_id,
         result["message"] = (f"❌ Robot {robot_num}: Missing time steps: "
                              f"{missing_times}")
         result["details"]["missing_times"] = list(missing_times)
-        result["details"]["extra_times"] = list(extra_times)
         return result
 
     if extra_times:
         result["valid"] = False
         result["reason"] = "extra_time_steps"
-        result["message"] = (f"❌ Robot {robot_num}: Extra time steps found: "
-                             f"{extra_times}")
+        result["message"] = (f"❌ Robot {robot_num}: Timesteps exceed robot's timeline "
+                             f"[{robot.start_time}, {robot_end_time-1}]: {extra_times}")
         result["details"]["extra_times"] = list(extra_times)
+        result["details"]["robot_timeline"] = f"[{robot.start_time}, {robot_end_time-1}]"
         return result
 
     # 3. One-hot constraint per time step
@@ -273,15 +301,15 @@ def _validate_single_robot_path_unified(positions, problem, robot_id,
         result["details"]["actual_start"] = actual_start
         return result
 
-    # 5. Goal position check
-    expected_goal = notation.get_goal_position(problem, robot_id)
-    goal_reached = any(notation.get_position_representation(problem, (i, j)) == expected_goal for i, j, t in positions)
-    if not goal_reached:
+    # 5. Goal position check (already verified in early stop logic above)
+    # If goal_times is empty, goal was never reached
+    if not goal_times:
         result["valid"] = False
         result["reason"] = "goal_not_reached"
         result["message"] = f"❌ Robot {robot_num}: Goal position {expected_goal} never reached"
         result["details"]["goal"] = expected_goal
         return result
+
 
     # 6. Movement must be valid (adjacent positions only)
     last_pos = None

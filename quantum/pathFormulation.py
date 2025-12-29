@@ -158,6 +158,13 @@ class PathfindingProblem:
         """Calculate Euclidean distance for graph coordinates."""
         return np.sqrt((start[0] - end[0]) * (start[0] - end[0]) + (start[1] - end[1]) * (start[1] - end[1]))
 
+    # def is_valid_move(self, robot, from_pos, to_pos):
+    #     """Check if a move is valid."""
+    #     if self.grid is not None:
+    #         return self.grid.is_valid_move(robot, from_pos, to_pos)
+    #     else:
+    #         return self.graph.is_valid_move(robot, from_pos, to_pos)
+    
     def set_robot_time(self):
         """Set time horizon T for each robot if not already set."""
         for robot in self.robots.values():
