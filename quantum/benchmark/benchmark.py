@@ -6,29 +6,40 @@ import time
 
 class BenchmarkRunner:
     def __init__(
-        self, qubobuilder, solver, num_runs=10, output_dir="results/benchmarks"
+        self, qubobuilder, solver, num_runs=10, output_dir="results/benchmarks", level=2
     ):
         """
         Run benchmark on a given solver and problem.
 
         Args:
-            problem (PathfindingProblem): A fully initialized problem
+            qubobuilder (QUBOBuilder): A fully initialized QUBO builder
             solver (QUBOSolver): A solver implementing `.solve(Q)`
-            penalty_set (dict): Penalty dictionary {K_hot: ..., K_adj: ...}
             num_runs (int): Number of times to run the solver
             output_dir (str): Where to save results
+            level (int): Benchmark verbosity level (1=Summary, 2=Paths, 3=Full)
+                - Level 1: Only statistics, timing, energy, validation pass/fail
+                - Level 2: Level 1 + robot paths and per-robot validation details
+                - Level 3: Level 2 + raw bit solution for debugging
         """
         self.builder = qubobuilder
         self.problem = qubobuilder.problem
         self.penalty_set = qubobuilder.penalties
         self.solver = solver
         self.num_runs = num_runs
+        self.level = max(1, min(3, level))  # Clamp to 1-3
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Store metadata once, not per-run
         self.results = {
-            "problem": self.problem.to_dict(),
-            "solver": self.solver.to_dict(),
-            "penalty_set": self.penalty_set,
+            "metadata": {
+                "problem": self.problem.to_dict(),
+                "solver": self.solver.to_dict(),
+                "penalty_set": self.penalty_set,
+                "benchmark_level": self.level,
+                "num_runs": num_runs,
+                "timestamp": datetime.now().isoformat()
+            },
             "runs": []
         }
 
@@ -37,6 +48,7 @@ class BenchmarkRunner:
         print(f"\nBenchmarking Problem: {self.problem.name}")
         print(f"Using Solver: {self.solver.name}")
         print(f"Penalty Set: {self.penalty_set.get('name', 'unnamed')}")
+        print(f"Benchmark Level: {self.level} ({'Summary' if self.level == 1 else 'Paths' if self.level == 2 else 'Full'})")
         print("-" * 60)
 
         # Run multiple trials
@@ -47,7 +59,6 @@ class BenchmarkRunner:
             build_duration = time.time() - build_start
         
             solve_start = time.time()
-            # solution = self.solver.solve_qubo(self.builder, False)
             solution = self.solver.solve_qubo_smart(self.builder, False)
             solve_duration = time.time() - solve_start
 
@@ -56,35 +67,64 @@ class BenchmarkRunner:
                 f"Solve time: {solve_duration:.4f}s"
             )
 
+            # Decode path for validation
             path = self.solver.decode_path(solution["solution"], self.problem)
             validation = is_solution_valid(path, self.problem)
 
+            # Calculate total energy (handle both scalar and list energies)
+            if isinstance(solution["energy"], list):
+                total_energy = sum(solution["energy"])
+            else:
+                total_energy = solution["energy"]
+
+            # Build result based on level
             result = {
                 "run_id": run_id,
                 "timestamp": datetime.now().isoformat(),
-                "solution": solution,
-                "validation": validation,
-                "energy": solution["energy"],
-                # "success": validation["valid"],
+                "valid": validation["valid"],
+                "energy": total_energy,
                 "execution_time_sec": round(solve_duration, 3),
             }
+
+            # Level 2+: Add robot paths and validation details
+            if self.level >= 2:
+                # Extract robot paths from robot.path (already corrected/merged)
+                robot_paths = {}
+                for robot_id, robot in self.problem.robots.items():
+                    robot_paths[robot_id] = robot.path
+                
+                result["robot_paths"] = robot_paths
+                
+                # Add per-robot validation details
+                validation_details = {}
+                for key, value in validation.get("details", {}).items():
+                    if key.startswith("robot_"):
+                        validation_details[key] = value
+                
+                result["validation_details"] = validation_details
+                
+                # Also store per-window energies for analysis
+                if isinstance(solution["energy"], list):
+                    result["window_energies"] = solution["energy"]
+
+            # Level 3: Add raw bit solution for debugging
+            if self.level >= 3:
+                result["raw_solution"] = solution["solution"]
 
             self.results["runs"].append(result)
 
             status = "✅ Valid" if validation["valid"] else "❌ Invalid"
             if not validation["valid"]:
-                print("Validation details:", validation["details"])
-                print("Reason:", validation["reason"])
-                print("Message:", validation["message"])
+                print("Validation details:", validation.get("details", {}))
+                print("Reason:", validation.get("reason", "unknown"))
+                print("Message:", validation.get("message", ""))
             print(
                 f"Run {run_id}: {status} | Time: {solve_duration:.2f}s | "
-                f"Energy: {self.solver.total_energy(solution):.4f}"
+                f"Energy: {total_energy:.4f}"
             )
             print(f"Path: {path}")
-            # print(f"Robot paths: {self.solver.get_robot_paths(path)}")
-            for robot in self.problem.robots.values():
-                print(f" Robot {robot.robot_id} path: {robot.path}")
-            # print("Raw solution:", solution["solution"])
+            for robot_id, robot in self.problem.robots.items():
+                print(f" Robot {robot_id} path: {robot.path}")
 
         self.save_results()
         return self.results

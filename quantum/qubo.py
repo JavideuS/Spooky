@@ -47,7 +47,7 @@ problem = PathfindingProblem.from_unified_data(
         "maps/synthetic/10x10/no_obs10x10.h5",
         start=start,
         end=end,
-        T=22,
+        T=T,
         name="unified"
     )
 problem.robots["Angie"].priority = 3
@@ -80,12 +80,12 @@ penalties_conf = conf["penalty_sets"]["crash"]
 
 # Choose QUBO builder based on problem format:
 # For grid problems:
-p_grid = problem.as_grid_only()
-builder = QUBOBuilder(p_grid, penalties=penalties_conf, name="standard", distance_scaling="enhanced_linear")
+# p_grid = problem.as_grid_only()
+# builder = QUBOBuilder(p_grid, penalties=penalties_conf, name="standard", distance_scaling="enhanced_linear", robot_window_limits={"Angie": 4})
 
 # For graph problems:
-# p_graph = problem.as_graph_only()
-# builder = GraphQUBO(p_graph, penalties=penalties_conf, name="graph_problem")
+p_graph = problem.as_graph_only()
+builder = GraphQUBO(p_graph, penalties=penalties_conf, name="graph_problem", robot_window_limits={"Angie": 3})
 
 # start_time = time.time()
 # Q = builder.build()
@@ -119,5 +119,5 @@ qiskit_hardware = SolverFactory.create_solver(
 # print("Path:", dwave_solver.decode_path(solution["solution"], problem))
 # print(f"Energy: {dwave_solver.total_energy(solution):.4f}")
 
-benchmark = benchmark.BenchmarkRunner(builder, dwave_solver, num_runs=100)
+benchmark = benchmark.BenchmarkRunner(builder, pennylane_solver, num_runs=1000, level=1)
 benchmark.run_build()
