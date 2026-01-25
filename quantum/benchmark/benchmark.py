@@ -2,6 +2,7 @@ from pathlib import Path
 from datetime import datetime
 import json
 import time
+from quantum.utils.validation import is_valid_move, get_position_representation
 
 
 class BenchmarkRunner:
@@ -266,7 +267,7 @@ def _validate_single_robot_path_unified(positions, problem, robot_id,
     
     # Early stop support: Check if robot reached goal early
     goal_times = [t for i, j, t in positions 
-                  if notation.get_position_representation(problem, (i, j)) == expected_goal]
+                  if get_position_representation(problem, (i, j)) == expected_goal]
     
     if goal_times:
         first_goal_time = min(goal_times)
@@ -276,7 +277,7 @@ def _validate_single_robot_path_unified(positions, problem, robot_id,
         # Verify robot stayed at goal if it has positions after reaching it
         later_positions = [(i, j, t) for i, j, t in positions if t > first_goal_time]
         for i, j, t in later_positions:
-            if notation.get_position_representation(problem, (i, j)) != expected_goal:
+            if get_position_representation(problem, (i, j)) != expected_goal:
                 result["valid"] = False
                 result["reason"] = "left_goal_after_reaching"
                 result["message"] = (f"❌ Robot {robot_num}: Left goal position at time {t} "
@@ -332,7 +333,7 @@ def _validate_single_robot_path_unified(positions, problem, robot_id,
         return result
     
     expected_start = notation.get_start_position(problem, robot_id)
-    actual_start = notation.get_position_representation(problem, start_positions[0])
+    actual_start = get_position_representation(problem, start_positions[0])
     if actual_start != expected_start:
         result["valid"] = False
         result["reason"] = "wrong_start"
@@ -370,13 +371,13 @@ def _validate_single_robot_path_unified(positions, problem, robot_id,
             last_i, last_j, last_t = last_pos
             
             # Goal-lock bypass: if both current and previous are goal, allow staying
-            if (notation.get_position_representation(problem, (last_i, last_j)) == expected_goal and 
-                notation.get_position_representation(problem, current_pos) == expected_goal):
+            if (get_position_representation(problem, (last_i, last_j)) == expected_goal and 
+                get_position_representation(problem, current_pos) == expected_goal):
                 last_pos = (i, j, t)
                 continue
             
-            # Valid move check using notation-specific adjacency
-            if not notation.is_valid_move(problem, (last_i, last_j), current_pos):
+            # Valid move check using shared validation utility
+            if not is_valid_move(problem, (last_i, last_j), current_pos):
                 result["valid"] = False
                 result["reason"] = "invalid_move"
                 result["message"] = (
@@ -387,7 +388,7 @@ def _validate_single_robot_path_unified(positions, problem, robot_id,
         last_pos = (i, j, t)
 
     # 7. Final check: Goal times
-    goal_times = [t for i, j, t in positions if notation.get_position_representation(problem, (i, j)) == expected_goal]
+    goal_times = [t for i, j, t in positions if get_position_representation(problem, (i, j)) == expected_goal]
     result["details"]["goal_times"] = goal_times
 
     result["valid"] = True
@@ -434,9 +435,7 @@ class GridNotation(BaseNotation):
         robot = problem.robots[robot_id]
         return robot.goal
     
-    def get_position_representation(self, problem, position):
-        """Get position representation (coordinates for grid)."""
-        return position
+
     
     def has_obstacle_check(self):
         """Whether this notation checks for obstacles."""
@@ -446,9 +445,7 @@ class GridNotation(BaseNotation):
         """Get obstacles for the problem."""
         return problem.grid.obstacles
     
-    def is_valid_move(self, problem, from_pos, to_pos):
-        """Check if move is valid using grid adjacency."""
-        return to_pos in problem.grid.adjacency[from_pos]
+
 
 
 class GraphNotation(BaseNotation):
@@ -466,9 +463,7 @@ class GraphNotation(BaseNotation):
         _, goal_node = problem.get_graph_robot_current_goal(robot_id)
         return goal_node
     
-    def get_position_representation(self, problem, position):
-        """Get position representation (node ID for graph)."""
-        return problem.graph.get_node_from_position(position)
+
     
     def has_obstacle_check(self):
         """Whether this notation checks for obstacles (graphs don't)."""
@@ -478,12 +473,7 @@ class GraphNotation(BaseNotation):
         """Get obstacles for the problem (not used for graphs)."""
         return set()
     
-    def is_valid_move(self, problem, from_pos, to_pos):
-        """Check if move is valid using graph adjacency."""
-        from_node = problem.graph.get_node_from_position(from_pos)
-        to_node = problem.graph.get_node_from_position(to_pos)
-        # Adjacency list stores (neighbor_node, weight) tuples
-        return any(neighbor_node == to_node for (neighbor_node, weight) in problem.graph.adjacency[from_node])
+
 
 
 def convert_tuple_keys_to_str(obj):

@@ -8,9 +8,10 @@ class GraphQUBO(BaseQUBO):
         problem,
         penalties,
         name="graph",
-        var_limit=241   ,  #65 131
+        var_limit=601,  #65 131
         window_max_steps=None,
         distance_scaling="enhanced_linear",
+        robot_window_limits=None,
     ):
         self.graph = problem.graph
         self.num_nodes = len(self.graph.nodes)
@@ -21,9 +22,11 @@ class GraphQUBO(BaseQUBO):
             var_limit=var_limit,
             window_max_steps=window_max_steps,
             distance_scaling=distance_scaling,
+            robot_window_limits=robot_window_limits,
         )
         # Multi-robot support: calculate total variables for all robots
-        self.initial_num_vars = (self.num_nodes * self.total_t *
+        # Use problem.T (total timeline) not total_t (window size) to match QUBOBuilder
+        self.initial_num_vars = (self.num_nodes * self.problem.T *
                                  self.problem.num_robots)
         
         # Compute goal-oriented connectivity potential for each robot
@@ -541,7 +544,7 @@ class GraphQUBO(BaseQUBO):
                 # Dead-end repulsion (goal-oriented connectivity)
                 # Penalize nodes where neighbors lead away from goal
                 K_deadend = K_deadend_repel * self.P_connectivity_per_robot[robot_id][node_id] # This is goal-oriented
-                K_obs = K_repel * self.P_obs[node_id] # This is environment-oriented (avoid obstacles)
+                K_obs = K_repel #* self.P_obs[node_id] # This is environment-oriented (avoid obstacles)
                 
                 var_idx = node_id + (self.num_nodes * t) + robot_offset
                 # Apply both goal attraction and dead-end repulsion
@@ -641,11 +644,32 @@ class GraphQUBO(BaseQUBO):
                     n = node_i + (self.num_nodes * start) + robot_offset
                     fixed[n] = 0
 
-            # Standard BFS version
-            #reachable_at_time = self.reachable_positions(robot, start, end)
-
             # Aggresive version
             reachable_at_time = self.reachable_positions_aggressive(robot, start_node, start, end)
+            
+            # Check if goal is reachable at timestep 1 (one movement away)
+            # If so, fix the entire instantaneous path
+            if goal_node in reachable_at_time.get(start + 1, set()):
+                print(f"Goal is reachable at timestep 1 for robot {robot_id}. Fixing instantaneous path.")
+                
+                # Fix timestep start + 1: goal = 1, all others = 0
+                for node_id in range(self.num_nodes):
+                    n = node_id + (self.num_nodes * (start + 1)) + robot_offset
+                    if node_id == goal_node:
+                        fixed[n] = 1
+                        print(f"  Fixed goal node {n} at node {node_id} to 1 at timestep {start + 1}")
+                    else:
+                        fixed[n] = 0
+                
+                # Fix all subsequent timesteps: robot stays at goal
+                for t in range(start + 2, end):
+                    for node_id in range(self.num_nodes):
+                        n = node_id + (self.num_nodes * t) + robot_offset
+                        if node_id == goal_node:
+                            fixed[n] = 1
+                        else:
+                            fixed[n] = 0
+            
             # print(reachable_at_time)
             # Fix unreachable nodes to 0 for all time steps for this robot
             for t in range(start + 1, end):

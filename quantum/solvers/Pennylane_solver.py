@@ -30,7 +30,7 @@ class PennylaneSolver(BaseSolver):
             elif num_qubits <= 12:
                 return 2500
             elif num_qubits <= 16:
-                return 15000 #8000
+                return 10000 #15000 safer
             elif num_qubits <= 18:
                 return 17000
             else:
@@ -252,7 +252,7 @@ class PennylaneSolver(BaseSolver):
                 # In case the full qubo gets pre-processed
                 if len(builder.Q) == 0:
                     print("Full QUBO gets pre-processed", builder.current_T)
-                    full_sol = self._handle_iteration_result(
+                    full_sol, invalid_moves = self._handle_iteration_result(
                         {}, fixed_vars, builder)
                     best_sample.append(full_sol)
                     
@@ -458,7 +458,7 @@ class PennylaneSolver(BaseSolver):
 
             # Find best sample
             best_idx = np.argmin(energies)
-            full_sol = self._handle_iteration_result(samples[best_idx], fixed_vars, builder)
+            full_sol, invalid_moves = self._handle_iteration_result(samples[best_idx], fixed_vars, builder)
             best_sample.append(full_sol)
             best_energy.append(energies[best_idx])
             
@@ -473,8 +473,14 @@ class PennylaneSolver(BaseSolver):
                 print(f"  Best energy: {energies[best_idx]:.6f}")
                 print("=" * 60 + "\n")
 
+        # Build final solution from stored robot paths (this is the correct solution)
+        final_solution = self.build_solution_from_robot_paths(builder.problem)
+        
         return {
-            'solution': best_sample,
+            'solution': final_solution,  # Use solution built from robot paths
             'energy': best_energy,
-            'optimized_params': self.params
+            'optimized_params': self.params,
+            'metadata': {
+                # 'window_solutions': best_sample  # Keep window solutions for debugging
+            }
         }

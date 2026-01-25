@@ -53,7 +53,7 @@ class DWaveSolver(BaseSolver):
                 # print(fixed_vars)
                 builder.Q = self.normalize_qubo(builder.Q, self.norm_scale)
             # print(fixed_vars)
-            # print("Num wires", builder.get_num_wires())
+            print("Num wires", builder.get_num_wires())
             for _, robot_id in enumerate(builder.problem.robots):
                 start_pos = builder.problem.robots[robot_id].current_position
                 print("Start position:", start_pos, "Iteration:", builder.iter)
@@ -63,12 +63,15 @@ class DWaveSolver(BaseSolver):
 
             first = response.first
             # print("Sample:", self.decode_path(sample_dict, builder.problem))
-            full_sol = self._handle_iteration_result(first.sample, fixed_vars, builder)
+            full_sol, invalid_moves = self._handle_iteration_result(first.sample, fixed_vars, builder)
             best_sample.append(full_sol)
             best_energy.append(response.first.energy)
 
+        # Build final solution from stored robot paths (this is the correct solution)
+        final_solution = self.build_solution_from_robot_paths(builder.problem)
+        
         return {
-            'solution': best_sample,
+            'solution': final_solution,  # Use solution built from robot paths
             'energy': best_energy,
             'raw_response': response,
             'metadata': {
@@ -77,6 +80,7 @@ class DWaveSolver(BaseSolver):
                 'fixed_variables': len(fixed_vars),
                 'constant_offset': const_offset,
                 'solver_config': self.to_dict(),
-                'penalties': builder.penalties
+                'penalties': builder.penalties,
+                # 'window_solutions': best_sample  # Keep window solutions for debugging
             }
         }

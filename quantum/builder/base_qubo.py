@@ -2,6 +2,8 @@ import pennylane as qml
 import numpy as np
 from abc import ABC, abstractmethod
 from quantum.utils import paths
+from quantum.utils.validation import is_valid_move
+from collections import Counter
 
 
 class BaseQUBO(ABC):
@@ -24,11 +26,15 @@ class BaseQUBO(ABC):
         var_limit=601,
         window_max_steps=None,
         distance_scaling=None,
+        robot_window_limits=None,
     ):
         self.problem = problem
         self.penalties = penalties
         self.name = name
         self.var_limit = var_limit
+        # Per-robot window limits: dict {robot_id: max_steps}
+        # If a robot is not in this dict, no specific limit is applied
+        self.robot_window_limits = robot_window_limits or {}
         # Windowing/time slicing support
         self.current_T = 0  # This represents the current global time in the problem
         self.total_t = getattr(self.problem, "T", 1)
@@ -106,6 +112,14 @@ class BaseQUBO(ABC):
         """
         Estimate max window size using problem dimensions if available.
         Subclasses relying on non-grid encodings can override this.
+        
+        This method:
+        1. Only counts active robots (those that haven't reached their goal)
+        2. Respects per-robot window limits if specified
+        3. Returns the minimum of:
+           - Variable limit constraint
+           - Most restrictive per-robot limit for active robots
+           - Remaining time in problem
         """
         if self.problem.get_format_type() == "graph":
             vars_per_time = self.num_nodes
@@ -113,17 +127,41 @@ class BaseQUBO(ABC):
             M = self.problem.grid.M
             N = self.problem.grid.N
             vars_per_time = M * N
-        
+
         robot_active_timeline = self.problem.get_robot_per_timestep()
+        
+        # Find the most restrictive per-robot limit among active robots
+        min_robot_limit = float('inf')
+        for robot_id, limit in self.robot_window_limits.items():
+            if self.problem.robots[robot_id].active:
+                min_robot_limit = min(min_robot_limit, limit)
+        
         needed_vars = 0
         for t in range(self.current_T, self.total_t):
-            num_active_robots = len(robot_active_timeline[t])
+            # Only count active robots
+            active_robots_at_t = [r for r in robot_active_timeline.get(t, []) 
+                                  if self.problem.robots[r].active]
+            num_active_robots = len(active_robots_at_t)
             needed_vars += num_active_robots * vars_per_time
+            
+            window_size = t - self.current_T
+            
+            # Check if we've hit the variable limit
             if needed_vars > self.var_limit:
-                return t - self.current_T
+                return window_size
+            
+            # Check if we've hit a per-robot limit
+            if window_size >= min_robot_limit:
+                return min_robot_limit
+        
         # We need to substract initial offset from current_T
         # The +1 is because range is exclusive at the end (else it would keep infinite loop)
-        return self.total_t - self.current_T + 1
+        max_possible = self.total_t - self.current_T + 1
+        
+        # Return the minimum of max_possible and any robot limits
+        if min_robot_limit != float('inf'):
+            return min(max_possible, min_robot_limit)
+        return max_possible
 
     def get_active_robot_in_window(self):
         """
@@ -139,7 +177,7 @@ class BaseQUBO(ABC):
                 if self.problem.robots[robot_id].active:
                     active_robots.add(robot_id)
         return sorted(active_robots, key=lambda x: self.problem.robots[x].priority, reverse=True)
-    
+
     def get_active_robots_per_timestep_in_window(self):
         """
         Get a dict mapping each timestep in the current window
@@ -166,9 +204,11 @@ class BaseQUBO(ABC):
         # It simply does t_max - 1 (meaning that if you only can render one time step you will always be in that time)
         # Because you need to render the step where you were and the following iteration (qubo renders the transition)
         # Note that this also helps debug since now the global time don't care about iterations (which clipped time)
+        print(f"🔄 Adjusting window: current_T from {self.current_T} to {self.current_T + self.t_max - 1}")
         self.current_T += self.t_max - 1
         # We update current time and recalculate t_max for next window
         self.t_max = self.max_window_size()
+        print("T max: ", self.t_max, "Total t: ", self.total_t)
         if self.t_max > 0:
             for robot_num, new_segment in solution.items():
                 robot_id = list(self.problem.robots.keys())[robot_num]
@@ -178,12 +218,19 @@ class BaseQUBO(ABC):
 
                 robot.path = merged
                 robot.current_position = merged[-1][:2]
-                
+
                 # Early stop: Check if robot has reached its goal
                 if robot.is_at_goal() and robot.active:
                     print(f"Robot {robot_id} reached goal at position {robot.current_position}. Marking as inactive.")
                     robot.active = False
             
+            # Recalculate window size after marking robots inactive
+            # This allows immediate benefit from larger windows when robots finish
+            new_t_max = self.max_window_size()
+            if new_t_max > self.t_max:
+                print(f"Window size increased from {self.t_max} to {new_t_max} after robots became inactive")
+                self.t_max = new_t_max
+
             self.build()
 
     def reset_problem(self):
@@ -212,11 +259,11 @@ class BaseQUBO(ABC):
         """
         Reduce a QUBO dictionary by fixing variables.
         Assumes Q uses upper triangular form: (i,j) with i <= j only.
-        
+
         Args:
             Q: QUBO dictionary
             fixed_vars: dict {idx: value} or numpy array
-        
+
         Returns:
             (reduced_Q, const_offset, reduction_log)
         """
@@ -230,12 +277,12 @@ class BaseQUBO(ABC):
         reduced_Q = {}
         const_offset = 0
         reduction_log = []  # Track all changes
-        
+
         for key, coeff in self.Q.items():
             i, j = key
             i_fixed = i in fixed_dict
             j_fixed = j in fixed_dict
-            
+
             if not i_fixed and not j_fixed:
                 # Both free: keep as is
                 reduced_Q[key] = coeff
@@ -272,36 +319,36 @@ class BaseQUBO(ABC):
                         'fixed_value': fixed_dict[j],
                         'free_var': i
                     })
-        
+
         return reduced_Q, const_offset, reduction_log
-    
+
     def reverse_reduction(self, reduced_Q, reduction_log, var_to_unfix):
         """
         Reverse the reduction for a specific variable.
-        
+
         Args:
             reduced_Q: The reduced QUBO dictionary
             reduction_log: Log from reduce_qubo
             var_to_unfix: Variable index to unfix
-        
+
         Returns:
             (restored_Q, removed_const_offset)
         """
         restored_Q = reduced_Q.copy()
         removed_const = 0
-        
+
         for entry in reduction_log:
             orig_key = entry['original_key']
             i, j = orig_key
             coeff = entry['coeff']
-            
+
             if entry['type'] == 'both_fixed':
                 # Check if either variable is the one we're unfixing
                 if i == var_to_unfix or j == var_to_unfix:
                     # Remove from constant
                     fixed_vals = entry['fixed_values']
                     removed_const += coeff * fixed_vals[0] * fixed_vals[1]
-                    
+
                     # If only one is being unfixed, convert to linear term
                     if i == var_to_unfix and j != var_to_unfix:
                         # j is still fixed
@@ -314,7 +361,7 @@ class BaseQUBO(ABC):
                     else:
                         # Both being unfixed, restore original term
                         restored_Q[orig_key] = coeff
-            
+
             elif entry['type'] == 'i_fixed':
                 # i was fixed, j was free
                 if entry['fixed_var'] == var_to_unfix:
@@ -326,7 +373,7 @@ class BaseQUBO(ABC):
                             del restored_Q[(free_var, free_var)]
                     # Restore original interaction term
                     restored_Q[orig_key] = coeff
-            
+
             elif entry['type'] == 'j_fixed':
                 # j was fixed, i was free
                 if entry['fixed_var'] == var_to_unfix:
@@ -338,436 +385,13 @@ class BaseQUBO(ABC):
                             del restored_Q[(free_var, free_var)]
                     # Restore original interaction term
                     restored_Q[orig_key] = coeff
-        
+
         return restored_Q, removed_const
-
-    def diag_fixed_vars(self):
-        """
-        Identify fixed variables based on outliers in diagonal coefficients
-        per robot and time step.
-
-        For each robot and time step:
-        1. Collect all diagonal coefficients for variables in that time step for that robot
-        2. If there are multiple variables with different coefficients:
-           - Variables with smaller coefficients are fixed to 0 (outliers)
-           - If one variable has a significantly larger coefficient,
-             it's fixed to 1
-        3. If there's only one variable in a time step, it's fixed to 1
-        
-        The key difference from the previous implementation is that this processes
-        robots sequentially, then timesteps within each robot, reducing the QUBO
-        after EACH TIMESTEP. This prevents:
-        - Fixing variables at the same timestep for different robots simultaneously
-        - Fixing non-adjacent positions across consecutive timesteps for the same robot
-        Both of which could create crash scenarios or invalid paths without knowing.
-
-        Note that this functions works better when there was already a
-        pre-reduction. And be mind that it is iterative, when it clears at
-        one iteration, it updates coefficient so it can find more fixed
-        variables in the next iteration.
-
-        Returns:
-            dict: {variable_index: fixed_value} where fixed_value is 0 or 1
-        """
-        from collections import Counter
-        total_fixed = {}  # Track all fixed variables across all robots
-        # Use instance variable self.reduction_log to track ALL reductions
-        # This is initialized in reduce_diag_fixed_vars_iterative
-        # We could get all dictionary items, but it simpler to iterate
-        # over known qubit numbers
-        n = self.initial_num_vars
-        type = self.problem.get_format_type()
-        if type == "grid":
-            M, N = self.problem.grid.M, self.problem.grid.N
-            vars_per_time = M * N
-            adjacency_dict = self.problem.grid.adjacency
-        elif type == "graph":
-            vars_per_time = self.num_nodes
-            adjacency_dict = self.problem.graph.adjacency
-        
-        # Get robot information
-        robot_nums = self.problem.get_robot_nums()
-        num_robots = self.problem.num_robots
-
-        # Helper function to check adjacency
-        def is_adjacent(pos1, pos2):
-            """Check if pos2 is adjacent to pos1"""
-            if type == "grid":
-                # For grid: pos1 and pos2 are (i, j) tuples
-                return pos2 in adjacency_dict.get(pos1, [])
-            else:  # graph
-                # For graph: pos1 and pos2 are (i, j) tuples from decode_position
-                # Convert to node IDs using graph's get_node_from_position
-                node1 = self.problem.graph.get_node_from_position(pos1)
-                node2 = self.problem.graph.get_node_from_position(pos2)
-                if node1 is None or node2 is None:
-                    return False
-                # adjacency_dict[node] returns list of (neighbor, weight) tuples
-                neighbors = [neighbor for neighbor, weight in adjacency_dict.get(node1, [])]
-                return node2 in neighbors
-        
-        # Process per robot, then per timestep within each robot
-        for robot_id in self.get_active_robot_in_window():
-            robot_num = robot_nums[robot_id]
-            robot_offset = robot_num * (vars_per_time * self.total_t)
-            
-            # Collect variables for this robot's timesteps
-            robot_time_step_vars = {}
-
-            prev_fixed_pos = None
-            prev_timestep = None
-            
-            for i in range(n):
-                if (i, i) in self.Q:
-                    diag_coeff = self.Q[(i, i)]
-                    if diag_coeff != 0:
-                        # Check if this variable belongs to current robot
-                        if i >= robot_offset and i < robot_offset + (vars_per_time * self.total_t):
-                            # Calculate timestep within this robot's variables
-                            local_idx = i - robot_offset
-                            t = local_idx // vars_per_time
-                            if t not in robot_time_step_vars:
-                                robot_time_step_vars[t] = []
-                            robot_time_step_vars[t].append((i, diag_coeff))
-            
-            # Process each timestep for this robot, reducing after each timestep
-            # Sort timesteps to process them in order
-            for t in sorted(robot_time_step_vars.keys()):
-                timestep_fixed = {}  # Fixed variables for this timestep only
-                bfs_adjusted = False  # Flag to track if we did BFS adjustment
-                
-                should_validate_adjacency = (
-                    prev_fixed_pos is not None and 
-                    prev_timestep is not None and 
-                    t == prev_timestep + 1
-                )
-                
-                # print(f"Robot {robot_id}, Time step {t}: vars and diag coeffs: {robot_time_step_vars[t]}")
-                # If only one variable, validate adjacency before fixing to 1
-                if len(robot_time_step_vars[t]) == 1:
-                    var_idx = robot_time_step_vars[t][0][0]
-                    
-                    # Validate adjacency if we have a previous position
-                    if should_validate_adjacency:
-                        i, j, t_decoded, robot_num = paths.decode_position(var_idx, self.problem)
-                        prev_i, prev_j, prev_t, prev_robot_num = paths.decode_position(prev_fixed_pos, self.problem)
-                        
-                        # Check if we can move FROM (prev_i, prev_j) TO (i, j)
-                        # Allow staying in place only if already at goal
-                        print(prev_i, prev_j, i, j, is_adjacent((prev_i, prev_j), (i, j)))
-                        is_staying_at_goal = ((prev_i, prev_j) == goal and (i, j) == goal)
-                        
-                        if not is_adjacent((prev_i, prev_j), (i, j)) and not is_staying_at_goal:
-                            print(var_idx, f"not fixed to 1 for robot {robot_id}, time step {t} (single variable, non-adjacent)")
-                            print("Recalculating QUBO BFS for single variable case")
-                            
-                            # Determine start position format based on problem type
-                            if type == "grid":
-                                start_pos = (prev_i, prev_j)
-                            else:  # graph
-                                start_pos = self.problem.graph.get_node_from_position((prev_i, prev_j))
-                            
-                            reachable = self.reachable_positions_aggressive(
-                                self.problem.robots[robot_id], 
-                                start_pos, 
-                                prev_timestep, 
-                                len(robot_time_step_vars) + 1
-                            )
-                            print("New reach (single var)", reachable)
-                            
-                            # The single variable is not reachable, need to find reachable positions
-                            # and create variables for them if they don't exist
-                            if t in reachable:
-                                reachable_positions = reachable[t]
-                                print(f"Time {t}: reachable positions (single var):", reachable_positions)
-                                
-                                # Fix the current non-reachable variable to 0
-                                timestep_fixed[var_idx] = 0
-                                total_fixed[var_idx] = 0
-                                self.Q, _, log = self.reduce_qubo({var_idx: 0})
-                                self.reduction_log.extend(log)
-                                print(f"  Variable {var_idx} at position ({i}, {j}) NOT reachable, fixing to 0")
-                                
-                                # Search for or create variables for reachable positions
-                                reachable_vars = []
-                                for pos in reachable_positions:
-                                    if type == "grid":
-                                        i_pos, j_pos = pos
-                                        local_pos_idx = i_pos * N + j_pos
-                                    else:  # graph
-                                        local_pos_idx = pos
-                                    
-                                    var_idx_for_pos = robot_offset + t * vars_per_time + local_pos_idx
-                                    
-                                    # Try to reverse reduction if variable was previously fixed
-                                    if var_idx_for_pos in total_fixed:
-                                        self.Q, _ = self.reverse_reduction(self.Q, self.reduction_log, var_idx_for_pos)
-                                        del total_fixed[var_idx_for_pos]
-                                        print(f"  Unfixed variable {var_idx_for_pos} at position {pos}")
-                                    
-                                    # Check if variable exists in Q
-                                    if (var_idx_for_pos, var_idx_for_pos) in self.Q:
-                                        reachable_vars.append((var_idx_for_pos, self.Q[(var_idx_for_pos, var_idx_for_pos)]))
-                                
-                                # Fix the best reachable variable to 1
-                                if len(reachable_vars) == 1:
-                                    var_to_fix = reachable_vars[0][0]
-                                    timestep_fixed[var_to_fix] = 1
-                                    total_fixed[var_to_fix] = 1
-                                    self.Q, _, log = self.reduce_qubo({var_to_fix: 1})
-                                    self.reduction_log.extend(log)
-                                    prev_fixed_pos = var_to_fix
-                                    prev_timestep = t
-                                    print(f"  Only one reachable variable {var_to_fix}, fixing to 1")
-                                elif len(reachable_vars) > 1:
-                                    # Use min coeff logic
-                                    coeffs = [coeff for _, coeff in reachable_vars]
-                                    counts_reach = Counter(coeffs)
-                                    if len(counts_reach) > 1:
-                                        min_coeff_reach = min(counts_reach)
-                                        if counts_reach[min_coeff_reach] == 1:
-                                            fix_dict = {}
-                                            for var_reach, coeff_reach in reachable_vars:
-                                                if coeff_reach == min_coeff_reach:
-                                                    fix_dict[var_reach] = 1
-                                                    prev_fixed_pos = var_reach
-                                                    prev_timestep = t
-                                                    print(f"  Reachable variable {var_reach} has min coeff, fixing to 1")
-                                                else:
-                                                    fix_dict[var_reach] = 0
-                                                    print(f"  Reachable variable {var_reach} has higher coeff, fixing to 0")
-                                            total_fixed.update(fix_dict)
-                                            self.Q, _, log = self.reduce_qubo(fix_dict)
-                                            self.reduction_log.extend(log)
-                                
-                                # Skip the normal processing since we handled it
-                                bfs_adjusted = True
-                            else:
-                                print(f"  WARNING: Timestep {t} not in reachable set!")
-                        else:
-                            # Adjacent or staying at goal, can fix normally
-                            timestep_fixed[var_idx] = 1
-                            prev_fixed_pos = var_idx
-                            prev_timestep = t
-                    else:
-                        # No previous position to validate against, fix normally
-                        timestep_fixed[var_idx] = 1
-                        prev_fixed_pos = var_idx
-                        prev_timestep = t
-                
-                # To validate staying in goal
-                goal = self.problem.robots[robot_id].goal
-                counts = Counter([v[1] for v in robot_time_step_vars[t]])
-                # If all coefficients are the same, skip
-                if len(counts) <= 1:
-                    continue
-                else:
-                    # Since we are minimizing, the minimum is the best (set to 1)
-                    min_coeff = min(counts)
-                    if counts[min_coeff] == 1:
-                        for var_idx, coeff in robot_time_step_vars[t]:
-                            if coeff == min_coeff:
-                                if should_validate_adjacency:
-                                    i, j, t_decoded, robot_num = paths.decode_position(var_idx, self.problem)
-                                    prev_i, prev_j, prev_t, prev_robot_num = paths.decode_position(prev_fixed_pos, self.problem)
-                                    # print(prev_i, prev_j, prev_t, prev_robot_num, var_idx)
-                                    # print(i, j, t_decoded, robot_num, prev_fixed_pos)
-                                    # Check if we can move FROM (prev_i, prev_j) TO (i, j)
-                                    # Allow staying in place only if already at goal
-                                    print(prev_i, prev_j, i, j, is_adjacent((prev_i, prev_j), (i, j)))
-                                    is_staying_at_goal = ((prev_i, prev_j) == goal and (i, j) == goal)
-                                    if not is_adjacent((prev_i, prev_j), (i, j)) and not is_staying_at_goal: 
-                                        print(var_idx, f"not fixed to 1 for robot {robot_id}, time step {t}")
-                                        print("Recalculating QUBO BFS")
-                                        # Calculate reachable positions from the previous fixed position
-                                        
-                                        # Determine start position format based on problem type
-                                        if type == "grid":
-                                            start_pos = (prev_i, prev_j)
-                                        else:  # graph
-                                            # For graph, we need to use the node ID
-                                            start_pos = self.problem.graph.get_node_from_position((prev_i, prev_j))
-                                        
-                                        reachable = self.reachable_positions_aggressive(
-                                            self.problem.robots[robot_id], 
-                                            start_pos, 
-                                            prev_timestep, 
-                                            len(robot_time_step_vars) + 1
-                                        )
-                                        print("New reach", reachable)
-                                        
-                                        # Process each timestep from current t onwards
-                                        # Use reachable.keys() instead of robot_time_step_vars.keys() because
-                                        # some timesteps might not have had diagonal coefficients initially
-                                        for t_check in sorted([k for k in reachable.keys() if k >= t]):
-                                            reachable_positions = reachable[t_check]
-                                            print(f"Time {t_check}: reachable positions:", reachable_positions)
-                                            
-                                            # Get variables for this timestep if they exist
-                                            timestep_vars = robot_time_step_vars.get(t_check, [])
-                                            print(f"Time {t_check}: variables:", timestep_vars)
-                                            
-                                            # Decode each variable to get its position
-                                            vars_to_fix_zero = []
-                                            vars_to_unfix = []
-                                            reachable_vars = []  # Track reachable variables for this timestep
-                                            
-                                            for var_idx_check, coeff_check in timestep_vars:
-                                                i_check, j_check, t_decoded, robot_num_check = paths.decode_position(var_idx_check, self.problem)
-                                                
-                                                # Determine position format based on problem type
-                                                if type == "grid":
-                                                    pos_check = (i_check, j_check)
-                                                else:  # graph
-                                                    pos_check = self.problem.graph.get_node_from_position((i_check, j_check))
-                                                
-                                                # Check if this position is reachable
-                                                if pos_check not in reachable_positions:
-                                                    # Position not reachable, should be fixed to 0
-                                                    if var_idx_check not in total_fixed or total_fixed[var_idx_check] != 0:
-                                                        vars_to_fix_zero.append(var_idx_check)
-                                                        print(f"  Variable {var_idx_check} at position {pos_check} NOT reachable, fixing to 0")
-                                                else:
-                                                    # Position is reachable
-                                                    # If it was previously fixed to 0, we need to unfix it
-                                                    if var_idx_check in total_fixed and total_fixed[var_idx_check] == 0:
-                                                        vars_to_unfix.append(var_idx_check)
-                                                        print(f"  Variable {var_idx_check} at position {pos_check} IS reachable, unfixing (was 0)")
-                                                    reachable_vars.append((var_idx_check, coeff_check))
-                                            
-                                            # Apply fixes for non-reachable positions
-                                            if vars_to_fix_zero:
-                                                fix_dict = {v: 0 for v in vars_to_fix_zero}
-                                                total_fixed.update(fix_dict)
-                                                self.Q, _, log = self.reduce_qubo(fix_dict)
-                                                self.reduction_log.extend(log)
-                                            
-                                            # Reverse reductions for positions that became reachable
-                                            for var_to_unfix in vars_to_unfix:
-                                                # Find the log entries for this variable
-                                                self.Q, _ = self.reverse_reduction(self.Q, self.reduction_log, var_to_unfix)
-                                                del total_fixed[var_to_unfix]
-                                                print(f"  Unfixed variable {var_to_unfix}")
-                                                # Add to reachable_vars if not already there
-                                                if var_to_unfix not in [v[0] for v in reachable_vars]:
-                                                    # Get the coefficient from Q
-                                                    if (var_to_unfix, var_to_unfix) in self.Q:
-                                                        reachable_vars.append((var_to_unfix, self.Q[(var_to_unfix, var_to_unfix)]))
-                                            
-                                            # If we have no reachable variables but we have reachable positions,
-                                            # we need to search for variables that might have been fixed to 0 earlier
-                                            if not reachable_vars and reachable_positions:
-                                                print(f"  No reachable variables found in current QUBO, searching for previously fixed variables...")
-                                                # Search through all possible variable indices for this robot at this timestep
-                                                for pos in reachable_positions:
-                                                    # Calculate the variable index for this position
-                                                    # print("pos", pos)
-                                                    if type == "grid":
-                                                        i_pos, j_pos = pos
-                                                        local_pos_idx = i_pos * N + j_pos
-                                                    else:  # graph
-                                                        # For graph, pos is the node ID directly
-                                                        # local_pos_idx = self.problem.graph.get_node_from_position(pos)
-                                                        local_pos_idx = pos
-                                                    
-                                                    var_idx_for_pos = robot_offset + t_check * vars_per_time + local_pos_idx
-                                                    
-                                                    # If this variable is not in robot_time_step_vars, it was reduced earlier
-                                                    # Try to reverse the reduction to make it available
-                                                    var_indices_in_timestep = [v[0] for v in robot_time_step_vars.get(t_check, [])]
-                                                    if var_idx_for_pos not in var_indices_in_timestep:
-                                                        print(f"  Variable {var_idx_for_pos} at position {pos} not in current QUBO, attempting to reverse reduction...")
-                                                        # Try to reverse it from the instance log
-                                                        self.Q, _ = self.reverse_reduction(self.Q, self.reduction_log, var_idx_for_pos)
-                                                        
-                                                        # Also remove from total_fixed if it's there
-                                                        if var_idx_for_pos in total_fixed:
-                                                            del total_fixed[var_idx_for_pos]
-                                                            print(f"    Removed from total_fixed")
-                                                        
-                                                        # Check if it now exists in Q and add to reachable_vars
-                                                        if (var_idx_for_pos, var_idx_for_pos) in self.Q:
-                                                            reachable_vars.append((var_idx_for_pos, self.Q[(var_idx_for_pos, var_idx_for_pos)]))
-                                                            print(f"    Successfully reversed, added to reachable_vars with coeff {self.Q[(var_idx_for_pos, var_idx_for_pos)]}")
-                                                        else:
-                                                            print(f"    Variable {var_idx_for_pos} still not in Q after reversal")
-                                            
-                                            # Now handle the reachable variables for this timestep
-                                            # We need to fix one to 1 (the best one) and the rest to 0
-                                            if reachable_vars:
-                                                if len(reachable_vars) == 1:
-                                                    # Only one reachable variable, fix it to 1
-                                                    var_to_fix_one = reachable_vars[0][0]
-                                                    total_fixed[var_to_fix_one] = 1
-                                                    self.Q, _, log = self.reduce_qubo({var_to_fix_one: 1})
-                                                    self.reduction_log.extend(log)
-                                                    print(f"  Only one reachable variable {var_to_fix_one}, fixing to 1")
-                                                    if t_check == t:
-                                                        prev_fixed_pos = var_to_fix_one
-                                                        prev_timestep = t_check
-                                                else:
-                                                    # Multiple reachable variables, use min_coeff logic
-                                                    coeffs = [coeff for _, coeff in reachable_vars]
-                                                    counts = Counter(coeffs)
-                                                    if len(counts) > 1:
-                                                        min_coeff_reach = min(counts)
-                                                        if counts[min_coeff_reach] == 1:
-                                                            # Fix the one with min coeff to 1, others to 0
-                                                            fix_dict = {}
-                                                            for var_reach, coeff_reach in reachable_vars:
-                                                                if coeff_reach == min_coeff_reach:
-                                                                    fix_dict[var_reach] = 1
-                                                                    print(f"  Reachable variable {var_reach} has min coeff, fixing to 1")
-                                                                    if t_check == t:
-                                                                        prev_fixed_pos = var_reach
-                                                                        prev_timestep = t_check
-                                                                else:
-                                                                    fix_dict[var_reach] = 0
-                                                                    print(f"  Reachable variable {var_reach} has higher coeff, fixing to 0")
-                                                            total_fixed.update(fix_dict)
-                                                            self.Q, _, log = self.reduce_qubo(fix_dict)
-                                                            self.reduction_log.extend(log)
-                                            else:
-                                                print(f"  WARNING: No reachable variables found for timestep {t_check}, this may cause missing timesteps!")
-                                        
-                                        bfs_adjusted = True
-                                        break  # Break out of the for var_idx, coeff loop
-                                    
-                                if not bfs_adjusted:
-                                    timestep_fixed[var_idx] = 1
-                                    prev_fixed_pos = var_idx
-                                    prev_timestep = t
-                                    print(var_idx, f"fixed to 1 for robot {robot_id}, time step {t}")
-                            else:
-                                if not bfs_adjusted:
-                                    timestep_fixed[var_idx] = 0
-                    else:
-                        # These are the worst (largest) coeffs, set to 0
-                        max_coeff = max(counts)
-                        # print("ddx")
-                        if counts[max_coeff] >= 1:
-                            for var_idx, coeff in robot_time_step_vars[t]:
-                                if coeff == max_coeff:
-                                    timestep_fixed[var_idx] = 0
-                
-                # Reduce QUBO after processing each timestep
-                # This ensures adjacency constraints are updated before next timestep
-                if timestep_fixed:
-                    total_fixed.update(timestep_fixed)
-                    self.Q, _, log = self.reduce_qubo(timestep_fixed)
-                    self.reduction_log.extend(log)
-                
-                # If we did BFS adjustment, we've already handled all remaining timesteps
-                # Break out of the outer loop to avoid KeyError on recalculated robot_time_step_vars
-                if bfs_adjusted:
-                    break
-
-        return total_fixed
 
     def reduce_diag_fixed_vars_iterative(self, initial_reduction_log=None):
         """
         Iteratively apply diag_fixed_vars until no new fixed variables are found.
-        
+
         Args:
             initial_reduction_log: Optional reduction log from previous reductions
                                   (e.g., from get_fixed_variables BFS fixes)
@@ -778,7 +402,7 @@ class BaseQUBO(ABC):
         # Initialize reduction log for this reduction session
         # Include any initial reductions (e.g., from BFS in get_fixed_variables)
         self.reduction_log = initial_reduction_log if initial_reduction_log is not None else []
-        
+
         total_fixed = {}
         while True:
             new_fixed = self.diag_fixed_vars()
@@ -787,10 +411,10 @@ class BaseQUBO(ABC):
             total_fixed.update(new_fixed)
             self.Q, _, log = self.reduce_qubo(new_fixed)
             self.reduction_log.extend(log)
-        
+
         # Clear reduction log after we're done to free memory
         self.reduction_log = []
-        
+
         return total_fixed
 
     def list_to_dict_solution(self, solution_list):
@@ -845,3 +469,303 @@ class BaseQUBO(ABC):
             dict[int, set[tuple[int, int]]]: {t: {(i, j), ...}} reachable positions per time step.
         """
         pass
+
+    # Decided to refactor into multiple functions
+    # Easier debugging and previous function had troubles with breaks and variable
+    def diag_fixed_vars(self):
+        """
+        Identify and fix variables based on diagonal coefficients with adjacency validation.
+        
+        Returns:
+            dict: {variable_index: fixed_value} where fixed_value is 0 or 1
+        """
+        total_fixed = {}
+        n = self.initial_num_vars
+        type = self.problem.get_format_type()
+        
+        # Setup based on problem type
+        if type == "grid":
+            M, N = self.problem.grid.M, self.problem.grid.N
+            vars_per_time = M * N
+            adjacency_dict = self.problem.grid.adjacency
+        else:  # graph
+            vars_per_time = self.num_nodes
+            adjacency_dict = self.problem.graph.adjacency
+        
+        robot_nums = self.problem.get_robot_nums()
+        
+        # Process each robot sequentially
+        for robot_id in self.get_active_robot_in_window():
+            self._process_robot_timesteps(
+                robot_id, robot_nums, n, type, vars_per_time, 
+                adjacency_dict, M if type == "grid" else None, 
+                N if type == "grid" else None, total_fixed
+            )
+        
+        return total_fixed
+
+    def _process_robot_timesteps(self, robot_id, robot_nums, n, type, vars_per_time, 
+                                adjacency_dict, M, N, total_fixed):
+        """Process all timesteps for a single robot."""
+        robot_num = robot_nums[robot_id]
+        robot_offset = robot_num * (vars_per_time * self.total_t)
+        goal = self.problem.robots[robot_id].goal
+        
+        prev_fixed_pos = None
+        prev_timestep = None
+        
+        # Collect initial timestep variables
+        timestep_vars = self._collect_timestep_vars(robot_offset, vars_per_time, n)
+        
+        # Process timesteps in order
+        for t in sorted(timestep_vars.keys()):
+            # Refresh timestep_vars after each iteration since Q changes
+            timestep_vars = self._collect_timestep_vars(robot_offset, vars_per_time, n)
+            
+            if t not in timestep_vars:
+                continue
+                
+            vars_at_t = timestep_vars[t]
+            
+            # Check if we need adjacency validation
+            should_validate = (prev_fixed_pos is not None and 
+                            prev_timestep is not None and 
+                            t == prev_timestep + 1)
+            
+            # Determine what to fix at this timestep
+            fix_result = self._determine_fixes_for_timestep(
+                vars_at_t, should_validate, prev_fixed_pos, 
+                robot_id, t, type, goal, adjacency_dict
+            )
+            
+            if fix_result['needs_bfs_recalc']:
+                # Recalculate reachability and fix all remaining timesteps
+                prev_fixed_pos = self._handle_bfs_recalculation(
+                    robot_id, prev_fixed_pos, prev_timestep, t,
+                    robot_offset, vars_per_time, type, M, N,
+                    adjacency_dict, timestep_vars, total_fixed
+                )
+                prev_timestep = t
+                break  # BFS handles all remaining timesteps
+            else:
+                # Apply normal fixes
+                if fix_result['fixes']:
+                    total_fixed.update(fix_result['fixes'])
+                    self.Q, _, log = self.reduce_qubo(fix_result['fixes'])
+                    self.reduction_log.extend(log)
+                    
+                    # Update prev_fixed_pos to the variable fixed to 1 (if any)
+                    for var_idx, val in fix_result['fixes'].items():
+                        if val == 1:
+                            prev_fixed_pos = var_idx
+                            prev_timestep = t
+                            break
+
+    def _collect_timestep_vars(self, robot_offset, vars_per_time, n):
+        """Collect current variables grouped by timestep for this robot."""
+        timestep_vars = {}
+        
+        for i in range(n):
+            if (i, i) in self.Q and self.Q[(i, i)] != 0:
+                if robot_offset <= i < robot_offset + (vars_per_time * self.total_t):
+                    local_idx = i - robot_offset
+                    t = local_idx // vars_per_time
+                    if t not in timestep_vars:
+                        timestep_vars[t] = []
+                    timestep_vars[t].append((i, self.Q[(i, i)]))
+        
+        return timestep_vars
+
+    def _determine_fixes_for_timestep(self, vars_at_t, should_validate, 
+                                    prev_fixed_pos, robot_id, t, type, 
+                                    goal, adjacency_dict):
+        """
+        Determine which variables to fix at this timestep.
+        
+        Returns:
+            dict with keys:
+                - 'fixes': {var_idx: value} to apply
+                - 'needs_bfs_recalc': bool indicating if BFS recalculation is needed
+        """     
+        result = {'fixes': {}, 'needs_bfs_recalc': False}
+        
+        # Single variable case
+        if len(vars_at_t) == 1:
+            var_idx = vars_at_t[0][0]
+            
+            if should_validate:
+                prev_i, prev_j, _, _ = paths.decode_position(prev_fixed_pos, self.problem)
+                curr_i, curr_j, _, _ = paths.decode_position(var_idx, self.problem)
+                if not is_valid_move(self.problem, (prev_i, prev_j), (curr_i, curr_j), goal):
+                    print(f"Variable {var_idx} not adjacent, needs BFS recalc")
+                    result['needs_bfs_recalc'] = True
+                    return result
+            
+            result['fixes'][var_idx] = 1
+            return result
+        
+        # Multiple variables - check coefficient distribution
+        coeffs = [coeff for _, coeff in vars_at_t]
+        counts = Counter(coeffs)
+        
+        if len(counts) <= 1:
+            return result  # All same, skip
+        
+        # Find unique minimum coefficient
+        min_coeff = min(counts)
+        if counts[min_coeff] == 1:
+            for var_idx, coeff in vars_at_t:
+                if coeff == min_coeff:
+                    # Check adjacency if needed
+                    if should_validate:
+                        prev_i, prev_j, _, _ = paths.decode_position(prev_fixed_pos, self.problem)
+                        curr_i, curr_j, _, _ = paths.decode_position(var_idx, self.problem)
+                        if not is_valid_move(self.problem, (prev_i, prev_j), (curr_i, curr_j), goal):
+                            print(f"Variable {var_idx} (min coeff) not adjacent, needs BFS recalc")
+                            result['needs_bfs_recalc'] = True
+                            return result
+                    
+                    result['fixes'][var_idx] = 1
+                else:
+                    result['fixes'][var_idx] = 0
+        else:
+            # Fix variables with maximum coefficient to 0
+            max_coeff = max(counts)
+            for var_idx, coeff in vars_at_t:
+                if coeff == max_coeff:
+                    result['fixes'][var_idx] = 0
+        
+        return result
+
+
+
+    def _handle_bfs_recalculation(self, robot_id, prev_fixed_pos, prev_timestep, 
+                                curr_t, robot_offset, vars_per_time, type, 
+                                M, N, adjacency_dict, timestep_vars, total_fixed):
+        """
+        Recalculate reachable positions and fix variables accordingly.
+        Returns the variable index fixed to 1 at curr_t.
+        """
+        print(f"BFS recalculation for robot {robot_id} starting at timestep {curr_t}")
+        
+        # Get start position
+        prev_i, prev_j, _, _ = paths.decode_position(prev_fixed_pos, self.problem)
+        if type == "grid":
+            start_pos = (prev_i, prev_j)
+        else:
+            start_pos = self.problem.graph.get_node_from_position((prev_i, prev_j))
+        
+        # Calculate reachable positions
+        reachable = self.reachable_positions_aggressive(
+            self.problem.robots[robot_id],
+            start_pos,
+            prev_timestep,
+            len(timestep_vars) + 1
+        )
+        
+        print(f"Reachable positions: {reachable}")
+        
+        last_fixed_var = None
+        
+        # Process each reachable timestep
+        for t_check in sorted([k for k in reachable.keys() if k >= curr_t]):
+            reachable_positions = reachable[t_check]
+            
+            # Get or create variables for reachable positions
+            reachable_vars = self._get_or_create_reachable_vars(
+                t_check, reachable_positions, robot_offset, vars_per_time,
+                type, M, N, timestep_vars, total_fixed
+            )
+            
+            # Fix unreachable variables to 0
+            if t_check in timestep_vars:
+                for var_idx, _ in timestep_vars[t_check]:
+                    var_pos = self._get_position_from_var(var_idx, type)
+                    if var_pos not in reachable_positions:
+                        if var_idx not in total_fixed or total_fixed[var_idx] != 0:
+                            total_fixed[var_idx] = 0
+                            self.Q, _, log = self.reduce_qubo({var_idx: 0})
+                            self.reduction_log.extend(log)
+                            print(f"  Fixed {var_idx} to 0 (unreachable)")
+            
+            # Fix one reachable variable to 1
+            fixed_var = self._fix_best_reachable_var(reachable_vars, total_fixed)
+            if fixed_var and t_check == curr_t:
+                last_fixed_var = fixed_var
+        
+        return last_fixed_var
+
+    def _get_or_create_reachable_vars(self, t, reachable_positions, robot_offset, 
+                                    vars_per_time, type, M, N, timestep_vars, total_fixed):
+        """Get existing or unfix variables for reachable positions."""
+        reachable_vars = []
+        
+        for pos in reachable_positions:
+            # Calculate variable index for this position
+            if type == "grid":
+                i_pos, j_pos = pos
+                local_pos_idx = i_pos * N + j_pos
+            else:
+                local_pos_idx = pos
+            
+            var_idx = robot_offset + t * vars_per_time + local_pos_idx
+            
+            # Try to unfix if previously fixed
+            if var_idx in total_fixed:
+                self.Q, _ = self.reverse_reduction(self.Q, self.reduction_log, var_idx)
+                del total_fixed[var_idx]
+                print(f"  Unfixed variable {var_idx}")
+            
+            # Add if exists in Q
+            if (var_idx, var_idx) in self.Q:
+                reachable_vars.append((var_idx, self.Q[(var_idx, var_idx)]))
+        
+        return reachable_vars
+
+    def _fix_best_reachable_var(self, reachable_vars, total_fixed):
+        """Fix the best reachable variable to 1, others to 0. Returns the variable fixed to 1."""
+        if not reachable_vars:
+            print("  WARNING: No reachable variables!")
+            return None
+        
+        if len(reachable_vars) == 1:
+            var_idx = reachable_vars[0][0]
+            total_fixed[var_idx] = 1
+            self.Q, _, log = self.reduce_qubo({var_idx: 1})
+            self.reduction_log.extend(log)
+            print(f"  Fixed {var_idx} to 1 (only reachable)")
+            return var_idx
+        
+        # Multiple reachable - use min coefficient
+        coeffs = [coeff for _, coeff in reachable_vars]
+        counts = Counter(coeffs)
+        
+        if len(counts) > 1:
+            min_coeff = min(counts)
+            if counts[min_coeff] == 1:
+                fix_dict = {}
+                fixed_var = None
+                for var_idx, coeff in reachable_vars:
+                    if coeff == min_coeff:
+                        fix_dict[var_idx] = 1
+                        fixed_var = var_idx
+                        print(f"  Fixed {var_idx} to 1 (min coeff)")
+                    else:
+                        fix_dict[var_idx] = 0
+                        print(f"  Fixed {var_idx} to 0 (higher coeff)")
+                
+                total_fixed.update(fix_dict)
+                self.Q, _, log = self.reduce_qubo(fix_dict)
+                self.reduction_log.extend(log)
+                return fixed_var
+        
+        return None
+
+    def _get_position_from_var(self, var_idx, type):
+        """Extract position from variable index."""
+        i, j, _, _ = paths.decode_position(var_idx, self.problem)
+        
+        if type == "grid":
+            return (i, j)
+        else:
+            return self.problem.graph.get_node_from_position((i, j))

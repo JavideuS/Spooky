@@ -22,9 +22,10 @@ class GridQUBOBuilder(BaseQUBO):
         problem,
         penalties,
         name="grid",
-        var_limit=1001,  # 101 605 10x10
+        var_limit=650,  # 101 605 1001
         window_max_steps=None,
         distance_scaling="enhanced_linear",
+        robot_window_limits=None,
     ):
         super().__init__(
             problem,
@@ -33,6 +34,7 @@ class GridQUBOBuilder(BaseQUBO):
             var_limit=var_limit,
             window_max_steps=window_max_steps,
             distance_scaling=distance_scaling,
+            robot_window_limits=robot_window_limits,
         )
         self.initial_num_vars = problem.grid.M * problem.grid.N * problem.num_robots * problem.T
         self.P_obs = compute_obstacle_potential_field(
@@ -307,9 +309,8 @@ class GridQUBOBuilder(BaseQUBO):
                     start = start_time - self.current_T
 
                 end = end_time - self.current_T
-                # This is used because in small windows sometimes goal is not strong enough
-                # So I need to apply a multiplier based on how small is the window to not be constantly modifying penalties values
-                window_constant = 1 + (0.6 / end)
+                # This is used because in immediate goals and big windows the goal is not strong enough
+                window_constant = 1 + (end / 10)
                 # print("hola", robot_id)
                 for t in range(start + 1, end):
                     goal_idx = e_i * N + e_j + M * N * t + robot_offset
@@ -815,6 +816,32 @@ class GridQUBOBuilder(BaseQUBO):
         # Now we can also fix unreachable cells to 0
         # Based on bfs (this essentially complies with adjacency and tp constraints)
             reachable = self.reachable_positions_aggressive(robot,robot.current_position, start, end)
+
+            # Check if goal is reachable at timestep 1 (one movement away)
+            # If so, fix the entire instantaneous path
+            if (e_i, e_j) in reachable.get(start + 1, set()):
+                print(f"Goal is reachable at timestep 1 for robot {robot_id}. Fixing instantaneous path.")
+
+                # Fix timestep start + 1: goal = 1, all others = 0
+                for i in range(M):
+                    for j in range(N):
+                        n = i * N + j + M * N * (start + 1) + robot_offset
+                        if (i, j) == (e_i, e_j):
+                            fixed[n] = 1
+                            print(f"  Fixed goal position {n} at ({i}, {j}) to 1 at timestep {start + 1}")
+                        else:
+                            fixed[n] = 0
+
+                # Fix all subsequent timesteps: robot stays at goal
+                for t in range(start + 2, end):
+                    for i in range(M):
+                        for j in range(N):
+                            n = i * N + j + M * N * t + robot_offset
+                            if (i, j) == (e_i, e_j):
+                                fixed[n] = 1
+                            else:
+                                fixed[n] = 0
+
             # print(reachable)
             # for t in reachable:
             for t in range(start + 1, end):
