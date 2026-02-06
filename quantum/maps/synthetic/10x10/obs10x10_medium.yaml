@@ -1,0 +1,114 @@
+map:
+  name: obs10x10_medium
+  path: obs10x10_medium.h5
+  grid:
+    M: 10
+    N: 10
+    obstacles: [[2, 2], [2, 3], [2, 4], [4, 2], [4, 4], [6, 5], [6, 6], [6, 7], [7, 5], [7, 7]]
+
+# Planning problems (multiple per file)
+problems:
+  # Single robot baseline
+  baseline:
+    start: [0, 0]
+    goal: [9, 9]
+    time_limit: null
+  
+  # Two robots with obstacles
+  two_robots:
+    time_limit: 30
+    robots:
+      robot_0:
+        start: [0, 0]
+        goal: [9, 9]
+        start_time: 0
+        priority: 1.0
+        safety_radius: 0.5
+      robot_1:
+        start: [9, 0]
+        goal: [0, 9]
+        start_time: 0
+        priority: 1.0
+        safety_radius: 0.5
+  
+  # Four robots navigating obstacles
+  four_robots:
+    time_limit: 35
+    robots:
+      robot_0:
+        start: [0, 0]
+        goal: [9, 9]
+        start_time: 0
+        priority: 1.0
+        safety_radius: 0.5
+      robot_1:
+        start: [9, 0]
+        goal: [0, 9]
+        start_time: 0
+        priority: 1.0
+        safety_radius: 0.5
+      robot_2:
+        start: [0, 9]
+        goal: [9, 0]
+        start_time: 1
+        priority: 1.2
+        safety_radius: 0.5
+      robot_3:
+        start: [9, 9]
+        goal: [0, 0]
+        start_time: 1
+        priority: 1.2
+        safety_radius: 0.5
+  
+  # Eight robots - high density
+  eight_robots:
+    time_limit: 40
+    robots:
+      robot_0:
+        start: [0, 0]
+        goal: [9, 9]
+        start_time: 0
+        priority: 1.0
+        safety_radius: 0.5
+      robot_1:
+        start: [9, 0]
+        goal: [0, 9]
+        start_time: 0
+        priority: 1.0
+        safety_radius: 0.5
+      robot_2:
+        start: [0, 9]
+        goal: [9, 0]
+        start_time: 1
+        priority: 1.2
+        safety_radius: 0.5
+      robot_3:
+        start: [9, 9]
+        goal: [0, 0]
+        start_time: 1
+        priority: 1.2
+        safety_radius: 0.5
+      robot_4:
+        start: [0, 4]
+        goal: [9, 5]
+        start_time: 2
+        priority: 0.8
+        safety_radius: 0.5
+      robot_5:
+        start: [4, 0]
+        goal: [5, 9]
+        start_time: 2
+        priority: 0.8
+        safety_radius: 0.5
+      robot_6:
+        start: [9, 4]
+        goal: [0, 5]
+        start_time: 3
+        priority: 0.9
+        safety_radius: 0.5
+      robot_7:
+        start: [4, 9]
+        goal: [5, 0]
+        start_time: 3
+        priority: 0.9
+        safety_radius: 0.5

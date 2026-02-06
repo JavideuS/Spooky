@@ -3,6 +3,7 @@ from datetime import datetime
 import json
 import time
 from quantum.utils.validation import is_valid_move, get_position_representation
+from quantum.utils.logger import get_logger
 
 
 class BenchmarkRunner:
@@ -30,6 +31,7 @@ class BenchmarkRunner:
         self.level = max(1, min(3, level))  # Clamp to 1-3
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.logger = get_logger()  # Use global logger level
         
         # Store metadata once, not per-run
         self.results = {
@@ -46,11 +48,11 @@ class BenchmarkRunner:
 
     def run_build(self):
         """Run the benchmark multiple times and store results"""
-        print(f"\nBenchmarking Problem: {self.problem.name}")
-        print(f"Using Solver: {self.solver.name}")
-        print(f"Penalty Set: {self.penalty_set.get('name', 'unnamed')}")
-        print(f"Benchmark Level: {self.level} ({'Summary' if self.level == 1 else 'Paths' if self.level == 2 else 'Full'})")
-        print("-" * 60)
+        self.logger.minimal(f"\nBenchmarking Problem: {self.problem.name}")
+        self.logger.minimal(f"Using Solver: {self.solver.name}")
+        self.logger.minimal(f"Penalty Set: {self.penalty_set.get('name', 'unnamed')}")
+        self.logger.minimal(f"Benchmark Level: {self.level} ({'Summary' if self.level == 1 else 'Paths' if self.level == 2 else 'Full'})")
+        self.logger.minimal("-" * 60)
 
         # Run multiple trials
         for run_id in range(1, self.num_runs + 1):
@@ -63,7 +65,7 @@ class BenchmarkRunner:
             solution = self.solver.solve_qubo_smart(self.builder, False)
             solve_duration = time.time() - solve_start
 
-            print(
+            self.logger.minimal(
                 f"Build time: {build_duration:.4f}s, "
                 f"Solve time: {solve_duration:.4f}s"
             )
@@ -86,6 +88,28 @@ class BenchmarkRunner:
                 "energy": total_energy,
                 "execution_time_sec": round(solve_duration, 3),
             }
+            
+            # Add variable stats from solver based on level
+            window_stats = solution.get("metadata", {}).get("window_stats", [])
+            if window_stats:
+                # Always compute totals
+                total_initial = sum(ws["initial_variables"] for ws in window_stats)
+                total_reduced = sum(ws["variables_reduced"] for ws in window_stats)
+                total_final = sum(ws["final_variables"] for ws in window_stats)
+                avg_reduction = total_reduced / total_initial if total_initial > 0 else 0
+                
+                # Level 1: Just totals (aggregated across all windows)
+                result["variable_stats"] = {
+                    "total_initial_variables": total_initial,
+                    "total_variables_reduced": total_reduced,
+                    "total_final_variables": total_final,
+                    "average_reduction_ratio": round(avg_reduction, 4),
+                    "num_windows": len(window_stats)
+                }
+                
+                # Level 2+: Add detailed per-window breakdown
+                if self.level >= 2:
+                    result["window_variable_stats"] = window_stats
 
             # Level 2+: Add robot paths and validation details
             if self.level >= 2:
@@ -116,16 +140,16 @@ class BenchmarkRunner:
 
             status = "✅ Valid" if validation["valid"] else "❌ Invalid"
             if not validation["valid"]:
-                print("Validation details:", validation.get("details", {}))
-                print("Reason:", validation.get("reason", "unknown"))
-                print("Message:", validation.get("message", ""))
-            print(
+                self.logger.standard("Validation details:", validation.get("details", {}))
+                self.logger.standard("Reason:", validation.get("reason", "unknown"))
+                self.logger.standard("Message:", validation.get("message", ""))
+            self.logger.minimal(
                 f"Run {run_id}: {status} | Time: {solve_duration:.2f}s | "
                 f"Energy: {total_energy:.4f}"
             )
-            print(f"Path: {path}")
+            self.logger.minimal(f"Path: {path}")
             for robot_id, robot in self.problem.robots.items():
-                print(f" Robot {robot_id} path: {robot.path}")
+                self.logger.minimal(f" Robot {robot_id} path: {robot.path}")
 
         self.save_results()
         return self.results
@@ -137,7 +161,7 @@ class BenchmarkRunner:
             # Convert tuple keys to strings for JSON serialization
             serializable_results = convert_tuple_keys_to_str(self.results)
             json.dump(serializable_results, f, indent=2, default=str)
-        print(f"\nBenchmark complete. Results saved to {filepath}")
+        self.logger.minimal(f"\nBenchmark complete. Results saved to {filepath}")
 
 
 def is_solution_valid(solution, problem):

@@ -1,0 +1,29 @@
+map:
+  name: no_obs100x100
+  path: no_obs100x100.h5
+  grid:
+    M: 100
+    N: 100
+    obstacles: []
+
+# Planning problems (multiple per file)
+problems:
+  baseline:
+    start: [99, 0]
+    goal: [0, 99]
+    time_limit: null
+  two_robots:
+    time_limit: null
+    robots:
+      robot_0:
+        start: [0, 0]
+        goal: [99, 99]
+        start_time: 0
+        priority: 1.0
+        safety_radius: 0.5
+      robot_1:
+        start: [99, 0]
+        goal: [0, 99]
+        start_time: 0
+        priority: 1.0
+        safety_radius: 0.5

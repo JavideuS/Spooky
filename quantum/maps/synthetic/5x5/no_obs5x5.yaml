@@ -1,0 +1,18 @@
+map:
+  name: no_obs5x5
+  path: no_obs5x5.h5
+  grid:
+    M: 5
+    N: 5
+    obstacles: []
+
+# Planning problems (multiple per file)
+problems:
+  baseline:
+    start: [4, 0]
+    goal: [0, 4]
+    time_limit: null
+  easyv3:
+    start: [4, 0]
+    goal: [1, 4]
+    time_limit: 

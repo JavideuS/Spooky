@@ -1,17 +1,84 @@
 [build-system]
-requires = ["setuptools"]
+requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "spooky"
 version = "0.1.0"
-description = "Quantum-inspired navigation algorithms"
+description = "Hybrid quantum-classical multi-robot path planning using QUBO formulations"
 authors = [
     {name="JavideuS", email="javi.rm2005@gmail.com"}
 ]
 readme = "README.md"
+license = {text = "Apache-2.0"}
 requires-python = ">=3.8"
-dependencies = []
+keywords = [
+    "path planning",
+    "multi-robot",
+    "QUBO",
+    "quantum annealing",
+    "QAOA",
+    "robotics",
+    "quantum computing"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "pyyaml",
+    "h5py",
+    "numpy",
+    "pennylane",
+]
+
+[project.optional-dependencies]
+gpu = [
+    "custatevec-cu12",
+    "pennylane-lightning-gpu",
+]
+dwave = [
+    "dimod",
+    "dwave-system",
+]
+ibm = [
+    "qiskit-ibm-runtime",
+    "pennylane-qiskit",
+]
+jupyter = [
+    "ipykernel",
+    "nbformat>=4.2.0",
+]
+dev = [
+    "pytest",
+    "black",
+    "flake8",
+]
+
+visualizer = [
+    "plotly",
+    "matplotlib",
+    "kaleido",
+]
+
+all = [
+    "spooky[gpu,dwave,ibm,jupyter,dev,visualizer]",
+]
+
+[project.urls]
+Homepage = "https://github.com/JavideuS/Spooky"
+Repository = "https://github.com/JavideuS/Spooky"
+Issues = "https://github.com/JavideuS/Spooky/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

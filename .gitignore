@@ -1,2 +1,68 @@
-*__pycache__
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+
+# Virtual environments
+venv/
+env/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Project-specific
 *prueba
+
+# Data files (exclude .h5 except maps)
+*.h5
+*.hdf5
+
+# Benchmark and output files
+benchmark_results/
+output/
+logs/
+*.log
+
+# Environment and secrets
+.env
+.env.local
+*.key
+*.pem
+credentials.json
+
+# ROS2 build artifacts
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
+# Compiled files
+*.pyc
+*.pyo
+*.pyd
+.Python

@@ -1,0 +1,13 @@
+map:
+  name: no_obs3x2
+  path: no_obs3x2.h5
+  grid:
+    M: 3
+    N: 2
+    obstacles: []  # Static obstacles (rarely changes)
+
+problems:
+  baseline:
+    start: [2, 0]
+    goal: [0, 1]
+    time_limit: 4

@@ -1,0 +1,29 @@
+map:
+  name: no_obs3x3_elev
+  path: no_obs3x3_elev.h5
+  grid:
+    M: 3
+    N: 3
+    obstacles: []  # Static obstacles (rarely changes)
+
+  # Elevation: base height + local changes
+  elevation:
+    base_height: 1.0
+    modifications:
+      - positions:
+          - [0, 0]
+          - [0, 1]
+          - [1, 0]
+        height: 0.8
+      - positions:
+          - [2, 1]
+          - [2, 2]
+          - [1, 2]
+        height: 1.6
+
+# Planning problems (multiple per file)
+problems:
+  baseline:
+    start: [2, 0]
+    goal: [0, 2]
+    time_limit: null

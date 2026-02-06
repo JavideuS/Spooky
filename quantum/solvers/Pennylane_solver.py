@@ -8,9 +8,9 @@ class PennylaneSolver(BaseSolver):
     def __init__(self, normalize_scale=0, num_reads="auto", layers=2,
                  optimizer="GradientDescent", opt_steps=10,
                  device="default.qubit",
-                 params=None, **kwargs):
+                 params=None, verbose_level=2, **kwargs):
         super().__init__(solver="pennylane", normalize_scale=normalize_scale,
-                         num_reads=num_reads, **kwargs)
+                         num_reads=num_reads, verbose_level=verbose_level, **kwargs)
         self.optimizer_name = optimizer
         self.p = layers  # Number of QAOA layers
         self.dev = device
@@ -94,15 +94,11 @@ class PennylaneSolver(BaseSolver):
         best_energy = []
 
         while (builder.total_t) > (builder.current_T):
-            # builder.build()
             if self.norm_scale != 0:
                 builder.Q = self.normalize_qubo(builder.Q, self.norm_scale)
 
-            # print("Start position:", builder.problem.start,
-            #       "Iteration:", builder.iter)
-
             wires = range(builder.get_num_wires())
-            print(f"Number of qubits: {len(wires)}")
+            self.logger.standard(f"Number of qubits: {len(wires)}")
             
             Hc, constant = builder.qubo_to_ising()
             Hmix = qml.qaoa.x_mixer(wires)
@@ -140,7 +136,7 @@ class PennylaneSolver(BaseSolver):
                     self.params, cost = optimizer.step_and_cost(
                         cost_function, self.params)
                     if step % 10 == 0:
-                        print(f"Step {step}, ⟨H_C⟩ = {cost:.6f}")
+                        self.logger.debug(f"Step {step}, ⟨H_C⟩ = {cost:.6f}")
                     # if step > 3 and abs(cost - prev_cost) < 1e-4:
                     #     break
                     # prev_cost = cost
@@ -192,7 +188,7 @@ class PennylaneSolver(BaseSolver):
             
             # Handle case where no samples were collected
             if not samples:
-                print("Warning: No samples collected, using random sample")
+                self.logger.minimal("Warning: No samples collected, using random sample")
                 # Create a random binary sample as fallback
                 random_sample = {i: np.random.randint(2) for i in wires}
                 samples.append(random_sample)
@@ -214,7 +210,7 @@ class PennylaneSolver(BaseSolver):
                 last_pos = self.decode_path(samples[best_idx], builder.problem)[-1]
                 builder.update_problem(last_pos[:2])
             except Exception as e:
-                print(f"Warning: Could not decode path: {e}")
+                self.logger.minimal(f"Warning: Could not decode path: {e}")
                 # Handle gracefully or break the loop
                 break
 
@@ -236,22 +232,63 @@ class PennylaneSolver(BaseSolver):
         """
         best_sample = []
         best_energy = []
+        window_stats = []  # Track per-window variable reduction stats
+        correction_count = 0  # Track consecutive correction attempts for current window
 
         while (builder.total_t) > (builder.current_T):
+
+
+            # TERMINATION CHECK: If all robots are inactive, stop solving
+            active_robots = [r for r in builder.problem.robots.values() if r.active]
+            if not active_robots:
+                self.logger.standard("✅ All robots reached goal or inactive. Stopping solver.")
+                break
+
+            # Ensure QUBO is built for the start of the window
+            # If the user forgot to call builder.build(), we do it here
+            if not builder.Q:
+                self.logger.debug("QUBO has not been built, calling builder.build()")
+                builder.build()
+
             # Track iteration time for quantum hardware
             if self.dev == "qiskit.remote":
                 iteration_start = time.time()
 
 
             if self.norm_scale != 0:
+                # Get initial variable count BEFORE reduction
+                initial_vars = builder.get_num_wires()
+                
                 fixed_vars = builder.get_fixed_variables()
-                builder.Q, offset, initial_log = builder.reduce_qubo(fixed_vars)
-                diag_fixed = builder.reduce_diag_fixed_vars_iterative(initial_reduction_log=initial_log)
+                # Don't log initial reduction - only needed for BFS recalc which is rare
+                builder.Q, offset, _ = builder.reduce_qubo(fixed_vars, log_reductions=False)
+                diag_fixed = builder.reduce_diag_fixed_vars_iterative(initial_reduction_log=None)
                 fixed_vars.update(diag_fixed)
+                
+                # Count total reduced variables (BFS fixed + diagonal fixed)
+                vars_reduced = len(fixed_vars)
+                
+                # Get final variable count AFTER reduction
+                final_vars = builder.get_num_wires()
+                reduction_ratio = vars_reduced / initial_vars if initial_vars > 0 else 0
+                
+                # Store per-window stats
+                window_stats.append({
+                    "window": builder.iter,
+                    "initial_variables": initial_vars,
+                    "variables_reduced": vars_reduced,
+                    "final_variables": final_vars,
+                    "reduction_ratio": round(reduction_ratio, 4)
+                })
+                
+                self.logger.standard(
+                    f"Window {builder.iter}: {initial_vars} → {final_vars} vars "
+                    f"(reduced {vars_reduced}, {reduction_ratio:.1%})"
+                )
 
                 # In case the full qubo gets pre-processed
                 if len(builder.Q) == 0:
-                    print("Full QUBO gets pre-processed", builder.current_T)
+                    self.logger.standard("Full QUBO gets pre-processed", builder.current_T)
                     full_sol, invalid_moves = self._handle_iteration_result(
                         {}, fixed_vars, builder)
                     best_sample.append(full_sol)
@@ -265,7 +302,7 @@ class PennylaneSolver(BaseSolver):
             # Since pennylane doesn't inherently knows the index of the remember qubits, I need to pass them manually
             wires = builder.get_wires()
             num_qubits = len(wires)
-            print(f"Number of qubits: {num_qubits}")
+            self.logger.standard(f"Number of qubits: {num_qubits}")
             
             # Determine if we need to remap wires for qiskit.remote
             if self.dev == "qiskit.remote":
@@ -314,34 +351,34 @@ class PennylaneSolver(BaseSolver):
 
             if self.dev == "qiskit.remote":
                 
-                print("=" * 60)
-                print("🔍 Searching for available quantum hardware...")
+                self.logger.standard("=" * 60)
+                self.logger.standard("🔍 Searching for available quantum hardware...")
                 backend_start = time.time()
                 backend = self.service.least_busy(operational=True, simulator=False, min_num_qubits=num_qubits)
                 backend_time = time.time() - backend_start
-                print(f"✓ Backend selected: {backend.name}")
-                print(f"  Backend selection time: {backend_time:.2f}s")
-                print("=" * 60)
+                self.logger.standard(f"✓ Backend selected: {backend.name}")
+                self.logger.standard(f"  Backend selection time: {backend_time:.2f}s")
+                self.logger.standard("=" * 60)
     
                 # Use sequential indices for qiskit.remote (circuit_wires is already sorted)
-                print("🔧 Initializing quantum device connection...")
+                self.logger.standard("🔧 Initializing quantum device connection...")
                 dev_start = time.time()
                 dev = qml.device('qiskit.remote', wires=circuit_wires, backend=backend)
                 dev_time = time.time() - dev_start
-                print(f"✓ Device initialized in {dev_time:.2f}s")
-                print("=" * 60)
+                self.logger.standard(f"✓ Device initialized in {dev_time:.2f}s")
+                self.logger.standard("=" * 60)
             else:
                 dev_start = time.time()
                 dev = qml.device(self.dev, wires=circuit_wires)
                 dev_time = time.time() - dev_start
-                print(f"✓ Device initialized in {dev_time:.2f}s")
-                print("=" * 60)
+                self.logger.debug(f"✓ Device initialized in {dev_time:.2f}s")
+                self.logger.debug("=" * 60)
             
             # Create ansatz with the appropriate wire labels
             ansatz_circuit = self.create_ansatz(circuit_wires, qaoa_layer)
 
             shots = self.get_shots(num_qubits)
-            print(f"Number of shots: {shots}")
+            self.logger.debug(f"Number of shots: {shots}")
             @qml.set_shots(shots)
             @qml.qnode(dev)
             # Note that this one is simply used for the optimization circuit
@@ -373,9 +410,9 @@ class PennylaneSolver(BaseSolver):
                     
                     if step % 10 == 0:
                         if self.dev == "qiskit.remote":
-                            print(f"Step {step}, ⟨H_C⟩ = {cost:.6f}, Time: {step_time:.2f}s")
+                            self.logger.debug(f"Step {step}, ⟨H_C⟩ = {cost:.6f}, Time: {step_time:.2f}s")
                         else:
-                            print(f"Step {step}, ⟨H_C⟩ = {cost:.6f}")
+                            self.logger.debug(f"Step {step}, ⟨H_C⟩ = {cost:.6f}")
                     # if step > 3 and abs(cost - prev_cost) < 1e-4:
                     #     break
                     # prev_cost = cost
@@ -395,16 +432,16 @@ class PennylaneSolver(BaseSolver):
             
             # Get samples from the quantum circuit
             if self.dev == "qiskit.remote":
-                print("\n" + "=" * 60)
-                print(f"⏳ Collecting {shots} samples from quantum hardware...")
-                print("   Waiting for quantum job to complete...")
-                print("=" * 60)
+                self.logger.standard("\n" + "=" * 60)
+                self.logger.standard(f"⏳ Collecting {shots} samples from quantum hardware...")
+                self.logger.standard("   Waiting for quantum job to complete...")
+                self.logger.standard("=" * 60)
                 sample_start = time.time()
                 raw_samples = sample_circuit(self.params)
                 sample_time = time.time() - sample_start
-                print("=" * 60)
-                print(f"✓ Samples collected in {sample_time:.2f}s")
-                print("=" * 60)
+                self.logger.standard("=" * 60)
+                self.logger.standard(f"✓ Samples collected in {sample_time:.2f}s")
+                self.logger.standard("=" * 60)
             else:
                 raw_samples = sample_circuit(self.params)
             
@@ -447,7 +484,7 @@ class PennylaneSolver(BaseSolver):
             
             # Handle case where no samples were collected
             if not samples:
-                print("Warning: No samples collected, using random sample")
+                self.logger.minimal("Warning: No samples collected, using random sample")
                 # Create a random binary sample as fallback
                 random_sample = {i: np.random.randint(2) for i in wires}
                 samples.append(random_sample)
@@ -462,16 +499,39 @@ class PennylaneSolver(BaseSolver):
             best_sample.append(full_sol)
             best_energy.append(energies[best_idx])
             
+            # Check if correction is needed due to invalid moves
+            if invalid_moves:
+                correction_count += 1
+                self.logger.standard(f"🔄 Correction attempt {correction_count}/{self.max_corrections} for current window")
+                
+                if correction_count >= self.max_corrections:
+                    self.logger.minimal(f"⚠️  Max corrections ({self.max_corrections}) exceeded at t={builder.current_T}. "
+                                       f"Keeping last result (invalid moves for robots {list(invalid_moves.keys())}).")
+                    
+                    # CRITICAL: Force builder to advance to next window to avoid infinite loop
+                    # Decode the path from the invalid solution and update the problem
+                    path = self.decode_path(full_sol, builder.problem, t_offset=builder.current_T)
+                    robot_paths = self.get_robot_paths(path)
+                    robot_paths = self._resolve_duplicate_timesteps(robot_paths, builder.problem)
+                    # Note: We skip _resolve_invalid_moves since we already know there are invalid moves
+                    # and we want to accept them to move forward
+                    builder.update_problem(robot_paths)
+                    
+                    correction_count = 0  # Reset for next window
+            else:
+                # Successful window - reset correction counter
+                correction_count = 0
+            
             # print(f"Best energy this iteration: {energies[best_idx]}")
             # print(f"Best sample: {samples[best_idx]}")
             
             # Print iteration summary for quantum hardware
             if self.dev == "qiskit.remote":
                 iteration_time = time.time() - iteration_start
-                print("\n" + "=" * 60)
-                print(f"✓ Iteration completed in {iteration_time:.2f}s")
-                print(f"  Best energy: {energies[best_idx]:.6f}")
-                print("=" * 60 + "\n")
+                self.logger.standard("\n" + "=" * 60)
+                self.logger.standard(f"✓ Iteration completed in {iteration_time:.2f}s")
+                self.logger.standard(f"  Best energy: {energies[best_idx]:.6f}")
+                self.logger.standard("=" * 60 + "\n")
 
         # Build final solution from stored robot paths (this is the correct solution)
         final_solution = self.build_solution_from_robot_paths(builder.problem)
@@ -481,6 +541,7 @@ class PennylaneSolver(BaseSolver):
             'energy': best_energy,
             'optimized_params': self.params,
             'metadata': {
+                'window_stats': window_stats,  # Per-window variable reduction stats
                 # 'window_solutions': best_sample  # Keep window solutions for debugging
             }
         }

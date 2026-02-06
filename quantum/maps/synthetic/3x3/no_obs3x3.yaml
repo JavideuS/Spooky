@@ -1,0 +1,14 @@
+map:
+  name: no_obs3x3
+  path: no_obs3x3.h5
+  grid:
+    M: 3
+    N: 3
+    obstacles: []  # Static obstacles (rarely changes)
+
+# Planning problems (multiple per file)
+problems:
+  baseline:
+    start: [2, 0]
+    goal: [0, 2]
+    time_limit: null

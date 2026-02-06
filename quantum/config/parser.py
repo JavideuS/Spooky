@@ -35,14 +35,37 @@ def convert_values(data):
 
 # VERIFICATION FUNCTIONS
 def validate_problem(problem):
-    # if not isinstance(problem.get("grid", {}).get("M"), int) or problem["grid"]["M"] <= 0:
-    #     raise ValueError("Grid M must be a positive integer")
-    # if not isinstance(problem.get("grid", {}).get("N"), int) or problem["grid"]["N"] <= 0:
-    #     raise ValueError("Grid N must be a positive integer")
-    if not isinstance(problem.get("start"), tuple) or len(problem["start"]) != 2:
-        raise ValueError("Start must be a 2-tuple (i, j)")
-    if not isinstance(problem.get("goal"), tuple) or len(problem["goal"]) != 2:
-        raise ValueError("Goal must be a 2-tuple (i, j)")
+    # Check if this is a multi-robot problem
+    if "robots" in problem:
+        # Multi-robot validation
+        if not isinstance(problem["robots"], dict):
+            raise ValueError("robots must be a dictionary")
+        
+        for robot_id, robot_data in problem["robots"].items():
+            if not isinstance(robot_data.get("start"), (tuple, list)) or len(robot_data["start"]) != 2:
+                raise ValueError(f"Robot '{robot_id}' start must be a 2-tuple or 2-list (i, j)")
+            if not isinstance(robot_data.get("goal"), (tuple, list)) or len(robot_data["goal"]) != 2:
+                raise ValueError(f"Robot '{robot_id}' goal must be a 2-tuple or 2-list (i, j)")
+            
+            # Optional fields with defaults
+            if "start_time" in robot_data and (not isinstance(robot_data["start_time"], int) or robot_data["start_time"] < 0):
+                raise ValueError(f"Robot '{robot_id}' start_time must be a non-negative integer")
+            if "priority" in robot_data and not isinstance(robot_data["priority"], (int, float)):
+                raise ValueError(f"Robot '{robot_id}' priority must be a number")
+            if "safety_radius" in robot_data and not isinstance(robot_data["safety_radius"], (int, float)):
+                raise ValueError(f"Robot '{robot_id}' safety_radius must be a number")
+    else:
+        # Single robot (legacy) validation
+        if not isinstance(problem.get("start"), tuple) or len(problem["start"]) != 2:
+            raise ValueError("Start must be a 2-tuple (i, j)")
+        if not isinstance(problem.get("goal"), tuple) or len(problem["goal"]) != 2:
+            raise ValueError("Goal must be a 2-tuple (i, j)")
+    
+    # Common validation for time_limit
+    if "time_limit" in problem and (problem["time_limit"] is not None and (not isinstance(problem["time_limit"], int) or problem["time_limit"] < 1)):
+        raise ValueError("time_limit must be an integer greater than 0 (>=1) or None")
+    
+    # Legacy T field support
     if "T" in problem and (problem["T"] is not None and (not isinstance(problem["T"], int) or problem["T"] < 1)):
         raise ValueError("T must be an integer greater than 0 (>=1) or None")
 

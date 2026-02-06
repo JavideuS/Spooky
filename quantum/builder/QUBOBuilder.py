@@ -22,10 +22,11 @@ class GridQUBOBuilder(BaseQUBO):
         problem,
         penalties,
         name="grid",
-        var_limit=650,  # 101 605 1001
+        var_limit=1650,  # 101 605 1001
         window_max_steps=None,
         distance_scaling="enhanced_linear",
         robot_window_limits=None,
+        verbose_level=2,
     ):
         super().__init__(
             problem,
@@ -35,6 +36,7 @@ class GridQUBOBuilder(BaseQUBO):
             window_max_steps=window_max_steps,
             distance_scaling=distance_scaling,
             robot_window_limits=robot_window_limits,
+            verbose_level=verbose_level,
         )
         self.initial_num_vars = problem.grid.M * problem.grid.N * problem.num_robots * problem.T
         self.P_obs = compute_obstacle_potential_field(
@@ -42,7 +44,7 @@ class GridQUBOBuilder(BaseQUBO):
             self.problem.grid.N,
             self.problem.grid.obstacles,
         )
-        print("Window max steps:", self.max_window_size())
+        self.logger.standard("Window max steps:", self.max_window_size())
 
     def calculate_manhattan_penalty(self, raw_dist, K_goal_approx, time_factor):
         """
@@ -472,8 +474,6 @@ class GridQUBOBuilder(BaseQUBO):
                     for j in range(N):
                         material = self.problem.grid.get_terrain_at(i, j)
                         cost = self.problem.grid.get_material_cost(material)
-                        # print(f"Applying terrain penalty at t={t}, i={i}, j={j}")
-                        # print(f"Material: {material}, Cost: {cost}")
                         g_t = i * N + j + M * N * t + robot_offset
                         self.Q[(g_t, g_t)] += K_ter * cost
 
@@ -558,8 +558,6 @@ class GridQUBOBuilder(BaseQUBO):
         K_crash = self.penalties.get('K_crash', 0)
         robot_nums = self.problem.get_robot_nums()
         active_robots_per_timestep = self.get_active_robots_per_timestep_in_window()
-        # print(active_robots_per_timestep)
-        # print(robot_nums)
         for t, active_robots in active_robots_per_timestep.items():
             if len(active_robots) < 2:
                 continue  # no collision possible
@@ -710,7 +708,6 @@ class GridQUBOBuilder(BaseQUBO):
 
             reachable[t] = curr_layer
 
-        # print(reachable)
         return reachable
 
     def reachable_positions_aggressive_v2(self, robot, start, start_time, end_time):
@@ -794,7 +791,7 @@ class GridQUBOBuilder(BaseQUBO):
             start_idx = s_i * N + s_j + M * N * start + robot_offset
 
             fixed[start_idx] = 1
-            print(start_idx, "fixed to 1 for robot", robot_id)
+            self.logger.debug(start_idx, "fixed to 1 for robot", robot_id)
             # fix all other time=0 cells
             for i in range(M):
                 for j in range(N):
@@ -820,7 +817,7 @@ class GridQUBOBuilder(BaseQUBO):
             # Check if goal is reachable at timestep 1 (one movement away)
             # If so, fix the entire instantaneous path
             if (e_i, e_j) in reachable.get(start + 1, set()):
-                print(f"Goal is reachable at timestep 1 for robot {robot_id}. Fixing instantaneous path.")
+                self.logger.debug(f"Goal is reachable at timestep 1 for robot {robot_id}. Fixing instantaneous path.")
 
                 # Fix timestep start + 1: goal = 1, all others = 0
                 for i in range(M):
@@ -828,7 +825,7 @@ class GridQUBOBuilder(BaseQUBO):
                         n = i * N + j + M * N * (start + 1) + robot_offset
                         if (i, j) == (e_i, e_j):
                             fixed[n] = 1
-                            print(f"  Fixed goal position {n} at ({i}, {j}) to 1 at timestep {start + 1}")
+                            self.logger.debug(f"  Fixed goal position {n} at ({i}, {j}) to 1 at timestep {start + 1}")
                         else:
                             fixed[n] = 0
 
@@ -842,7 +839,7 @@ class GridQUBOBuilder(BaseQUBO):
                             else:
                                 fixed[n] = 0
 
-            # print(reachable)
+            # self.logger.debug(f"Reachable positions for robot {robot_id}: {reachable}")
             # for t in reachable:
             for t in range(start + 1, end):
                 for i in range(M):

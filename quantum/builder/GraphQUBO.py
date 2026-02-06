@@ -8,10 +8,11 @@ class GraphQUBO(BaseQUBO):
         problem,
         penalties,
         name="graph",
-        var_limit=601,  #65 131
+        var_limit=1201,  #65 131
         window_max_steps=None,
         distance_scaling="enhanced_linear",
         robot_window_limits=None,
+        verbose_level=2,
     ):
         self.graph = problem.graph
         self.num_nodes = len(self.graph.nodes)
@@ -23,6 +24,7 @@ class GraphQUBO(BaseQUBO):
             window_max_steps=window_max_steps,
             distance_scaling=distance_scaling,
             robot_window_limits=robot_window_limits,
+            verbose_level=verbose_level,
         )
         # Multi-robot support: calculate total variables for all robots
         # Use problem.T (total timeline) not total_t (window size) to match QUBOBuilder
@@ -35,7 +37,7 @@ class GraphQUBO(BaseQUBO):
         self.P_connectivity_per_robot = {}
         self.P_obs = self.compute_spatial_obstacle_potential()
         
-        print("Window max steps:", self.max_window_size())
+        self.logger.standard("Window max steps:", self.max_window_size())
 
     def build(self, constraints_to_apply=None):
         """Build the QUBO dictionary for graph-based pathfinding."""
@@ -95,6 +97,9 @@ class GraphQUBO(BaseQUBO):
             end = end_time - self.current_T
             if end_time > self.current_T + self.t_max:
                 end = self.t_max
+
+            # Debug logs for empty QUBO diagnosis
+            # self.logger.debug(f"Robot {robot_id}: start={start}, end={end}, start_time={start_time}, T={robot.T}, current_T={self.current_T}, t_max={self.t_max}")
 
             for t in range(start, end):
                 # All node variables at time t for this robot
@@ -385,58 +390,13 @@ class GraphQUBO(BaseQUBO):
                         if neighbor_dist < current_dist:
                             good_neighbors += 1
                 
-                # Ratio of good neighbors to total neighbors
-                good_ratio = good_neighbors / total_neighbors
-                
-                # Goal-oriented potential (inverse of good ratio)
-                P_goal = np.exp(-2 * good_ratio)
-                
-                # Factor 2: Directional alignment with start→goal vector
-                if start_pos is not None and total_neighbors > 0:
-                    # Vector from start to goal (desired direction)
-                    goal_vec = np.array([goal_pos[0] - start_pos[0], 
-                                        goal_pos[1] - start_pos[1]])
-                    goal_vec_norm = np.linalg.norm(goal_vec)
-                    
-                    if goal_vec_norm > 0:
-                        goal_vec = goal_vec / goal_vec_norm  # Normalize
-                        
-                        # Count neighbors aligned with start→goal direction
-                        aligned_neighbors = 0
-                        for neighbor_id, _ in neighbors:
-                            neighbor_pos = self.graph.get_node_position(neighbor_id)
-                            if neighbor_pos is not None:
-                                # Vector from current node to neighbor
-                                neighbor_vec = np.array([neighbor_pos[0] - node_pos[0],
-                                                        neighbor_pos[1] - node_pos[1]])
-                                neighbor_vec_norm = np.linalg.norm(neighbor_vec)
-                                
-                                if neighbor_vec_norm > 0:
-                                    neighbor_vec = neighbor_vec / neighbor_vec_norm
-                                    
-                                    # Dot product measures alignment (-1 to 1)
-                                    # 1 = same direction, 0 = perpendicular, -1 = opposite
-                                    alignment = np.dot(goal_vec, neighbor_vec)
-                                    
-                                    # Consider aligned if dot product > 0.3 (roughly same direction)
-                                    if alignment > 0.3:
-                                        aligned_neighbors += 1
-                        
-                        # Ratio of aligned neighbors
-                        aligned_ratio = aligned_neighbors / total_neighbors
-                        
-                        # Directional potential (inverse of alignment)
-                        P_direction = np.exp(-2 * aligned_ratio)
-                        
-                        # Combine both factors (weighted average)
-                        # Goal-oriented is more important (0.7) than directional alignment (0.3)
-                        P_nodes[node_id] = 0.7 * P_goal + 0.3 * P_direction
-                    else:
-                        # Start == goal, use only goal-oriented
-                        P_nodes[node_id] = P_goal
-                else:
-                    # No start position, use only goal-oriented potential
-                    P_nodes[node_id] = P_goal
+                # Heuristic: Inverse of (1 + good_neighbors)
+                # 0 good neighbors (dead end) -> 1/1 = 1.0
+                # 1 good neighbor (narrow)    -> 1/2 = 0.5
+                # 2 good neighbors            -> 1/3 = 0.33
+                # 3 good neighbors            -> 1/4 = 0.25
+                P_nodes[node_id] = 1.0 / (1.0 + good_neighbors)
+
         
         return P_nodes
     
@@ -542,8 +502,12 @@ class GraphQUBO(BaseQUBO):
                 K_dis = self.calculate_euclidean_penalty(raw_dist, K_goal_approx, time_factor)
                 
                 # Dead-end repulsion (goal-oriented connectivity)
-                # Penalize nodes where neighbors lead away from goal
-                K_deadend = K_deadend_repel * self.P_connectivity_per_robot[robot_id][node_id] # This is goal-oriented
+                # Penalize nodes with lower connectivity towards goal
+                # P value is 1.0 (dead end), 0.5 (1 neighbor), 0.33 (2 neighbors)...
+                # We apply the penalty scaled by this value
+                K_repel_val = self.penalties.get('K_deadend_repel', 0.2)
+                K_deadend = K_repel_val * self.P_connectivity_per_robot[robot_id][node_id]
+                
                 K_obs = K_repel #* self.P_obs[node_id] # This is environment-oriented (avoid obstacles)
                 
                 var_idx = node_id + (self.num_nodes * t) + robot_offset
@@ -650,14 +614,14 @@ class GraphQUBO(BaseQUBO):
             # Check if goal is reachable at timestep 1 (one movement away)
             # If so, fix the entire instantaneous path
             if goal_node in reachable_at_time.get(start + 1, set()):
-                print(f"Goal is reachable at timestep 1 for robot {robot_id}. Fixing instantaneous path.")
+                self.logger.debug(f"Goal is reachable at timestep 1 for robot {robot_id}. Fixing instantaneous path.")
                 
                 # Fix timestep start + 1: goal = 1, all others = 0
                 for node_id in range(self.num_nodes):
                     n = node_id + (self.num_nodes * (start + 1)) + robot_offset
                     if node_id == goal_node:
                         fixed[n] = 1
-                        print(f"  Fixed goal node {n} at node {node_id} to 1 at timestep {start + 1}")
+                        self.logger.debug(f"  Fixed goal node {n} at node {node_id} to 1 at timestep {start + 1}")
                     else:
                         fixed[n] = 0
                 
@@ -670,7 +634,7 @@ class GraphQUBO(BaseQUBO):
                         else:
                             fixed[n] = 0
             
-            # print(reachable_at_time)
+            # self.logger.debug(f"Reachable positions for robot {robot_id}: {reachable_at_time}")
             # Fix unreachable nodes to 0 for all time steps for this robot
             for t in range(start + 1, end):
             # for t in reachable_at_time:

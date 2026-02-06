@@ -15,7 +15,27 @@ The system relies on several key YAML configuration files:
   - Map paths and dimensions
   - Algorithm parameters
   - Windowing settings
+  - **Verbose logging level** (controls console output verbosity)
 - **`materials.yaml`**: Defines physical properties of the environment (e.g., terrain costs, traversability) used by the builders to calculate movement penalties.
+
+### 3. Verbose Logging Configuration
+
+The `verbose` section in `config.yaml` controls the amount of console output during solving:
+
+```yaml
+verbose:
+  # 0 = Silent: No output except errors
+  # 1 = Minimal: Only essential information (iterations, final results)
+  # 2 = Standard: Standard progress information (default)
+  # 3 = Debug: All debug information including optimization steps
+  level: 2
+```
+
+**Verbosity Levels:**
+- **0 (Silent)**: Only errors are printed
+- **1 (Minimal)**: Essential information only (benchmark headers, warnings, final results)
+- **2 (Standard)**: Standard progress (qubit counts, window adjustments, robot paths) - **Default**
+- **3 (Debug)**: All debug information (optimization steps, BFS details, variable fixing)
 
 ## Usage
 

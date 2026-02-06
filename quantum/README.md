@@ -17,13 +17,6 @@ The `quantum` package is the heart of the Quantum Navigation project. It impleme
 - **`map.py`**: Handles the internal representation of the environment, including grid data, obstacles, terrain costs, and graph topology.
 - **`robotConfiguration.py`**: Manages the state and parameters of individual robots within the swarm.
 
-### Execution & Orchestration
-- **`multi_robot_solver.py`**: The main orchestrator that manages the solving loop. It handles:
-  - Problem windowing (splitting long paths into solvable chunks).
-  - Multi-robot coordination.
-  - Calling the appropriate builder and solver backends.
-  - Aggregating results.
-
 ### Visualization
 - **`visualizer.py`**: Tools for visualizing the navigation process, including:
   - 2D grid maps with paths.
@@ -41,9 +34,15 @@ To run a navigation task or benchmark, the primary entry point is `qubo.py`. You
 python qubo.py
 ```
 
+**Tip**: Control console output verbosity by setting `verbose.level` in `config/config.yaml`:
+- `0` = Silent (errors only)
+- `1` = Minimal (essential info)
+- `2` = Standard (default)
+- `3` = Debug (all details)
+
 Inside `qubo.py`, you can switch between different problem configurations (e.g., grid vs. graph) and solvers by uncommenting the relevant lines.
 
 ## Key Concepts
 
-- **Windowing**: To overcome the qubit limitations of current quantum hardware, paths are solved in "sliding windows" (e.g., 10 steps at a time) rather than all at once.
+- **Windowing**: To overcome the qubit limitations of current quantum hardware, paths are solved in "sliding windows" (e.g., 5 steps at a time) rather than all at once.
 - **Hybrid Solving**: The system can dynamically switch between quantum annealers (DWave), gate-based QAOA (PennyLane), and classical heuristics depending on problem complexity and resource availability.

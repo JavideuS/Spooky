@@ -1,0 +1,25 @@
+map:
+  name: no_obs3x3_ter
+  path: no_obs3x3_ter.h5
+  grid:
+    M: 3
+    N: 3
+    obstacles: []  # Static obstacles (rarely changes)
+
+  # Terrain: base material + exceptions
+  terrain:
+    base_material: ceramic
+    # List of overrides (more scalable than full matrix)
+    modifications:
+      - positions:
+          - [0, 0]
+          - [0, 1]
+          - [1, 0]
+        type: water
+
+# Planning problems (multiple per file)
+problems:
+  baseline:
+    start: [2, 0]
+    goal: [0, 2]
+    time_limit: null

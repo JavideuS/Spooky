@@ -1,0 +1,35 @@
+# Core dependencies
+pyyaml
+h5py
+numpy
+pennylane
+
+# Visualization
+plotly
+matplotlib
+
+# Jupyter support (optional)
+ipykernel
+nbformat>=4.2.0
+
+# --- Optional Dependencies ---
+# Install based on your use case:
+
+# For PennyLane GPU acceleration (NVIDIA CUDA):
+# custatevec-cu12
+# pennylane-lightning-gpu
+
+# For D-Wave quantum annealing:
+# dimod
+# dwave-system
+
+# For IBM Quantum hardware access:
+# qiskit-ibm-runtime
+# pennylane-qiskit
+
+# For FastAPI server (experimental):
+# fastapi
+# uvicorn
+
+# For ROS2 integration (experimental):
+# rclpy

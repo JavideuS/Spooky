@@ -3,6 +3,7 @@ import numpy as np
 from typing import Dict, Any, List, Tuple
 from quantum.utils.paths import decode_position
 from quantum.utils.validation import is_valid_move
+from quantum.utils.logger import get_logger
 
 class BaseSolver(ABC):
     """
@@ -11,7 +12,8 @@ class BaseSolver(ABC):
     """
 
     def __init__(self, solver: str, normalize_scale: float = 0,
-                 num_reads: int = 10, max_corrections: int = 3, **kwargs):
+                 num_reads: int = 10, max_corrections: int = 3, 
+                 verbose_level: int = 2, **kwargs):
         """
         Initialize the base solver.
 
@@ -20,14 +22,17 @@ class BaseSolver(ABC):
             normalize_scale: Scale factor for QUBO normalization
             num_reads: Number of reads/samples to take
             max_corrections: Maximum number of invalid move corrections to attempt
+            verbose_level: Verbosity level (0=Silent, 1=Minimal, 2=Standard, 3=Debug)
             **kwargs: Additional solver-specific parameters
         """
         self.solver = solver
         self.norm_scale = normalize_scale
         self.num_reads = num_reads
         self.max_corrections = max_corrections
+        self.verbose_level = verbose_level
         self.name = f"{self.solver}_reads{num_reads}"
         self._solver_params = kwargs
+        self.logger = get_logger()  # Use global logger level
 
     # Config file already returns dict for penalties; no new constructor needed
     @classmethod
@@ -242,7 +247,7 @@ class BaseSolver(ABC):
                     if last_pos is None:
                         # No previous position, choose first candidate
                         chosen = candidates[0]
-                        print(f"⚠️  Robot {robot_num} at t={t}: Multiple positions {candidates}, "
+                        self.logger.standard(f"⚠️  Robot {robot_num} at t={t}: Multiple positions {candidates}, "
                               f"no previous position to guide, choosing {chosen}")
                     else:
                         # Choose the position that is adjacent to the last position
@@ -294,16 +299,16 @@ class BaseSolver(ABC):
         if valid_candidates:
             chosen = valid_candidates[0]
             if len(valid_candidates) > 1:
-                print(f"⚠️  Robot {robot_num} at t={t}: Multiple valid adjacent positions "
+                self.logger.debug(f"⚠️  Robot {robot_num} at t={t}: Multiple valid adjacent positions "
                       f"{valid_candidates} from {last_pos}, choosing {chosen}")
             else:
-                print(f"✓ Robot {robot_num} at t={t}: Resolved duplicate by continuity - "
+                self.logger.debug(f"✓ Robot {robot_num} at t={t}: Resolved duplicate by continuity - "
                       f"chose {chosen} from {candidates} (adjacent to {last_pos})")
             return chosen
         else:
             # No adjacent candidates - this is a discontinuity, choose first and warn
             chosen = candidates[0]
-            print(f"⚠️  Robot {robot_num} at t={t}: No adjacent position found! "
+            self.logger.minimal(f"⚠️  Robot {robot_num} at t={t}: No adjacent position found! "
                   f"Candidates {candidates} not adjacent to {last_pos}. Choosing {chosen} arbitrarily.")
             return chosen
     
@@ -349,7 +354,7 @@ class BaseSolver(ABC):
                 else:
                     # Invalid move detected - truncate path here
                     invalid_moves[robot_num] = curr_timestep
-                    print(f"❌ Robot {robot_num}: Invalid move from {prev_pos} (t={positions[idx-1][2]}) "
+                    self.logger.standard(f"❌ Robot {robot_num}: Invalid move from {prev_pos} (t={positions[idx-1][2]}) "
                           f"to {curr_pos} (t={curr_timestep}). Truncating path and will replan from t={curr_timestep}.")
                     break  # Stop processing this robot's path
             
@@ -495,18 +500,19 @@ class BaseSolver(ABC):
         robot_paths, invalid_moves = self._resolve_invalid_moves(robot_paths, builder.problem)
         
         # print("Decoded path:", path)
-        print("Robots paths", robot_paths)
+        self.logger.standard("Robots paths", robot_paths)
         if invalid_moves:
-            print(f"⚠️  Invalid moves detected for robots: {list(invalid_moves.keys())}")
-            print(f"🔄 Discarding this window and repeating from current_T={builder.current_T}")
+            self.logger.standard(f"⚠️  Invalid moves detected for robots: {list(invalid_moves.keys())}")
 
             # Don't update the problem - this will cause the solver to repeat the same window
-            # Return empty paths so nothing gets added to robot paths
+            # The window will be rebuilt from scratch with just the start positions
             return full_sol, invalid_moves
 
             # SCENARIO where we want to stay in last valid cell without repeating the whole window
             # Like treating as if it was only one window from the beginning (but with smaller size)
 
+            # self.logger.standard(f"🔄 Discarding this window and repeating from current_T={builder.current_T}")
+            
             # Adjust builder.current_T to the earliest truncation point
             # This ensures the next window starts from where the error occurred
             # earliest_invalid_time = min(invalid_moves.values())

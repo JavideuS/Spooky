@@ -46,3 +46,9 @@ materials:
     index: 7
     cost: 5.0
     color: "#628fde"
+
+  # Should generally be avoid unless wanting to explore
+  unknown:
+    index: 8
+    cost: 6.0
+    color: "white"

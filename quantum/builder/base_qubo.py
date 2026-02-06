@@ -3,6 +3,7 @@ import numpy as np
 from abc import ABC, abstractmethod
 from quantum.utils import paths
 from quantum.utils.validation import is_valid_move
+from quantum.utils.logger import get_logger
 from collections import Counter
 
 
@@ -27,6 +28,7 @@ class BaseQUBO(ABC):
         window_max_steps=None,
         distance_scaling=None,
         robot_window_limits=None,
+        verbose_level=2,
     ):
         self.problem = problem
         self.penalties = penalties
@@ -46,6 +48,9 @@ class BaseQUBO(ABC):
         # Optional knob used by grid subclass
         self.distance_scaling = distance_scaling
         self.prev_solution = []
+        self.verbose_level = verbose_level
+        # Initialize logger
+        self.logger = get_logger()  # Use global logger level
 
     # Subclasses must implement build to populate self.Q
     @abstractmethod
@@ -92,8 +97,7 @@ class BaseQUBO(ABC):
         Return set of unique variable indices in the current QUBO.
         """
         if not self.Q:
-            # raise ValueError("QUBO dictionary is empty. Build the QUBO first.")
-            print("QUBO dictionary is empty. Build the QUBO first.")
+            self.logger.standard("QUBO dictionary is empty. Build the QUBO first.")
             return set()
         qubit_indices = set()
         for (i, j) in self.Q.keys():
@@ -204,11 +208,10 @@ class BaseQUBO(ABC):
         # It simply does t_max - 1 (meaning that if you only can render one time step you will always be in that time)
         # Because you need to render the step where you were and the following iteration (qubo renders the transition)
         # Note that this also helps debug since now the global time don't care about iterations (which clipped time)
-        print(f"🔄 Adjusting window: current_T from {self.current_T} to {self.current_T + self.t_max - 1}")
+        self.logger.standard(f"🔄 Adjusting window: current_T from {self.current_T} to {self.current_T + self.t_max - 1}")
         self.current_T += self.t_max - 1
         # We update current time and recalculate t_max for next window
         self.t_max = self.max_window_size()
-        print("T max: ", self.t_max, "Total t: ", self.total_t)
         if self.t_max > 0:
             for robot_num, new_segment in solution.items():
                 robot_id = list(self.problem.robots.keys())[robot_num]
@@ -221,14 +224,14 @@ class BaseQUBO(ABC):
 
                 # Early stop: Check if robot has reached its goal
                 if robot.is_at_goal() and robot.active:
-                    print(f"Robot {robot_id} reached goal at position {robot.current_position}. Marking as inactive.")
+                    self.logger.standard(f"Robot {robot_id} reached goal at position {robot.current_position}. Marking as inactive.")
                     robot.active = False
             
             # Recalculate window size after marking robots inactive
             # This allows immediate benefit from larger windows when robots finish
             new_t_max = self.max_window_size()
             if new_t_max > self.t_max:
-                print(f"Window size increased from {self.t_max} to {new_t_max} after robots became inactive")
+                self.logger.standard(f"Window size increased from {self.t_max} to {new_t_max} after robots became inactive")
                 self.t_max = new_t_max
 
             self.build()
@@ -255,7 +258,7 @@ class BaseQUBO(ABC):
             arr[r, c] = val
         return arr
 
-    def reduce_qubo(self, fixed_vars):
+    def reduce_qubo(self, fixed_vars, log_reductions=False):
         """
         Reduce a QUBO dictionary by fixing variables.
         Assumes Q uses upper triangular form: (i,j) with i <= j only.
@@ -263,6 +266,7 @@ class BaseQUBO(ABC):
         Args:
             Q: QUBO dictionary
             fixed_vars: dict {idx: value} or numpy array
+            log_reductions: If True, track all changes for potential reversal (slower)
 
         Returns:
             (reduced_Q, const_offset, reduction_log)
@@ -273,15 +277,18 @@ class BaseQUBO(ABC):
             }
         else:
             fixed_dict = fixed_vars
-        # print("fixed_dict", fixed_dict)
+        
+        # Use set for O(1) lookups
+        fixed_set = set(fixed_dict.keys())
+        
         reduced_Q = {}
         const_offset = 0
-        reduction_log = []  # Track all changes
+        reduction_log = [] if log_reductions else None
 
         for key, coeff in self.Q.items():
             i, j = key
-            i_fixed = i in fixed_dict
-            j_fixed = j in fixed_dict
+            i_fixed = i in fixed_set
+            j_fixed = j in fixed_set
 
             if not i_fixed and not j_fixed:
                 # Both free: keep as is
@@ -289,38 +296,41 @@ class BaseQUBO(ABC):
             elif i_fixed and j_fixed:
                 # Both fixed: add to constant
                 const_offset += coeff * fixed_dict[i] * fixed_dict[j]
-                reduction_log.append({
-                    'type': 'both_fixed',
-                    'original_key': key,
-                    'coeff': coeff,
-                    'fixed_values': (fixed_dict[i], fixed_dict[j])
-                })
+                if log_reductions:
+                    reduction_log.append({
+                        'type': 'both_fixed',
+                        'original_key': key,
+                        'coeff': coeff,
+                        'fixed_values': (fixed_dict[i], fixed_dict[j])
+                    })
             elif i_fixed:
                 # Only i fixed
                 if fixed_dict[i] == 1:
                     reduced_Q[(j, j)] = reduced_Q.get((j, j), 0) + coeff
-                    reduction_log.append({
-                        'type': 'i_fixed',
-                        'original_key': key,
-                        'coeff': coeff,
-                        'fixed_var': i,
-                        'fixed_value': fixed_dict[i],
-                        'free_var': j
-                    })
+                    if log_reductions:
+                        reduction_log.append({
+                            'type': 'i_fixed',
+                            'original_key': key,
+                            'coeff': coeff,
+                            'fixed_var': i,
+                            'fixed_value': fixed_dict[i],
+                            'free_var': j
+                        })
             else:  # j_fixed
                 # Only j fixed
                 if fixed_dict[j] == 1:
                     reduced_Q[(i, i)] = reduced_Q.get((i, i), 0) + coeff
-                    reduction_log.append({
-                        'type': 'j_fixed',
-                        'original_key': key,
-                        'coeff': coeff,
-                        'fixed_var': j,
-                        'fixed_value': fixed_dict[j],
-                        'free_var': i
-                    })
+                    if log_reductions:
+                        reduction_log.append({
+                            'type': 'j_fixed',
+                            'original_key': key,
+                            'coeff': coeff,
+                            'fixed_var': j,
+                            'fixed_value': fixed_dict[j],
+                            'free_var': i
+                        })
 
-        return reduced_Q, const_offset, reduction_log
+        return reduced_Q, const_offset, reduction_log or []
 
     def reverse_reduction(self, reduced_Q, reduction_log, var_to_unfix):
         """
@@ -521,6 +531,7 @@ class BaseQUBO(ABC):
         for t in sorted(timestep_vars.keys()):
             # Refresh timestep_vars after each iteration since Q changes
             timestep_vars = self._collect_timestep_vars(robot_offset, vars_per_time, n)
+            # self.logger.debug(f"Timestep {t}, robot {robot_id}: {timestep_vars}")
             
             if t not in timestep_vars:
                 continue
@@ -597,7 +608,7 @@ class BaseQUBO(ABC):
                 prev_i, prev_j, _, _ = paths.decode_position(prev_fixed_pos, self.problem)
                 curr_i, curr_j, _, _ = paths.decode_position(var_idx, self.problem)
                 if not is_valid_move(self.problem, (prev_i, prev_j), (curr_i, curr_j), goal):
-                    print(f"Variable {var_idx} not adjacent, needs BFS recalc")
+                    self.logger.debug(f"Variable {var_idx} not adjacent, needs BFS recalc")
                     result['needs_bfs_recalc'] = True
                     return result
             
@@ -621,7 +632,7 @@ class BaseQUBO(ABC):
                         prev_i, prev_j, _, _ = paths.decode_position(prev_fixed_pos, self.problem)
                         curr_i, curr_j, _, _ = paths.decode_position(var_idx, self.problem)
                         if not is_valid_move(self.problem, (prev_i, prev_j), (curr_i, curr_j), goal):
-                            print(f"Variable {var_idx} (min coeff) not adjacent, needs BFS recalc")
+                            self.logger.debug(f"Variable {var_idx} (min coeff) not adjacent, needs BFS recalc")
                             result['needs_bfs_recalc'] = True
                             return result
                     
@@ -646,7 +657,7 @@ class BaseQUBO(ABC):
         Recalculate reachable positions and fix variables accordingly.
         Returns the variable index fixed to 1 at curr_t.
         """
-        print(f"BFS recalculation for robot {robot_id} starting at timestep {curr_t}")
+        self.logger.debug(f"BFS recalculation for robot {robot_id} starting at timestep {curr_t}")
         
         # Get start position
         prev_i, prev_j, _, _ = paths.decode_position(prev_fixed_pos, self.problem)
@@ -655,15 +666,15 @@ class BaseQUBO(ABC):
         else:
             start_pos = self.problem.graph.get_node_from_position((prev_i, prev_j))
         
-        # Calculate reachable positions
+        # Calculate reachable positions for all remaining timesteps in the window
         reachable = self.reachable_positions_aggressive(
             self.problem.robots[robot_id],
             start_pos,
             prev_timestep,
-            len(timestep_vars) + 1
+            self.t_max
         )
         
-        print(f"Reachable positions: {reachable}")
+        self.logger.debug(f"Reachable positions: {reachable}")
         
         last_fixed_var = None
         
@@ -686,7 +697,7 @@ class BaseQUBO(ABC):
                             total_fixed[var_idx] = 0
                             self.Q, _, log = self.reduce_qubo({var_idx: 0})
                             self.reduction_log.extend(log)
-                            print(f"  Fixed {var_idx} to 0 (unreachable)")
+                            self.logger.debug(f"  Fixed {var_idx} to 0 (unreachable)")
             
             # Fix one reachable variable to 1
             fixed_var = self._fix_best_reachable_var(reachable_vars, total_fixed)
@@ -714,7 +725,7 @@ class BaseQUBO(ABC):
             if var_idx in total_fixed:
                 self.Q, _ = self.reverse_reduction(self.Q, self.reduction_log, var_idx)
                 del total_fixed[var_idx]
-                print(f"  Unfixed variable {var_idx}")
+                self.logger.debug(f"  Unfixed variable {var_idx}")
             
             # Add if exists in Q
             if (var_idx, var_idx) in self.Q:
@@ -725,7 +736,7 @@ class BaseQUBO(ABC):
     def _fix_best_reachable_var(self, reachable_vars, total_fixed):
         """Fix the best reachable variable to 1, others to 0. Returns the variable fixed to 1."""
         if not reachable_vars:
-            print("  WARNING: No reachable variables!")
+            self.logger.minimal("  WARNING: No reachable variables!")
             return None
         
         if len(reachable_vars) == 1:
@@ -733,7 +744,7 @@ class BaseQUBO(ABC):
             total_fixed[var_idx] = 1
             self.Q, _, log = self.reduce_qubo({var_idx: 1})
             self.reduction_log.extend(log)
-            print(f"  Fixed {var_idx} to 1 (only reachable)")
+            self.logger.debug(f"  Fixed {var_idx} to 1 (only reachable)")
             return var_idx
         
         # Multiple reachable - use min coefficient
@@ -749,10 +760,10 @@ class BaseQUBO(ABC):
                     if coeff == min_coeff:
                         fix_dict[var_idx] = 1
                         fixed_var = var_idx
-                        print(f"  Fixed {var_idx} to 1 (min coeff)")
+                        self.logger.debug(f"  Fixed {var_idx} to 1 (min coeff)")
                     else:
                         fix_dict[var_idx] = 0
-                        print(f"  Fixed {var_idx} to 0 (higher coeff)")
+                        self.logger.debug(f"  Fixed {var_idx} to 0 (higher coeff)")
                 
                 total_fixed.update(fix_dict)
                 self.Q, _, log = self.reduce_qubo(fix_dict)

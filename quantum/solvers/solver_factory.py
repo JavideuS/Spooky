@@ -156,7 +156,43 @@ class DynamicSolver:
             Solution dictionary
         """
         return self.solver.solve_qubo(builder)
+
+    def solve_qubo_smart(self, builder, optimization=False):
+        """
+        Solve QUBO using the current solver.
+        
+        Args:
+            builder: QUBOBuilder instance
+            
+        Returns:
+            Solution dictionary
+        """
+        return self.solver.solve_qubo_smart(builder, optimization)
     
+    def get_robot_paths(self, path):
+        """
+        Get individual paths for each robot using the current solver.
+        
+        Args:
+            path: List of ((i, j, t), robot_num) tuples
+            
+        Returns:
+            Dictionary mapping robot_num to list of (i, j, t) tuples
+        """
+        return self.solver.get_robot_paths(path)
+
+    def get_combined_path(self, path):
+        """
+        Get a combined path with all robots together using the current solver.
+        
+        Args:
+            path: List of ((i, j, t), robot_num) tuples
+            
+        Returns:
+            List of (i, j, t) tuples sorted by time
+        """
+        return self.solver.get_combined_path(path)
+
     def decode_path(self, sample, problem, t_offset=0):
         """
         Decode path using the current solver.

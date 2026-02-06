@@ -1,0 +1,16 @@
+map:
+  name: obs3x3_standard
+  path: obs3x3_standard.h5
+  grid:
+    M: 3
+    N: 3
+    obstacles: [[1, 1]]  # Static obstacles (rarely changes)
+
+
+
+# Planning problems (multiple per file)
+problems:
+  baseline:
+    start: [2, 0]
+    goal: [0, 2]
+    time_limit: null
