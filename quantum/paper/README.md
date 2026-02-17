@@ -1,16 +1,20 @@
 # Paper Visualization Tools
 
-[!IMPORTANT]  
-**Status:** This paper is currently **under submission**. The content, results, and implementation details are subject to change.  
+[![arXiv](https://img.shields.io/badge/arXiv-2602.14799-b31b1b.svg)](https://arxiv.org/abs/2602.14799)
 
-**Citation Placeholder:**  
+**Paper:** [Scalable Multi-Robot Path Planning via Quadratic Unconstrained Binary Optimization](https://arxiv.org/abs/2602.14799)
+
+**Citation:**
+
 ```bibtex
-@unpublished{quantum_nav_2026,
-  title  = {Scalable Multi-Robot Path Planning via Quadratic
-Unconstrained Binary Optimization},
-  author = {González Villasmil, Javier},
-  note   = {Under submission},
-  year   = {2026}
+@misc{gonzalezvillasmil2026scalablemultirobotpathplanning,
+      title={Scalable Multi-Robot Path Planning via Quadratic Unconstrained Binary Optimization},
+      author={Javier González Villasmil et al.},
+      year={2026},
+      eprint={2602.14799},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2602.14799},
 }
 ```
 
@@ -26,7 +30,7 @@ This directory contains tools for generating publication-quality plots comparing
 
 ### Generate plots from a benchmark result:
 
-```bash
+````bash
 # Basic usage - quantum paths only
 python paper/generate_plots.py --benchmark results/benchmarks/benchmark_20260201.json
 
@@ -57,24 +61,28 @@ python generate_plots.py --benchmark results/benchmarks/multi_robot.json --compa
 
 # Use Dijkstra for single robot
 python generate_plots.py --benchmark results/benchmarks/single_robot.json --compare-classical --algorithm dijkstra
-```
+````
 
-# Use A* instead of Dijkstra
+# Use A\* instead of Dijkstra
+
 python paper/generate_plots.py --benchmark results/benchmarks/benchmark_20260201.json --compare-classical --algorithm astar
 
 # Export in multiple formats
+
 python paper/generate_plots.py --benchmark results/benchmarks/benchmark_20260201.json --formats png pdf svg
 
 # Specify custom output directory
+
 python paper/generate_plots.py --benchmark results/benchmarks/benchmark_20260201.json --output my_figures/
-```
+
+````
 
 ### Generate scalability analysis from multiple benchmarks:
 
 ```bash
 # Analyze scalability across multiple benchmark files
 python paper/generate_plots.py --scalability "results/benchmarks/benchmark_*.json" --output paper_figures/
-```
+````
 
 ## Using the API Directly
 
@@ -102,9 +110,9 @@ classical_paths = run_classical_solver(problem, algorithm='dijkstra')
 
 # Generate comparison plot
 plot_path_comparison(
-    quantum_paths, 
-    classical_paths, 
-    problem, 
+    quantum_paths,
+    classical_paths,
+    problem,
     'figures/path_comparison.png'
 )
 
@@ -130,12 +138,15 @@ plot_multi_robot_paths(
 ## Available Plot Types
 
 ### 1. Path Comparison
+
 Side-by-side visualization of classical vs quantum paths on the same grid.
 
 **Function:** `plot_path_comparison(quantum_paths, classical_paths, problem, output_path)`
 
 ### 2. Performance Metrics
+
 Bar charts comparing:
+
 - Execution time
 - Total path length
 - Optimality gap
@@ -143,11 +154,13 @@ Bar charts comparing:
 **Function:** `plot_performance_metrics(benchmark_results, classical_results, output_path)`
 
 ### 3. Multi-Robot Paths
+
 Visualization of all robot paths on a single grid, with optional timestep filtering.
 
 **Function:** `plot_multi_robot_paths(robot_paths, problem, output_path, timestep=None)`
 
 ### 4. Scalability Analysis
+
 Dual-axis plot showing how execution time and qubit count scale with number of robots.
 
 **Function:** `plot_scalability_analysis(results_list, output_path)`
@@ -173,6 +186,7 @@ plot_path_comparison(quantum_paths, classical_paths, runner.problem, 'comparison
 ## Output Formats
 
 Supported formats:
+
 - **PNG** - Default, good for web and presentations
 - **PDF** - Vector format, ideal for LaTeX papers
 - **SVG** - Vector format, editable in Inkscape/Illustrator
@@ -184,7 +198,7 @@ All plots are generated at 300 DPI for publication quality.
 Two classical algorithms are supported:
 
 - **Dijkstra** - Optimal shortest path, no heuristic
-- **A*** - Optimal shortest path with Manhattan distance heuristic (faster)
+- **A\*** - Optimal shortest path with Manhattan distance heuristic (faster)
 
 Both algorithms use NetworkX and guarantee optimal solutions for comparison.
 

@@ -2,6 +2,8 @@
 
 The `quantum` package is the heart of the Quantum Navigation project. It implements a hybrid quantum-classical approach to multi-robot path planning, utilizing QUBO (Quadratic Unconstrained Binary Optimization) formulations to solve complex navigation tasks.
 
+For theoretical background and formulation details, please refer to our paper: [**Scalable Multi-Robot Path Planning via Quadratic Unconstrained Binary Optimization**](https://arxiv.org/abs/2602.14799).
+
 ## Package Structure
 
 - **`builder/`**: Constructs the mathematical models (QUBOs) from problem definitions. Contains logic for grid and graph-based environments.
@@ -13,11 +15,13 @@ The `quantum` package is the heart of the Quantum Navigation project. It impleme
 ## Core Modules
 
 ### Problem Formulation
+
 - **`pathFormulation.py`**: Defines the mathematical formulation of the pathfinding problem. It translates high-level constraints (start, goal, obstacles) into the logic needed by the builders.
 - **`map.py`**: Handles the internal representation of the environment, including grid data, obstacles, terrain costs, and graph topology.
 - **`robotConfiguration.py`**: Manages the state and parameters of individual robots within the swarm.
 
 ### Visualization
+
 - **`visualizer.py`**: Tools for visualizing the navigation process, including:
   - 2D grid maps with paths.
   - Energy landscapes of the quantum solution.
@@ -35,6 +39,7 @@ python qubo.py
 ```
 
 **Tip**: Control console output verbosity by setting `verbose.level` in `config/config.yaml`:
+
 - `0` = Silent (errors only)
 - `1` = Minimal (essential info)
 - `2` = Standard (default)

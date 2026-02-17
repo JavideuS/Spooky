@@ -1,5 +1,7 @@
 # Spooky - Quantum Multi-Robot Path Planning
 
+[![arXiv](https://img.shields.io/badge/arXiv-2602.14799-b31b1b.svg)](https://arxiv.org/abs/2602.14799)
+
 > **⚠️ Alpha Release**: This project is under active development and is being prepared for academic publication. APIs and features may change.
 
 A hybrid quantum-classical framework for multi-robot path planning using QUBO (Quadratic Unconstrained Binary Optimization) formulations. Spooky leverages quantum annealing and gate-based quantum algorithms to solve complex navigation problems in both grid and graph environments.
@@ -211,7 +213,23 @@ This project uses:
 
 ## 📖 Citation
 
-If you use this software in your research, please cite our upcoming paper. Citation details will be updated here upon publication.
+If you use this software in your research, please cite the paper:
+
+**Scalable Multi-Robot Path Planning via Quadratic Unconstrained Binary Optimization**  
+_Javier González Villasmil, et al._  
+arXiv preprint arXiv:2602.14799, 2026.
+
+```bibtex
+@misc{gonzalezvillasmil2026scalablemultirobotpathplanning,
+      title={Scalable Multi-Robot Path Planning via Quadratic Unconstrained Binary Optimization},
+      author={Javier González Villasmil et al.},
+      year={2026},
+      eprint={2602.14799},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2602.14799},
+}
+```
 
 ---
 
