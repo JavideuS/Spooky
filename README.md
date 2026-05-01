@@ -81,7 +81,27 @@ pip install -e ".[all]"
 
 > **Note**: Comprehensive usage examples and tutorials are currently being developed. The following demonstrates basic usage patterns.
 
-### Basic Single-Robot Navigation
+### Command-Line Interface (`qubo_cli.py`)
+
+The easiest way to run the solver is using the new CLI. Navigate to the `quantum` directory and use the following commands:
+
+```bash
+cd quantum/
+
+# DWave
+python3 qubo_cli.py --map maps/synthetic/10x10/obs10x10_hard --problem four_robots
+
+# Pennylane
+python3 qubo_cli.py --map maps/synthetic/10x10/no_obs10x10 --problem two_robots --var-limit 605 --solver pennylane --benchmark --num-runs 1
+
+# Qiskit
+python3 qubo_cli.py --map maps/synthetic/10x10/no_obs10x10 --problem two_robots --var-limit 605 --solver qiskit_remote --benchmark --num-runs 1 --verbose 3
+
+# Easier maps
+python3 qubo_cli.py --map maps/synthetic/5x5/obs5x5_hard --problem hard --var-limit 605 --benchmark --num-runs 1
+```
+
+### Basic Single-Robot Navigation (Python Script)
 
 ```python
 from quantum.pathFormulation import PathfindingProblem

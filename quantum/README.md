@@ -29,7 +29,23 @@ For theoretical background and formulation details, please refer to our paper: [
 
 ## Getting Started
 
-To run a navigation task or benchmark, the primary entry point is `qubo.py`. You can modify this script to change scenarios, maps, and solver configurations.
+To run a navigation task or benchmark, you can use the command-line interface `qubo_cli.py` for flexibility, or the `qubo.py` script for hands-on code modification.
+
+### Using the CLI (`qubo_cli.py`)
+
+The CLI allows you to specify maps, problems, solvers, and run benchmarks directly from the terminal:
+
+```bash
+# DWave example
+python qubo_cli.py --map maps/synthetic/10x10/obs10x10_hard --problem four_robots
+
+# Pennylane example
+python qubo_cli.py --map maps/synthetic/10x10/no_obs10x10 --problem two_robots --var-limit 605 --solver pennylane --benchmark --num-runs 1
+```
+
+Run `python qubo_cli.py --help` to see all available options.
+
+### Using the Script (`qubo.py`)
 
 1. **Configure**: Edit `config/config.yaml` to set your map and solver preferences.
 2. **Run**: Execute the main script.
@@ -38,7 +54,7 @@ To run a navigation task or benchmark, the primary entry point is `qubo.py`. You
 python qubo.py
 ```
 
-**Tip**: Control console output verbosity by setting `verbose.level` in `config/config.yaml`:
+**Tip**: Control console output verbosity by setting `verbose.level` in `config/config.yaml` (or via `--verbose` in the CLI):
 
 - `0` = Silent (errors only)
 - `1` = Minimal (essential info)
