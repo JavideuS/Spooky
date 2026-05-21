@@ -26,15 +26,18 @@ Usage examples:
 
 import argparse
 import sys
+from pathlib import Path
 
 from pennylane import numpy as np
-from solvers import SolverFactory
-from pathFormulation import PathfindingProblem
-import config.parser as config_parser
-from builder import QUBOBuilder, GraphQUBO
-import benchmark.benchmark as bm_module
+from quantum.solvers import SolverFactory
+from quantum.pathFormulation import PathfindingProblem
+import quantum.config.parser as config_parser
+from quantum.builder import QUBOBuilder, GraphQUBO
+import quantum.benchmark.benchmark as bm_module
 from quantum.utils.logger import set_verbose_level, get_logger
 import time
+
+_HERE = Path(__file__).parent  # quantum/
 
 
 # ---------------------------------------------------------------------------
@@ -229,15 +232,15 @@ def build_parser() -> argparse.ArgumentParser:
     misc = parser.add_argument_group("Config & misc")
     misc.add_argument(
         "--config",
-        default="config/config.yaml",
+        default=str(_HERE / "config/config.yaml"),
         metavar="FILE",
-        help="Path to the main YAML config file (default: config/config.yaml)",
+        help="Path to the main YAML config file (default: <package>/config/config.yaml)",
     )
     misc.add_argument(
         "--materials",
-        default="config/materials.yaml",
+        default=str(_HERE / "config/materials.yaml"),
         metavar="FILE",
-        help="Path to the materials YAML file (default: config/materials.yaml)",
+        help="Path to the materials YAML file (default: <package>/config/materials.yaml)",
     )
     misc.add_argument(
         "--verbose", "-v",

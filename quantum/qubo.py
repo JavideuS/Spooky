@@ -1,12 +1,12 @@
 from pennylane import numpy as np
-from solvers import SolverFactory, DynamicSolver
+from quantum.solvers import SolverFactory, DynamicSolver
 
-from pathFormulation import PathfindingProblem
-import config.parser as config_parser
-from builder import QUBOBuilder, GraphQUBO
-import benchmark.benchmark as benchmark
-from config.hdf5parser import load_both_from_hdf5, load_map_from_hdf5, load_graph_from_hdf5
-from robotConfiguration import RobotConfig
+from quantum.pathFormulation import PathfindingProblem
+import quantum.config.parser as config_parser
+from quantum.builder import QUBOBuilder, GraphQUBO
+import quantum.benchmark.benchmark as benchmark
+from quantum.config.hdf5parser import load_both_from_hdf5, load_map_from_hdf5, load_graph_from_hdf5
+from quantum.robotConfiguration import RobotConfig
 import pennylane as qml
 from quantum.utils.logger import set_verbose_level, get_logger
 

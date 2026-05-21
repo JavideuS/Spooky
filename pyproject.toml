@@ -80,6 +80,9 @@ Homepage = "https://github.com/JavideuS/Spooky"
 Repository = "https://github.com/JavideuS/Spooky"
 Issues = "https://github.com/JavideuS/Spooky/issues"
 
+[project.scripts]
+spooky-solve = "quantum.qubo_cli:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["quantum*"]

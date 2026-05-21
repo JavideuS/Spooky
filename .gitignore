@@ -38,6 +38,8 @@ htmlcov/
 
 # Project-specific
 *prueba
+quantum/images/ibm_q/
+quantum/paper/paper_figures/
 
 # Data files (exclude .h5 except maps)
 *.h5
@@ -66,3 +68,8 @@ ros2_ws/log/
 *.pyo
 *.pyd
 .Python
+
+grove
+
+.project.yaml
+CLAUDE.md

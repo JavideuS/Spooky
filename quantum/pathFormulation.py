@@ -1,6 +1,6 @@
-import map
+import quantum.map as map
 import numpy as np
-from robotConfiguration import RobotConfig
+from quantum.robotConfiguration import RobotConfig
 from quantum.utils.logger import get_logger
 
 
@@ -99,8 +99,8 @@ class PathfindingProblem:
         Returns:
             PathfindingProblem: Unified problem with both grid and graph representations
         """
-        from config.hdf5parser import load_both_from_hdf5
-        
+        from quantum.config.hdf5parser import load_both_from_hdf5
+
         # Load both data types
         data = load_both_from_hdf5(h5_source)
         
@@ -165,7 +165,7 @@ class PathfindingProblem:
             ...     problem_name="two_robots"
             ... )
         """
-        import config.parser as config_parser
+        import quantum.config.parser as config_parser
         from pathlib import Path
         
         # Normalize path (remove extension if present)
@@ -209,24 +209,22 @@ class PathfindingProblem:
                 robots.append(robot)
             
             # Load unified data (grid and graph)
-            from config.hdf5parser import load_both_from_hdf5
+            from quantum.config.hdf5parser import load_both_from_hdf5
             data = load_both_from_hdf5(h5_path)
             problem_full_name = f"{Path(base_path).stem}_{problem_name}"
             
             # Create grid if available
             grid = None
             if data['has_map'] and data['map_data']:
-                import map
                 grid = map.Grid.from_hdf5_data(
                     data['map_data'],
                     materials_data=materials_data,
                     name=problem_full_name
                 )
-            
+
             # Create graph if available
             graph = None
             if data['has_graph'] and data['graph_data']:
-                import map
                 graph = map.Graph.from_hdf5_data(
                     data['graph_data'],
                     name=problem_full_name
