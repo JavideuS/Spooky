@@ -20,7 +20,7 @@ A hybrid quantum-classical framework for multi-robot path planning using QUBO (Q
 
 ```
 quantum_nav/
-├── quantum/              # Core quantum navigation package
+├── quantum/              # Core quantum solver package
 │   ├── builder/         # QUBO formulation builders (grid & graph)
 │   ├── solvers/         # Quantum and classical solver interfaces
 │   ├── config/          # Configuration management and parsers
@@ -28,11 +28,8 @@ quantum_nav/
 │   ├── utils/           # Utility functions for path handling
 │   ├── map.py           # Environment representation (Grid/Graph)
 │   ├── pathFormulation.py  # Problem formulation
-│   └── visualizer.py    # Visualization tools
-│   └── qubo.py          # Main file to run the quantum navigation
-├── ros2_ws/             # ROS2 integration (experimental)
-├── fastapi_app/         # FastAPI server interface (experimental)
-└── docs/                # Additional documentation
+│   └── qubo.py          # Reference script for experiments
+└── fastapi_app/         # FastAPI server for remote solving
 ```
 
 ## 🚀 Installation
@@ -81,24 +78,19 @@ pip install -e ".[all]"
 
 > **Note**: Comprehensive usage examples and tutorials are currently being developed. The following demonstrates basic usage patterns.
 
-### Command-Line Interface (`qubo_cli.py`)
+### Command-Line Interface
 
-The easiest way to run the solver is using the new CLI. Navigate to the `quantum` directory and use the following commands:
+After installation, the `spooky-solve` command is available from anywhere:
 
 ```bash
-cd quantum/
+# D-Wave
+spooky-solve --map quantum/maps/synthetic/10x10/obs10x10_hard --problem four_robots
 
-# DWave
-python3 qubo_cli.py --map maps/synthetic/10x10/obs10x10_hard --problem four_robots
+# PennyLane (GPU)
+spooky-solve --map quantum/maps/synthetic/5x5/obs5x5_hard --problem hard --solver pennylane --device lightning.gpu --benchmark --num-runs 5
 
-# Pennylane
-python3 qubo_cli.py --map maps/synthetic/10x10/no_obs10x10 --problem two_robots --var-limit 605 --solver pennylane --benchmark --num-runs 1
-
-# Qiskit
-python3 qubo_cli.py --map maps/synthetic/10x10/no_obs10x10 --problem two_robots --var-limit 605 --solver qiskit_remote --benchmark --num-runs 1 --verbose 3
-
-# Easier maps
-python3 qubo_cli.py --map maps/synthetic/5x5/obs5x5_hard --problem hard --var-limit 605 --benchmark --num-runs 1
+# Qiskit (IBM Quantum hardware)
+spooky-solve --map quantum/maps/synthetic/10x10/no_obs10x10 --problem two_robots --solver qiskit_remote --verbose 3
 ```
 
 ### Basic Single-Robot Navigation (Python Script)
@@ -190,11 +182,10 @@ See [`quantum/benchmark/README.md`](quantum/benchmark/README.md) for benchmarkin
 
 ### In Development
 
-- 🚧 Usage examples and tutorials
 - 🚧 FastAPI server for remote solving
-- 🚧 ROS2 integration for real robot deployment
-- 🚧 Enhanced visualization tools
-- 🚧 Academic paper and formal documentation
+- 🚧 Improved numerical stability in preprocessing
+- 🚧 Edge collision handling in QUBO formulation
+- 🚧 Automatic variable limit tuning
 
 ### Known Limitations
 
@@ -202,12 +193,23 @@ See [`quantum/benchmark/README.md`](quantum/benchmark/README.md) for benchmarkin
 - Performance tuning for specific problem types ongoing
 - Documentation and examples are incomplete
 
-## 📚 Documentation
+## 🔌 Integration
 
-- [`quantum/README.md`](quantum/README.md) - Core package overview
-- [`quantum/builder/README.md`](quantum/builder/README.md) - QUBO builder documentation
-- [`quantum/solvers/README.md`](quantum/solvers/README.md) - Solver interfaces
-- [`docs/`](docs/) - Additional technical documentation
+Spooky is designed as a standalone planner. It can be used in two ways:
+
+**As a Python library:**
+```python
+from quantum.pathFormulation import PathfindingProblem
+from quantum.builder import QUBOBuilder
+from quantum.solvers import SolverFactory
+```
+
+**Via FastAPI** (start the server in `fastapi_app/`):
+```
+POST /solve  →  { map, robots, solver_config }  →  { paths }
+```
+
+Robot framework integration (ROS2, DiMOS) is handled by [argOS](https://github.com/JavideuS/argOS), which uses Spooky as a planning backend.
 
 ## 🤝 Contributing
 
