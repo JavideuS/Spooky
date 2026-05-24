@@ -116,7 +116,7 @@ class BaseQUBO(ABC):
         """
         Estimate max window size using problem dimensions if available.
         Subclasses relying on non-grid encodings can override this.
-        
+
         This method:
         1. Only counts active robots (those that haven't reached their goal)
         2. Respects per-robot window limits if specified
@@ -124,48 +124,91 @@ class BaseQUBO(ABC):
            - Variable limit constraint
            - Most restrictive per-robot limit for active robots
            - Remaining time in problem
+        4. Raises ValueError if var_limit is too small for a 2-step window,
+           which would cause the solve loop to never terminate.
+
+        For grid problems, per-timestep variable count uses BFS-bounded
+        reachability: at step s from the robot's current position, at most
+        connectivity^s cells are reachable, capped at the number of free
+        (non-obstacle) cells. This is much tighter than the flat M×N estimate
+        and correctly reflects how reachable space grows from a known start.
         """
-        if self.problem.get_format_type() == "graph":
-            vars_per_time = self.num_nodes
-        elif self.problem.get_format_type() == "grid":
+        fmt = self.problem.get_format_type()
+
+        if fmt == "graph":
+            use_bfs = False
+            flat_vars = self.num_nodes
+        else:  # grid
             M = self.problem.grid.M
             N = self.problem.grid.N
-            vars_per_time = M * N
+            connectivity = len(self.problem.grid.moves)  # 4 for standard 4-connected grid
+            max_free_cells = M * N - len(self.problem.grid.obstacles)
+            use_bfs = True
 
         robot_active_timeline = self.problem.get_robot_per_timestep()
-        
-        # Find the most restrictive per-robot limit among active robots
+
         min_robot_limit = float('inf')
         for robot_id, limit in self.robot_window_limits.items():
             if self.problem.robots[robot_id].active:
                 min_robot_limit = min(min_robot_limit, limit)
-        
+
         needed_vars = 0
+        result = None
+        bfs_flooded = False  # once connectivity^step >= max_free_cells, stay flat
+
         for t in range(self.current_T, self.total_t):
-            # Only count active robots
-            active_robots_at_t = [r for r in robot_active_timeline.get(t, []) 
+            step = t - self.current_T
+
+            if use_bfs:
+                if not bfs_flooded:
+                    bfs_raw = connectivity ** step
+                    if bfs_raw >= max_free_cells:
+                        bfs_raw = max_free_cells
+                        bfs_flooded = True
+                    vars_at_step = bfs_raw
+                else:
+                    vars_at_step = max_free_cells
+            else:
+                vars_at_step = flat_vars
+
+            active_robots_at_t = [r for r in robot_active_timeline.get(t, [])
                                   if self.problem.robots[r].active]
-            num_active_robots = len(active_robots_at_t)
-            needed_vars += num_active_robots * vars_per_time
-            
+            needed_vars += len(active_robots_at_t) * vars_at_step
+
             window_size = t - self.current_T
-            
-            # Check if we've hit the variable limit
+
             if needed_vars > self.var_limit:
-                return window_size
-            
-            # Check if we've hit a per-robot limit
+                result = window_size
+                break
+
             if window_size >= min_robot_limit:
-                return min_robot_limit
-        
-        # We need to substract initial offset from current_T
-        # The +1 is because range is exclusive at the end (else it would keep infinite loop)
-        max_possible = self.total_t - self.current_T + 1
-        
-        # Return the minimum of max_possible and any robot limits
-        if min_robot_limit != float('inf'):
-            return min(max_possible, min_robot_limit)
-        return max_possible
+                result = min_robot_limit
+                break
+
+        if result is None:
+            # +1 so the final window advances current_T past total_t and exits the loop
+            max_possible = self.total_t - self.current_T + 1
+            result = min(max_possible, min_robot_limit) if min_robot_limit != float('inf') else max_possible
+
+        # A size-1 window advances current_T by 0 (current_T += t_max - 1), causing
+        # an infinite loop. Only check when there are timesteps left — this method is
+        # also called after the final window (current_T == total_t), where result=1 is
+        # expected and the outer solve loop exits naturally on the next iteration check.
+        if result < 2 and (self.total_t - self.current_T) > 0:
+            active_count = sum(1 for r in self.problem.robots.values() if r.active)
+            if use_bfs:
+                # Minimum 2-step window: step-0 = 1 cell, step-1 = connectivity cells
+                min_needed = active_count * (1 + min(connectivity, max_free_cells))
+            else:
+                min_needed = active_count * 2 * flat_vars
+            raise ValueError(
+                f"var_limit={self.var_limit} is too small to solve this problem: "
+                f"a minimum 2-step window requires ~{min_needed} variables "
+                f"({active_count} active robot(s), step-0=1 + step-1={min(connectivity, max_free_cells) if use_bfs else flat_vars} cells). "
+                f"Increase var_limit to at least {min_needed}."
+            )
+
+        return result
 
     def get_active_robot_in_window(self):
         """

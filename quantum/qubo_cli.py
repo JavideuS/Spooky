@@ -85,10 +85,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--window-limit",
         default=[],
         nargs="+",
-        metavar="ROBOT=N",
+        metavar="N or ROBOT=N",
         help=(
-            "Per-robot window limits as 'robot_id=N' pairs, e.g. --window-limit robot_0=5 robot_1=3. "
-            "See qubo.py for a single-robot example."
+            "Window step limit. Pass a single integer to cap all robots globally "
+            "(e.g. --window-limit 6), or 'robot_id=N' pairs for per-robot limits "
+            "(e.g. --window-limit robot_0=5 robot_1=3)."
         ),
     )
     prob.add_argument(
@@ -261,13 +262,33 @@ def build_parser() -> argparse.ArgumentParser:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def parse_window_limits(raw: list[str]) -> dict:
-    """Parse ['robot_0=5', 'robot_1=3'] → {'robot_0': 5, 'robot_1': 3}."""
+def parse_window_limits(raw: list[str], robot_ids) -> dict:
+    """
+    Parse window limit entries into {robot_id: max_steps}.
+
+    Accepts either:
+      - A single integer to cap all robots: ['6']
+      - Per-robot pairs: ['robot_0=5', 'robot_1=3']
+    """
+    if not raw:
+        return {}
+
+    if len(raw) == 1 and "=" not in raw[0]:
+        try:
+            n = int(raw[0])
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"Invalid --window-limit value '{raw[0]}'. "
+                f"Expected an integer or 'robot_id=N' pairs."
+            )
+        return {robot_id: n for robot_id in robot_ids}
+
     limits = {}
     for entry in raw:
         if "=" not in entry:
             raise argparse.ArgumentTypeError(
-                f"Invalid --window-limit format '{entry}'. Expected 'robot_id=N'."
+                f"Invalid --window-limit format '{entry}'. "
+                f"Use a single integer for a global limit or 'robot_id=N' pairs."
             )
         robot_id, n = entry.split("=", 1)
         limits[robot_id.strip()] = int(n.strip())
@@ -427,7 +448,7 @@ def main():
     logger.minimal(f"Using penalty set: {args.penalty_set} | effective: {penalties}")
 
     # -- Window limits -------------------------------------------------------
-    window_limits = parse_window_limits(args.window_limit)
+    window_limits = parse_window_limits(args.window_limit, problem.robots.keys())
 
     # -- Builder -------------------------------------------------------------
     builder_kwargs = {
