@@ -29,11 +29,13 @@ class BaseQUBO(ABC):
         distance_scaling=None,
         robot_window_limits=None,
         verbose_level=2,
+        log_reductions=True,
     ):
         self.problem = problem
         self.penalties = penalties
         self.name = name
         self.var_limit = var_limit
+        self.log_reductions = log_reductions
         # Per-robot window limits: dict {robot_id: max_steps}
         # If a robot is not in this dict, no specific limit is applied
         self.robot_window_limits = robot_window_limits or {}
@@ -51,6 +53,8 @@ class BaseQUBO(ABC):
         self.verbose_level = verbose_level
         # Initialize logger
         self.logger = get_logger()  # Use global logger level
+        # Populated by get_fixed_variables() before build(); keyed by (robot_id, t_window_relative)
+        self._active_cells = None
 
     # Subclasses must implement build to populate self.Q
     @abstractmethod
@@ -277,6 +281,8 @@ class BaseQUBO(ABC):
                 self.logger.standard(f"Window size increased from {self.t_max} to {new_t_max} after robots became inactive")
                 self.t_max = new_t_max
 
+            # Clear stale BFS data — solve_qubo_smart will repopulate before next build
+            self._active_cells = None
             self.build()
 
     def reset_problem(self):
@@ -441,20 +447,16 @@ class BaseQUBO(ABC):
 
         return restored_Q, removed_const
 
-    def reduce_diag_fixed_vars_iterative(self, initial_reduction_log=None):
+    def reduce_diag_fixed_vars_iterative(self):
         """
         Iteratively apply diag_fixed_vars until no new fixed variables are found.
-
-        Args:
-            initial_reduction_log: Optional reduction log from previous reductions
-                                  (e.g., from get_fixed_variables BFS fixes)
+        Uses self.log_reductions to control whether reductions are logged
+        (needed for BFS recalculation within diag when a violation is detected).
 
         Returns:
             dict: {variable_index: fixed_value} where fixed_value is 0 or 1
         """
-        # Initialize reduction log for this reduction session
-        # Include any initial reductions (e.g., from BFS in get_fixed_variables)
-        self.reduction_log = initial_reduction_log if initial_reduction_log is not None else []
+        self.reduction_log = []
 
         total_fixed = {}
         while True:
@@ -462,7 +464,7 @@ class BaseQUBO(ABC):
             if not new_fixed:
                 break
             total_fixed.update(new_fixed)
-            self.Q, _, log = self.reduce_qubo(new_fixed)
+            self.Q, _, log = self.reduce_qubo(new_fixed, log_reductions=self.log_reductions)
             self.reduction_log.extend(log)
 
         # Clear reduction log after we're done to free memory
@@ -605,7 +607,7 @@ class BaseQUBO(ABC):
                 # Apply normal fixes
                 if fix_result['fixes']:
                     total_fixed.update(fix_result['fixes'])
-                    self.Q, _, log = self.reduce_qubo(fix_result['fixes'])
+                    self.Q, _, log = self.reduce_qubo(fix_result['fixes'], log_reductions=self.log_reductions)
                     self.reduction_log.extend(log)
                     
                     # Update prev_fixed_pos to the variable fixed to 1 (if any)
@@ -738,7 +740,7 @@ class BaseQUBO(ABC):
                     if var_pos not in reachable_positions:
                         if var_idx not in total_fixed or total_fixed[var_idx] != 0:
                             total_fixed[var_idx] = 0
-                            self.Q, _, log = self.reduce_qubo({var_idx: 0})
+                            self.Q, _, log = self.reduce_qubo({var_idx: 0}, log_reductions=self.log_reductions)
                             self.reduction_log.extend(log)
                             self.logger.debug(f"  Fixed {var_idx} to 0 (unreachable)")
             
@@ -785,7 +787,7 @@ class BaseQUBO(ABC):
         if len(reachable_vars) == 1:
             var_idx = reachable_vars[0][0]
             total_fixed[var_idx] = 1
-            self.Q, _, log = self.reduce_qubo({var_idx: 1})
+            self.Q, _, log = self.reduce_qubo({var_idx: 1}, log_reductions=self.log_reductions)
             self.reduction_log.extend(log)
             self.logger.debug(f"  Fixed {var_idx} to 1 (only reachable)")
             return var_idx
@@ -809,7 +811,7 @@ class BaseQUBO(ABC):
                         self.logger.debug(f"  Fixed {var_idx} to 0 (higher coeff)")
                 
                 total_fixed.update(fix_dict)
-                self.Q, _, log = self.reduce_qubo(fix_dict)
+                self.Q, _, log = self.reduce_qubo(fix_dict, log_reductions=self.log_reductions)
                 self.reduction_log.extend(log)
                 return fixed_var
         

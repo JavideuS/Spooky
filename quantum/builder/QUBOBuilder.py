@@ -27,6 +27,7 @@ class GridQUBOBuilder(BaseQUBO):
         distance_scaling="enhanced_linear",
         robot_window_limits=None,
         verbose_level=2,
+        log_reductions=True,
     ):
         super().__init__(
             problem,
@@ -37,6 +38,7 @@ class GridQUBOBuilder(BaseQUBO):
             distance_scaling=distance_scaling,
             robot_window_limits=robot_window_limits,
             verbose_level=verbose_level,
+            log_reductions=log_reductions,
         )
         self.initial_num_vars = (
             problem.grid.M * problem.grid.N * problem.num_robots * problem.T
@@ -46,7 +48,18 @@ class GridQUBOBuilder(BaseQUBO):
             self.problem.grid.N,
             self.problem.grid.obstacles,
         )
+        M, N = problem.grid.M, problem.grid.N
+        self._all_grid_cells = [(i, j) for i in range(M) for j in range(N)]
         self.logger.standard("Window max steps:", self.max_window_size())
+
+    def _cells(self, robot_id, t):
+        """Return reachable cells for robot at window-relative timestep t.
+
+        Falls back to the full grid when _active_cells has not been populated.
+        """
+        if self._active_cells is not None:
+            return self._active_cells.get((robot_id, t), [])
+        return self._all_grid_cells
 
     def calculate_manhattan_penalty(self, raw_dist, K_goal_approx, time_factor):
         """
@@ -120,11 +133,9 @@ class GridQUBOBuilder(BaseQUBO):
                 end = self.t_max
 
             for t in range(start, end):
-                # print(t)
                 indices = [
                     i * N + j + (M * N) * t + robot_offset
-                    for i in range(M)
-                    for j in range(N)
+                    for i, j in self._cells(robot_id, t)
                 ]
 
                 for n in indices:
@@ -157,15 +168,17 @@ class GridQUBOBuilder(BaseQUBO):
                 end = self.t_max
 
             for t in range(start, end - 1):
-                for i in range(M):
-                    for j in range(N):
-                        # This a consistent linear indexing for the grid
-                        n = i * N + j + M * N * t + robot_offset
-                        self.Q[(n, n)] = self.Q.get((n, n), 0) + K_adj
+                next_active = set(self._cells(robot_id, t + 1))
+                for i, j in self._cells(robot_id, t):
+                    # This a consistent linear indexing for the grid
+                    n = i * N + j + M * N * t + robot_offset
+                    self.Q[(n, n)] = self.Q.get((n, n), 0) + K_adj
 
-                        for k, l in adjacency[(i, j)]:
-                            m = k * N + l + M * N * (t + 1) + robot_offset
-                            self.Q[(n, m)] = self.Q.get((n, m), 0) - K_adj
+                    for k, l in adjacency[(i, j)]:
+                        if self._active_cells is not None and (k, l) not in next_active:
+                            continue
+                        m = k * N + l + M * N * (t + 1) + robot_offset
+                        self.Q[(n, m)] = self.Q.get((n, m), 0) - K_adj
 
     def apply_adjacency_penalty(self):
         """
@@ -190,22 +203,20 @@ class GridQUBOBuilder(BaseQUBO):
                 end = self.t_max
 
             for t in range(start, end - 1):
-                for i in range(M):
-                    for j in range(N):
-                        n = i * N + j + M * N * t + robot_offset
+                for i, j in self._cells(robot_id, t):
+                    n = i * N + j + M * N * t + robot_offset
 
-                        # Look at all possible positions at next time step
-                        for k in range(M):
-                            for l in range(N):
-                                m = k * N + l + M * N * (t + 1) + robot_offset
+                    # Look at all possible positions at next time step
+                    for k, l in self._cells(robot_id, t + 1):
+                        m = k * N + l + M * N * (t + 1) + robot_offset
 
-                                # Skip self-loop unless explicitly allowed
-                                if k == i and l == j:
-                                    continue
+                        # Skip self-loop unless explicitly allowed
+                        if k == i and l == j:
+                            continue
 
-                                # Only penalize if (k,l) is NOT in adjacency[(i,j)]
-                                if (k, l) not in adjacency[(i, j)]:
-                                    self.Q[(n, m)] = self.Q.get((n, m), 0) + K_adj
+                        # Only penalize if (k,l) is NOT in adjacency[(i,j)]
+                        if (k, l) not in adjacency[(i, j)]:
+                            self.Q[(n, m)] = self.Q.get((n, m), 0) + K_adj
 
     def apply_start_penalty(self):
         """
@@ -254,27 +265,26 @@ class GridQUBOBuilder(BaseQUBO):
 
         for t in range(start + 1, self.t_max):
             time_factor = (1.2) ** (5 * (t - start) / (self.t_max - start))
-            for i in range(M):
-                for j in range(N):
-                    n = i * N + j + M * N * t + robot_offset
+            for i, j in self._cells(robot_id, t):
+                n = i * N + j + M * N * t + robot_offset
 
-                    # Skip obstacle cells entirely - let explicit obstacle
-                    # constraint handle them
-                    if (i, j) in self.problem.grid.obstacles:
-                        continue
+                # Skip obstacle cells entirely - let explicit obstacle
+                # constraint handle them
+                if (i, j) in self.problem.grid.obstacles:
+                    continue
 
-                    # Goal progress (Manhattan, time-weighted)
-                    # Use the configurable Manhattan distance scaling method
-                    raw_dist = self.problem.manhattan_distance((i, j), (e_i, e_j))
-                    K_dis = self.calculate_manhattan_penalty(
-                        raw_dist, K_goal_approx, time_factor
-                    )
+                # Goal progress (Manhattan, time-weighted)
+                # Use the configurable Manhattan distance scaling method
+                raw_dist = self.problem.manhattan_distance((i, j), (e_i, e_j))
+                K_dis = self.calculate_manhattan_penalty(
+                    raw_dist, K_goal_approx, time_factor
+                )
 
-                    # Soft obstacle avoidance using potential field
-                    # (for nearby obstacles)
+                # Soft obstacle avoidance using potential field
+                # (for nearby obstacles)
 
-                    K_obs = K_obs_repel * self.P_obs[i, j]
-                    self.Q[(n, n)] = self.Q.get((n, n), 0.0) - K_dis + K_obs
+                K_obs = K_obs_repel * self.P_obs[i, j]
+                self.Q[(n, n)] = self.Q.get((n, n), 0.0) - K_dis + K_obs
 
     def apply_goal_fix_penalty(self):
         """
@@ -322,6 +332,8 @@ class GridQUBOBuilder(BaseQUBO):
                 # print("hola", robot_id)
                 for t in range(start + 1, end):
                     goal_idx = e_i * N + e_j + M * N * t + robot_offset
+                    if (goal_idx, goal_idx) not in self.Q:
+                        continue  # goal not reachable at this timestep — nothing to bias
                     # Note that since I initially considered all this time factor for single robot starting in t=-
                     # I adjust to keep the same growth by reducing time start to both)
                     time_factor = 1 + ((t - start) / (end - start))
@@ -365,6 +377,9 @@ class GridQUBOBuilder(BaseQUBO):
                 end = self.t_max
 
             for t in range(start, end - 1):  # up to T-2 to reference t+1
+                # Skip if goal is not a reachable cell at this timestep — avoids phantom Q entries
+                if (e_i, e_j) not in self._cells(robot_id, t):
+                    continue
                 g_t = e_i * N + e_j + M * N * t + robot_offset
                 g_t_next = e_i * N + e_j + M * N * (t + 1) + robot_offset
 
@@ -398,26 +413,33 @@ class GridQUBOBuilder(BaseQUBO):
 
             e_i, e_j = robot.goal  # Use robot's own goal
 
-            for i in range(M):
-                for j in range(N):
-                    # Skip goal — allow multiple visits
-                    if i == e_i and j == e_j:
-                        continue
+            # Per-timestep active sets for O(1) membership checks
+            active_sets = {t: set(self._cells(robot_id, t)) for t in range(start, end)}
 
-                    # For all time pairs t1 < t2
-                    for t1 in range(start, end):
-                        g_t = i * N + j + M * N * t1 + robot_offset
-                        for t2 in range(t1 + 1, end):
-                            g_t2 = i * N + j + M * N * t2 + robot_offset
-                            self.Q[(g_t, g_t2)] = self.Q.get((g_t, g_t2), 0) + K_bt
+            all_reachable = set()
+            for t in range(start, end):
+                all_reachable.update(active_sets[t])
+
+            for i, j in all_reachable:
+                # Skip goal — allow multiple visits
+                if i == e_i and j == e_j:
+                    continue
+
+                # Only penalise pairs where the cell is active at both timesteps
+                active_ts = [t for t in range(start, end) if (i, j) in active_sets[t]]
+                for idx1, t1 in enumerate(active_ts):
+                    g_t = i * N + j + M * N * t1 + robot_offset
+                    for t2 in active_ts[idx1 + 1 :]:
+                        g_t2 = i * N + j + M * N * t2 + robot_offset
+                        self.Q[(g_t, g_t2)] = self.Q.get((g_t, g_t2), 0) + K_bt
 
             if robot.active and robot.path:
                 len_sol = len(robot.path)
-                # print("robot path", robot.path)
                 for t in range(start, end):
                     for p_idx, pos in enumerate(robot.path):
-                        # print(p_idx, pos)
                         i, j = pos[:2]
+                        if (i, j) not in active_sets[t]:
+                            continue
                         idx = i * N + j + M * N * t + robot_offset
                         time_factor = (1 + (len_sol - p_idx)) / len_sol
                         self.Q[(idx, idx)] = (
@@ -453,6 +475,8 @@ class GridQUBOBuilder(BaseQUBO):
 
             for t in range(start, min(min_steps + start, end)):
                 goal_idx = e_i * N + e_j + M * N * t + robot_offset
+                if (goal_idx, goal_idx) not in self.Q:
+                    continue  # goal not reachable yet — BFS already enforces this
                 self.Q[(goal_idx, goal_idx)] += K_tp  # Penalty for arriving to soon
 
     def apply_terrain_penalty(self):
@@ -478,12 +502,11 @@ class GridQUBOBuilder(BaseQUBO):
                 end = self.t_max
 
             for t in range(start, end):
-                for i in range(M):
-                    for j in range(N):
-                        material = self.problem.grid.get_terrain_at(i, j)
-                        cost = self.problem.grid.get_material_cost(material)
-                        g_t = i * N + j + M * N * t + robot_offset
-                        self.Q[(g_t, g_t)] += K_ter * cost
+                for i, j in self._cells(robot_id, t):
+                    material = self.problem.grid.get_terrain_at(i, j)
+                    cost = self.problem.grid.get_material_cost(material)
+                    g_t = i * N + j + M * N * t + robot_offset
+                    self.Q[(g_t, g_t)] += K_ter * cost
 
     def apply_elevation_penalty(self):
         """
@@ -510,36 +533,38 @@ class GridQUBOBuilder(BaseQUBO):
                 end = self.t_max
 
             for t in range(start, end - 1):
-                for i in range(M):
-                    for j in range(N):
-                        hi = self.problem.grid.get_elevation_at(i, j)
-                        n = (
-                            i * N + j + M * N * t + robot_offset
-                        )  # linear index for time step t
+                next_active = set(self._cells(robot_id, t + 1))
+                for i, j in self._cells(robot_id, t):
+                    hi = self.problem.grid.get_elevation_at(i, j)
+                    n = (
+                        i * N + j + M * N * t + robot_offset
+                    )  # linear index for time step t
 
-                        for k, l in adjacency[(i, j)]:
-                            hk = self.problem.grid.get_elevation_at(k, l)
-                            delta_h = hk - hi  # positive = uphill
+                    for k, l in adjacency[(i, j)]:
+                        if self._active_cells is not None and (k, l) not in next_active:
+                            continue
+                        hk = self.problem.grid.get_elevation_at(k, l)
+                        delta_h = hk - hi  # positive = uphill
 
-                            m = (
-                                k * N + l + M * N * (t + 1) + robot_offset
-                            )  # next time step index
+                        m = (
+                            k * N + l + M * N * (t + 1) + robot_offset
+                        )  # next time step index
 
-                            if delta_h > 0:
-                                move_cost = K_elev * (
-                                    delta_h**1.8
-                                )  # super-linear for steep climbs
-                            elif delta_h < -0.7:
-                                move_cost = (
-                                    K_elev * 0.7 * abs(delta_h)
-                                )  # still costly if too steep down
-                            else:
-                                move_cost = (
-                                    K_elev * 0.3 * abs(delta_h)
-                                )  # mild descent = easy
+                        if delta_h > 0:
+                            move_cost = K_elev * (
+                                delta_h**1.8
+                            )  # super-linear for steep climbs
+                        elif delta_h < -0.7:
+                            move_cost = (
+                                K_elev * 0.7 * abs(delta_h)
+                            )  # still costly if too steep down
+                        else:
+                            move_cost = (
+                                K_elev * 0.3 * abs(delta_h)
+                            )  # mild descent = easy
 
-                            # Add to QUBO: only if move occurs
-                            self.Q[(n, m)] = self.Q.get((n, m), 0) + move_cost
+                        # Add to QUBO: only if move occurs
+                        self.Q[(n, m)] = self.Q.get((n, m), 0) + move_cost
 
     def apply_obstacle_penalty(self):
         """
@@ -579,27 +604,24 @@ class GridQUBOBuilder(BaseQUBO):
         for t, active_robots in active_robots_per_timestep.items():
             if len(active_robots) < 2:
                 continue  # no collision possible
-            for i in range(M):
-                for j in range(N):
-                    for robot_id1 in active_robots:
-                        for robot_id2 in active_robots:
-                            if robot_nums[robot_id1] >= robot_nums[robot_id2]:
-                                continue
+            t_window = t - self.current_T
+            # Note that if I don't substract current_t it doesn't keep relative window time
+            for robot_id1 in active_robots:
+                for robot_id2 in active_robots:
+                    if robot_nums[robot_id1] >= robot_nums[robot_id2]:
+                        continue
 
-                            robot_offset1 = robot_nums[robot_id1] * (
-                                M * N * self.total_t
-                            )
-                            robot_offset2 = robot_nums[robot_id2] * (
-                                M * N * self.total_t
-                            )
-                            # Note that if I don't substract current_t it doesn't keep relative window time
-                            idx1 = (
-                                i * N + j + M * N * (t - self.current_T) + robot_offset1
-                            )
-                            idx2 = (
-                                i * N + j + M * N * (t - self.current_T) + robot_offset2
-                            )
-                            self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_crash
+                    robot_offset1 = robot_nums[robot_id1] * (M * N * self.total_t)
+                    robot_offset2 = robot_nums[robot_id2] * (M * N * self.total_t)
+
+                    # Only cells both robots can reach — the only place collision is possible
+                    shared_cells = set(self._cells(robot_id1, t_window)) & set(
+                        self._cells(robot_id2, t_window)
+                    )
+                    for i, j in shared_cells:
+                        idx1 = i * N + j + M * N * t_window + robot_offset1
+                        idx2 = i * N + j + M * N * t_window + robot_offset2
+                        self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_crash
 
     def build(self, constraints_to_apply=None):
         if constraints_to_apply is None:
@@ -724,13 +746,14 @@ class GridQUBOBuilder(BaseQUBO):
                         curr_layer.add((ni, nj))
                         visited.add((ni, nj))  # mark as seen globally
 
-            # If no new cells are reachable, you can stop early
-            if not curr_layer:
-                break
-
-            # To make sure goal is always reachable (and not conflict with goal lock)
+            # Always include goal once reachable — robot may stay there indefinitely.
+            # This must come before the empty check so late timesteps get {goal} instead of {}.
             if goal in visited:
                 curr_layer.add(goal)
+
+            # Stop only if goal hasn't been reached yet and no new cells found
+            if not curr_layer:
+                break
 
             reachable[t] = curr_layer
 
@@ -781,13 +804,14 @@ class GridQUBOBuilder(BaseQUBO):
                         curr_layer.add((ni, nj))
                         visited.add((ni, nj))  # mark as seen globally
 
-            # If no new cells are reachable, you can stop early
-            if not curr_layer:
-                break
-
-            # To make sure goal is always reachable (and not conflict with goal lock)
+            # Always include goal once reachable — robot may stay there indefinitely.
+            # Must come before the empty check so late timesteps get {goal} instead of {}.
             if goal in visited:
                 curr_layer.add(goal)
+
+            # Stop only if goal hasn't been reached yet and no new cells found
+            if not curr_layer:
+                break
 
             reachable[t] = curr_layer
 

@@ -99,6 +99,16 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="N",
         help="Variable limit passed to QUBO builders. (default: Grid=1650, Graph=1201)",
     )
+    prob.add_argument(
+        "--no-reduction-log",
+        action="store_true",
+        default=False,
+        help=(
+            "Disable reduction logging during QUBO preprocessing. "
+            "Faster, but prevents BFS-based variable unfixing during diagonal reduction. "
+            "Use to benchmark the overhead of reduction tracking."
+        ),
+    )
 
     # ---- Penalty set -------------------------------------------------------
     pen = parser.add_argument_group("Penalties")
@@ -455,6 +465,7 @@ def main():
         "penalties": penalties,
         "name": args.problem,
         "robot_window_limits": window_limits if window_limits else None,
+        "log_reductions": not args.no_reduction_log,
     }
     if args.var_limit is not None:
         builder_kwargs["var_limit"] = args.var_limit
