@@ -128,20 +128,26 @@ class BaseQUBO(ABC):
            - Variable limit constraint
            - Most restrictive per-robot limit for active robots
            - Remaining time in problem
-        4. Raises ValueError if var_limit is too small for a 2-step window,
-           which would cause the solve loop to never terminate.
+        4. Enforces a minimum result of 2 to prevent stalling (result=1 means
+           current_T never advances). Real feasibility is validated in
+           _prepare_window() using actual reachable cell counts from
+           get_logical_variables(), which is more accurate than any estimate here.
 
-        For grid problems, per-timestep variable count uses BFS-bounded
-        reachability: at step s from the robot's current position, at most
-        connectivity^s cells are reachable, capped at the number of free
-        (non-obstacle) cells. This is much tighter than the flat M×N estimate
-        and correctly reflects how reachable space grows from a known start.
+        Per-timestep variable count uses BFS-bounded reachability: at step s,
+        at most connectivity^s cells are reachable, capped at the total free
+        cells. For graph problems, max_degree is used as connectivity.
+        This is tighter than flat M×N / num_nodes estimates.
         """
         fmt = self.problem.get_format_type()
 
         if fmt == "graph":
-            use_bfs = False
-            flat_vars = self.num_nodes
+            use_bfs = True
+            # Use max degree as connectivity estimate (analogous to grid's 4-connectivity)
+            connectivity = max(
+                (len(self.graph.adjacency.get(n, [])) for n in range(self.num_nodes)),
+                default=1,
+            )
+            max_free_cells = self.num_nodes
         else:  # grid
             M = self.problem.grid.M
             N = self.problem.grid.N
@@ -194,23 +200,11 @@ class BaseQUBO(ABC):
             max_possible = self.total_t - self.current_T + 1
             result = min(max_possible, min_robot_limit) if min_robot_limit != float('inf') else max_possible
 
-        # A size-1 window advances current_T by 0 (current_T += t_max - 1), causing
-        # an infinite loop. Only check when there are timesteps left — this method is
-        # also called after the final window (current_T == total_t), where result=1 is
-        # expected and the outer solve loop exits naturally on the next iteration check.
+        # Enforce minimum 2-step window to avoid current_T stalling.
+        # Real feasibility (var_limit vs actual sparse vars) is validated in
+        # _prepare_window() after get_logical_variables() gives true counts.
         if result < 2 and (self.total_t - self.current_T) > 0:
-            active_count = sum(1 for r in self.problem.robots.values() if r.active)
-            if use_bfs:
-                # Minimum 2-step window: step-0 = 1 cell, step-1 = connectivity cells
-                min_needed = active_count * (1 + min(connectivity, max_free_cells))
-            else:
-                min_needed = active_count * 2 * flat_vars
-            raise ValueError(
-                f"var_limit={self.var_limit} is too small to solve this problem: "
-                f"a minimum 2-step window requires ~{min_needed} variables "
-                f"({active_count} active robot(s), step-0=1 + step-1={min(connectivity, max_free_cells) if use_bfs else flat_vars} cells). "
-                f"Increase var_limit to at least {min_needed}."
-            )
+            result = 2
 
         return result
 

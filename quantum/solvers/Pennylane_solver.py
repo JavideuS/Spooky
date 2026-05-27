@@ -244,57 +244,22 @@ class PennylaneSolver(BaseSolver):
                 self.logger.standard("✅ All robots reached goal or inactive. Stopping solver.")
                 break
 
-            # Ensure QUBO is built for the start of the window
-            # If the user forgot to call builder.build(), we do it here
-            if not builder.Q:
-                self.logger.debug("QUBO has not been built, calling builder.build()")
-                builder.build()
+            fixed_vars, window_stat, is_preprocessed = self._prepare_window(builder)
+            window_stats.append(window_stat)
 
             # Track iteration time for quantum hardware
             if self.dev == "qiskit.remote":
                 iteration_start = time.time()
 
+            if is_preprocessed:
+                self.logger.standard("⚡ Window fully pre-processed, skipping solver")
+                full_sol, invalid_moves = self._handle_iteration_result(
+                    {}, fixed_vars, builder)
+                best_sample.append(full_sol)
+                best_energy.append(0.0)
+                continue
 
             if self.norm_scale != 0:
-                # Get initial variable count BEFORE reduction
-                initial_vars = builder.get_num_wires()
-                
-                fixed_vars = builder.get_fixed_variables()
-                # Don't log initial reduction - only needed for BFS recalc which is rare
-                builder.Q, offset, _ = builder.reduce_qubo(fixed_vars, log_reductions=False)
-                diag_fixed = builder.reduce_diag_fixed_vars_iterative(initial_reduction_log=None)
-                fixed_vars.update(diag_fixed)
-                
-                # Count total reduced variables (BFS fixed + diagonal fixed)
-                vars_reduced = len(fixed_vars)
-                
-                # Get final variable count AFTER reduction
-                final_vars = builder.get_num_wires()
-                reduction_ratio = vars_reduced / initial_vars if initial_vars > 0 else 0
-                
-                # Store per-window stats
-                window_stats.append({
-                    "window": builder.iter,
-                    "initial_variables": initial_vars,
-                    "variables_reduced": vars_reduced,
-                    "final_variables": final_vars,
-                    "reduction_ratio": round(reduction_ratio, 4)
-                })
-                
-                self.logger.standard(
-                    f"Window {builder.iter}: {initial_vars} → {final_vars} vars "
-                    f"(reduced {vars_reduced}, {reduction_ratio:.1%})"
-                )
-
-                # In case the full qubo gets pre-processed
-                if len(builder.Q) == 0:
-                    self.logger.standard("Full QUBO gets pre-processed", builder.current_T)
-                    full_sol, invalid_moves = self._handle_iteration_result(
-                        {}, fixed_vars, builder)
-                    best_sample.append(full_sol)
-                    
-                    continue
-                # print(fixed_vars)
                 builder.Q = self.normalize_qubo(builder.Q, self.norm_scale)
 
             # print("Start position:", builder.problem.start,
@@ -517,9 +482,9 @@ class PennylaneSolver(BaseSolver):
                     # and we want to accept them to move forward
                     builder.update_problem(robot_paths)
                     
-                    correction_count = 0  # Reset for next window
+                    correction_count = 0
+                # else: next loop iteration calls _prepare_window to rebuild from scratch
             else:
-                # Successful window - reset correction counter
                 correction_count = 0
             
             # print(f"Best energy this iteration: {energies[best_idx]}")

@@ -364,6 +364,74 @@ class BaseSolver(ABC):
     
 
 
+    def _prepare_window(self, builder):
+        """
+        Prepare a QUBO window: derive logical variables, build the sparse QUBO,
+        and apply diagonal reduction.
+
+        Returns:
+            (fixed_vars, window_stat, is_fully_preprocessed)
+            - fixed_vars: {flat_idx: 1} merged with any diag-fixed variables
+            - window_stat: dict with initial/final variable counts for this window
+            - is_fully_preprocessed: True when the QUBO is empty after reduction
+              (solver can skip sampling and go straight to _handle_iteration_result)
+        """
+        import time as timing
+
+        t0 = timing.time()
+        fixed_vars, active_cells = builder.get_logical_variables()
+        builder._active_cells = active_cells
+        t1 = timing.time()
+
+        # Validate feasibility using actual sparse counts (first 2 active timesteps).
+        # This is the authoritative check — BFS estimates in max_window_size() are only
+        # used for sizing; here we know the real reachable cell counts.
+        if (builder.total_t - builder.current_T) > 0:
+            first_two_ts = sorted(set(t for (_, t) in active_cells))[:2]
+            min_vars = sum(
+                len(cells)
+                for (_, t), cells in active_cells.items()
+                if t in first_two_ts
+            )
+            if min_vars > builder.var_limit:
+                raise ValueError(
+                    f"var_limit={builder.var_limit} is too small: a minimum 2-step "
+                    f"window requires {min_vars} variables based on actual reachability. "
+                    f"Increase var_limit to at least {min_vars}."
+                )
+
+        builder.build()
+        t2 = timing.time()
+
+        initial_vars = builder.get_num_wires()
+        diag_fixed = builder.reduce_diag_fixed_vars_iterative()
+        fixed_vars.update(diag_fixed)
+        t3 = timing.time()
+
+        final_vars = builder.get_num_wires()
+        vars_reduced = len(diag_fixed)
+        reduction_ratio = vars_reduced / initial_vars if initial_vars > 0 else 0
+
+        self.logger.debug(
+            f"⏱️ get_logical_vars: {(t1 - t0) * 1000:.1f}ms, "
+            f"build: {(t2 - t1) * 1000:.1f}ms, "
+            f"diag_reduce: {(t3 - t2) * 1000:.1f}ms"
+        )
+        self.logger.standard(
+            f"Window {builder.iter}: {initial_vars} → {final_vars} vars "
+            f"(reduced {vars_reduced}, {reduction_ratio:.1%})"
+        )
+
+        window_stat = {
+            "window": builder.iter,
+            "initial_variables": initial_vars,
+            "variables_reduced": vars_reduced,
+            "final_variables": final_vars,
+            "reduction_ratio": round(reduction_ratio, 4),
+        }
+
+        return fixed_vars, window_stat, final_vars == 0
+
     @abstractmethod
     def solve_qubo(self, builder) -> Dict[str, Any]:
         """

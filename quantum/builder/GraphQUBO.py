@@ -12,6 +12,7 @@ class GraphQUBO(BaseQUBO):
         window_max_steps=None,
         distance_scaling="enhanced_linear",
         robot_window_limits=None,
+        log_reductions=True,
         verbose_level=2,
     ):
         self.graph = problem.graph
@@ -24,6 +25,7 @@ class GraphQUBO(BaseQUBO):
             window_max_steps=window_max_steps,
             distance_scaling=distance_scaling,
             robot_window_limits=robot_window_limits,
+            log_reductions=log_reductions,
             verbose_level=verbose_level,
         )
         # Multi-robot support: calculate total variables for all robots
@@ -79,6 +81,62 @@ class GraphQUBO(BaseQUBO):
 
         return self.Q
 
+    def _nodes(self, robot_id, t):
+        """Return active node IDs for (robot_id, t), falling back to all nodes."""
+        if self._active_cells is not None:
+            return self._active_cells.get((robot_id, t), [])
+        return range(self.num_nodes)
+
+    def get_logical_variables(self):
+        """
+        Returns (fixed_ones, active_cells):
+        - fixed_ones: {flat_idx: 1} for variables known to be 1.
+          Absent entries are implicitly 0 — no zeros stored.
+        - active_cells: {(robot_id, t): [node_id, ...]} built directly from BFS.
+        """
+        fixed_ones = {}
+        active_cells = {}
+        robot_nums = self.problem.get_robot_nums()
+
+        for robot_id in self.get_active_robot_in_window():
+            robot_offset = robot_nums[robot_id] * (self.num_nodes * self.total_t)
+            robot = self.problem.robots[robot_id]
+
+            start_time = robot.start_time
+            start = 0
+            if self.current_T < start_time:
+                start = start_time - self.current_T
+
+            end_time = robot.T + robot.start_time
+            end = end_time - self.current_T
+            if end_time > self.current_T + self.t_max:
+                end = self.t_max
+
+            start_node, goal_node = self.problem.get_graph_robot_current_goal(robot_id)
+            start_idx = start_node + (self.num_nodes * start) + robot_offset
+            fixed_ones[start_idx] = 1
+            self.logger.debug(start_idx, "fixed to 1 for robot", robot_id)
+
+            reachable = self.reachable_positions_aggressive(
+                robot, start_node, start, end
+            )
+
+            if goal_node in reachable.get(start + 1, set()):
+                self.logger.standard(
+                    f"Goal is reachable at timestep 1 for robot {robot_id}. Fixing instantaneous path."
+                )
+                active_cells[(robot_id, start)] = [start_node]
+                for t in range(start + 1, end):
+                    goal_idx = goal_node + (self.num_nodes * t) + robot_offset
+                    fixed_ones[goal_idx] = 1
+                    active_cells[(robot_id, t)] = [goal_node]
+            else:
+                active_cells[(robot_id, start)] = [start_node]
+                for t in range(start + 1, end):
+                    active_cells[(robot_id, t)] = list(reachable.get(t, {goal_node}))
+
+        return fixed_ones, active_cells
+
     def apply_one_hot(self):
         """Apply one-hot constraint: exactly one node per time step per robot."""
         K_hot = self.penalties["K_hot"]
@@ -98,15 +156,10 @@ class GraphQUBO(BaseQUBO):
             if end_time > self.current_T + self.t_max:
                 end = self.t_max
 
-            # Debug logs for empty QUBO diagnosis
-            # self.logger.debug(f"Robot {robot_id}: start={start}, end={end}, start_time={start_time}, T={robot.T}, current_T={self.current_T}, t_max={self.t_max}")
-
             for t in range(start, end):
-                # All node variables at time t for this robot
-                # Formula: node_id + num_nodes * t + robot_offset
                 indices = [
                     node_id + (self.num_nodes * t) + robot_offset
-                    for node_id in range(self.num_nodes)
+                    for node_id in self._nodes(robot_id, t)
                 ]
 
                 for n in indices:
@@ -225,19 +278,16 @@ class GraphQUBO(BaseQUBO):
                 end = self.t_max
 
             for t in range(start, end - 1):
-                for node_i in range(self.num_nodes):
+                next_active = set(self._nodes(robot_id, t + 1))
+                for node_i in self._nodes(robot_id, t):
                     n = node_i + (self.num_nodes * t) + robot_offset
-                    # Skip if no connections
-                    # if node_i not in adjacency:
-                    #     continue
-
-                    # Reward staying at connected nodes
                     for node_j, weight in adjacency[node_i]:
+                        if self._active_cells is not None and node_j not in next_active:
+                            continue
                         m = node_j + (self.num_nodes * (t + 1)) + robot_offset
                         self.Q[(n, m)] = self.Q.get((n, m), 0) - K_adj * weight
 
-                    # Penalize moving to non-adjacent nodes
-                    for node_j in range(self.num_nodes):
+                    for node_j in next_active:
                         if node_j != node_i and (node_j, 1.0) not in adjacency[node_i]:
                             m = node_j + (self.num_nodes * (t + 1)) + robot_offset
                             self.Q[(n, m)] = self.Q.get((n, m), 0) + K_adj
@@ -263,16 +313,13 @@ class GraphQUBO(BaseQUBO):
                 end = self.t_max
 
             for t in range(start, end - 1):
-                for node_i in range(self.num_nodes):
+                next_active = set(self._nodes(robot_id, t + 1))
+                for node_i in self._nodes(robot_id, t):
                     n = node_i + (self.num_nodes * t) + robot_offset
-                    # Skip if no connections
-                    # if node_i not in adjacency:
-                    #     continue
-
                     self.Q[(n, n)] = self.Q.get((n, n), 0) + K_adj
-
-                    # Reward staying at connected nodes
                     for node_j, weight in adjacency[node_i]:
+                        if self._active_cells is not None and node_j not in next_active:
+                            continue
                         m = node_j + (self.num_nodes * (t + 1)) + robot_offset
                         self.Q[(n, m)] = self.Q.get((n, m), 0) - K_adj * weight
 
@@ -496,7 +543,7 @@ class GraphQUBO(BaseQUBO):
         for t in range(start + 1, self.t_max):
             time_factor = (1.2) ** (5 * (t - start) / (self.t_max - start))
 
-            for node_id in range(self.num_nodes):
+            for node_id in self._nodes(robot_id, t):
                 node_pos = self.graph.get_node_position(node_id)
                 if node_pos is None or goal_pos is None:
                     continue
@@ -543,29 +590,33 @@ class GraphQUBO(BaseQUBO):
             if end_time > self.current_T + self.t_max:
                 end = self.t_max
 
-            # Get goal node for this robot
             goal_node = self.problem.get_graph_robot_current_goal(robot_id)[1]
 
-            for node_i in range(self.num_nodes):
-                # Skip goal node - allow multiple visits
+            # With aggressive BFS each node appears at exactly one timestep, so
+            # iterating range(start, end) for every node would create phantom Q entries
+            # for timesteps where the node is not active.
+            active_sets = {t: set(self._nodes(robot_id, t)) for t in range(start, end)}
+            all_reachable = set()
+            for t in range(start, end):
+                all_reachable.update(active_sets[t])
+
+            for node_i in all_reachable:
                 if node_i == goal_node:
                     continue
-
-                # For all time pairs t1 < t2
-                for t1 in range(start, end):
+                active_ts = [t for t in range(start, end) if node_i in active_sets[t]]
+                for idx1, t1 in enumerate(active_ts):
                     n1 = node_i + (self.num_nodes * t1) + robot_offset
-                    for t2 in range(t1 + 1, end):
+                    for t2 in active_ts[idx1 + 1 :]:
                         n2 = node_i + (self.num_nodes * t2) + robot_offset
                         self.Q[(n1, n2)] = self.Q.get((n1, n2), 0) + K_bt
 
-            # Note that this will probably make them be removed by the pre-processing
-            # To try avoid that added weights to high penalize early positions and softly penalize early ones
-            # But not sure yet if the soft penalty is small enough to be not removed in cases where backtracking is needed
             if robot.active and robot.path:
                 len_sol = len(robot.path)
                 for t in range(start, end):
                     for p_idx, pos in enumerate(robot.path):
                         node_id = self.graph.get_node_from_position(pos[:2])
+                        if node_id not in active_sets[t]:
+                            continue
                         n = node_id + (self.num_nodes * t) + robot_offset
                         time_factor = (1 + (len_sol - p_idx)) / len_sol
                         self.Q[(n, n)] = self.Q.get((n, n), 0) + K_bt * time_factor
@@ -576,102 +627,25 @@ class GraphQUBO(BaseQUBO):
         active_robots_per_timestep = self.get_active_robots_per_timestep_in_window()
         for t, active_robots in active_robots_per_timestep.items():
             if len(active_robots) < 2:
-                continue  # no collision possible
-            for node_i in range(self.num_nodes):
-                for robot_id1 in active_robots:
-                    for robot_id2 in active_robots:
-                        if robot_nums[robot_id1] >= robot_nums[robot_id2]:
-                            continue
-                        robot_offset1 = robot_nums[robot_id1] * (
-                            self.num_nodes * self.total_t
-                        )
-                        robot_offset2 = robot_nums[robot_id2] * (
-                            self.num_nodes * self.total_t
-                        )
-                        idx1 = (
-                            node_i
-                            + (self.num_nodes * (t - self.current_T))
-                            + robot_offset1
-                        )
-                        idx2 = (
-                            node_i
-                            + (self.num_nodes * (t - self.current_T))
-                            + robot_offset2
-                        )
+                continue
+            t_window = t - self.current_T
+            for robot_id1 in active_robots:
+                for robot_id2 in active_robots:
+                    if robot_nums[robot_id1] >= robot_nums[robot_id2]:
+                        continue
+                    robot_offset1 = robot_nums[robot_id1] * (
+                        self.num_nodes * self.total_t
+                    )
+                    robot_offset2 = robot_nums[robot_id2] * (
+                        self.num_nodes * self.total_t
+                    )
+                    shared_nodes = set(self._nodes(robot_id1, t_window)) & set(
+                        self._nodes(robot_id2, t_window)
+                    )
+                    for node_i in shared_nodes:
+                        idx1 = node_i + (self.num_nodes * t_window) + robot_offset1
+                        idx2 = node_i + (self.num_nodes * t_window) + robot_offset2
                         self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_crash
-
-    def get_fixed_variables(self):
-        """Identify variables that can be fixed based on current problem state for all robots."""
-        fixed = {}
-        robot_nums = self.problem.get_robot_nums()
-
-        for robot_id in self.get_active_robot_in_window():
-            robot_offset = robot_nums[robot_id] * (self.num_nodes * self.total_t)
-            robot = self.problem.robots[robot_id]
-
-            start_time = robot.start_time
-            start = 0
-            if self.current_T < start_time:
-                start = start_time - self.current_T
-
-            end_time = robot.T + start_time
-            end = end_time - self.current_T
-            if end_time > self.current_T + self.t_max:
-                end = self.t_max
-
-            # Fix start node at start_time for this robot
-            start_node, goal_node = self.problem.get_graph_robot_current_goal(robot_id)
-            start_idx = start_node + (start * self.num_nodes) + robot_offset
-            fixed[start_idx] = 1
-
-            # Fix all other nodes at start_time to 0 for this robot
-            for node_i in range(self.num_nodes):
-                if node_i != start_node:
-                    n = node_i + (self.num_nodes * start) + robot_offset
-                    fixed[n] = 0
-
-            # Aggresive version
-            reachable_at_time = self.reachable_positions_aggressive(
-                robot, start_node, start, end
-            )
-
-            # Check if goal is reachable at timestep 1 (one movement away)
-            # If so, fix the entire instantaneous path
-            if goal_node in reachable_at_time.get(start + 1, set()):
-                self.logger.debug(
-                    f"Goal is reachable at timestep 1 for robot {robot_id}. Fixing instantaneous path."
-                )
-
-                # Fix timestep start + 1: goal = 1, all others = 0
-                for node_id in range(self.num_nodes):
-                    n = node_id + (self.num_nodes * (start + 1)) + robot_offset
-                    if node_id == goal_node:
-                        fixed[n] = 1
-                        self.logger.debug(
-                            f"  Fixed goal node {n} at node {node_id} to 1 at timestep {start + 1}"
-                        )
-                    else:
-                        fixed[n] = 0
-
-                # Fix all subsequent timesteps: robot stays at goal
-                for t in range(start + 2, end):
-                    for node_id in range(self.num_nodes):
-                        n = node_id + (self.num_nodes * t) + robot_offset
-                        if node_id == goal_node:
-                            fixed[n] = 1
-                        else:
-                            fixed[n] = 0
-
-            # self.logger.debug(f"Reachable positions for robot {robot_id}: {reachable_at_time}")
-            # Fix unreachable nodes to 0 for all time steps for this robot
-            for t in range(start + 1, end):
-                # for t in reachable_at_time:
-                for node_id in range(self.num_nodes):
-                    var_idx = node_id + (self.num_nodes * t) + robot_offset
-                    if node_id not in reachable_at_time.get(t, set([(goal_node)])):
-                        fixed[var_idx] = 0
-
-        return fixed
 
     def reachable_positions(self, robot, start_node, start, end):
         # Initialize reachable set with the start node at start_time

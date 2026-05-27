@@ -425,7 +425,9 @@ class GridQUBOBuilder(BaseQUBO):
                 if i == e_i and j == e_j:
                     continue
 
-                # Only penalise pairs where the cell is active at both timesteps
+                # With aggressive BFS each cell appears at exactly one timestep, so
+                # iterating range(start, end) blindly would create phantom Q entries for
+                # timesteps where the cell is not active, leaking variables into the QUBO.
                 active_ts = [t for t in range(start, end) if (i, j) in active_sets[t]]
                 for idx1, t1 in enumerate(active_ts):
                     g_t = i * N + j + M * N * t1 + robot_offset
@@ -817,12 +819,19 @@ class GridQUBOBuilder(BaseQUBO):
 
         return reachable
 
-    def get_fixed_variables(self):
+    def get_logical_variables(self):
+        """
+        Returns (fixed_ones, active_cells):
+        - fixed_ones: {flat_idx: 1} for variables known to be 1 (starts, instantaneous paths).
+          Absent entries are implicitly 0 in the global binary encoding — no zeros stored.
+        - active_cells: {(robot_id, t): [(i, j), ...]} of cells that may be 1, built
+          directly from BFS reachability without an inversion scan over the full grid.
+        """
         M, N = self.problem.grid.M, self.problem.grid.N
-        fixed = {}
+        fixed_ones = {}
+        active_cells = {}
         robot_nums = self.problem.get_robot_nums()
 
-        # Fix start position at time 0
         for robot_id in self.get_active_robot_in_window():
             robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
             robot = self.problem.robots[robot_id]
@@ -834,79 +843,38 @@ class GridQUBOBuilder(BaseQUBO):
             start = 0
             if self.current_T < start_time:
                 start = start_time - self.current_T
-            end_time = robot.T + start_time
+            end_time = robot.T + robot.start_time
             end = end_time - self.current_T
             if end_time > self.current_T + self.t_max:
                 end = self.t_max
+
             start_idx = s_i * N + s_j + M * N * start + robot_offset
-
-            fixed[start_idx] = 1
+            fixed_ones[start_idx] = 1
             self.logger.debug(start_idx, "fixed to 1 for robot", robot_id)
-            # fix all other time=0 cells
-            for i in range(M):
-                for j in range(N):
-                    n = i * N + j + M * N * start + robot_offset
-                    if n != start_idx:
-                        fixed[n] = 0
 
-            # Fix goal position at last time step if within window
-            # if (self.T + (self.iter * self.t_max)) == self.total_t:
-            #     goal_idx = e_i * N + e_j + M * N * (self.T - 1)
-            #     fixed[goal_idx] = 1
-
-            # Fix obstacle cells to 0 at all time steps
-            for t in range(start, end):
-                for obs_i, obs_j in self.problem.grid.obstacles:
-                    obs_idx = obs_i * N + obs_j + M * N * t + robot_offset
-                    fixed[obs_idx] = 0
-
-            # Now we can also fix unreachable cells to 0
-            # Based on bfs (this essentially complies with adjacency and tp constraints)
             reachable = self.reachable_positions_aggressive(
                 robot, robot.current_position, start, end
             )
 
-            # Check if goal is reachable at timestep 1 (one movement away)
-            # If so, fix the entire instantaneous path
             if (e_i, e_j) in reachable.get(start + 1, set()):
-                self.logger.debug(
+                self.logger.standard(
                     f"Goal is reachable at timestep 1 for robot {robot_id}. Fixing instantaneous path."
                 )
+                active_cells[(robot_id, start)] = [(s_i, s_j)]
+                for t in range(start + 1, end):
+                    goal_idx = e_i * N + e_j + M * N * t + robot_offset
+                    fixed_ones[goal_idx] = 1
+                    if t == start + 1:
+                        self.logger.debug(
+                            f"  Fixed goal position {goal_idx} at ({e_i}, {e_j}) to 1 at timestep {t}"
+                        )
+                    active_cells[(robot_id, t)] = [(e_i, e_j)]
+            else:
+                active_cells[(robot_id, start)] = [(s_i, s_j)]
+                for t in range(start + 1, end):
+                    active_cells[(robot_id, t)] = list(reachable.get(t, {(e_i, e_j)}))
 
-                # Fix timestep start + 1: goal = 1, all others = 0
-                for i in range(M):
-                    for j in range(N):
-                        n = i * N + j + M * N * (start + 1) + robot_offset
-                        if (i, j) == (e_i, e_j):
-                            fixed[n] = 1
-                            self.logger.debug(
-                                f"  Fixed goal position {n} at ({i}, {j}) to 1 at timestep {start + 1}"
-                            )
-                        else:
-                            fixed[n] = 0
-
-                # Fix all subsequent timesteps: robot stays at goal
-                for t in range(start + 2, end):
-                    for i in range(M):
-                        for j in range(N):
-                            n = i * N + j + M * N * t + robot_offset
-                            if (i, j) == (e_i, e_j):
-                                fixed[n] = 1
-                            else:
-                                fixed[n] = 0
-
-            # self.logger.debug(f"Reachable positions for robot {robot_id}: {reachable}")
-            # for t in reachable:
-            for t in range(start + 1, end):
-                for i in range(M):
-                    for j in range(N):
-                        # By default is there if it visited all nodes it stops the BFS
-                        # Instead of returning empty set, return goal (to keep goal lock constraint)
-                        if not (i, j) in reachable.get(t, set([(e_i, e_j)])):
-                            n = i * N + j + M * N * t + robot_offset
-                            fixed[n] = 0
-
-        return fixed
+        return fixed_ones, active_cells
 
 
 # Backward-compatible alias
