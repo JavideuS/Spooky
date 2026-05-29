@@ -245,6 +245,8 @@ class GraphQUBO(BaseQUBO):
             goal_node = self.problem.get_graph_robot_current_goal(robot_id)[1]
 
             for t in range(start, end - 1):
+                if goal_node not in self._nodes(robot_id, t):
+                    continue
                 goal_idx_t = goal_node + (self.num_nodes * t) + robot_offset
                 goal_idx_t1 = goal_node + (self.num_nodes * (t + 1)) + robot_offset
                 self.Q[(goal_idx_t, goal_idx_t)] = (

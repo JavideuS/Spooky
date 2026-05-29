@@ -118,30 +118,21 @@ class BaseQUBO(ABC):
     # Shared: compute max window size based on var_limit
     def max_window_size(self):
         """
-        Estimate max window size using problem dimensions if available.
-        Subclasses relying on non-grid encodings can override this.
+        Estimate the maximum window size (in timesteps) before the QUBO would
+        exceed var_limit variables.
 
-        This method:
-        1. Only counts active robots (those that haven't reached their goal)
-        2. Respects per-robot window limits if specified
-        3. Returns the minimum of:
-           - Variable limit constraint
-           - Most restrictive per-robot limit for active robots
-           - Remaining time in problem
-        4. Enforces a minimum result of 2 to prevent stalling (result=1 means
-           current_T never advances). Real feasibility is validated in
-           _prepare_window() using actual reachable cell counts from
-           get_logical_variables(), which is more accurate than any estimate here.
+        Uses BFS-bounded reachability: at window step s, at most connectivity^s
+        cells are reachable per robot (capped at total free cells). Grid uses
+        4-connectivity; graph uses max node degree. This is tighter than flat
+        M×N / num_nodes estimates.
 
-        Per-timestep variable count uses BFS-bounded reachability: at step s,
-        at most connectivity^s cells are reachable, capped at the total free
-        cells. For graph problems, max_degree is used as connectivity.
-        This is tighter than flat M×N / num_nodes estimates.
+        Also respects per-robot window limits and enforces a minimum of 2 so
+        current_T always advances. Real feasibility is validated in
+        _prepare_window() after get_logical_variables() gives true counts.
         """
         fmt = self.problem.get_format_type()
 
         if fmt == "graph":
-            use_bfs = True
             # Use max degree as connectivity estimate (analogous to grid's 4-connectivity)
             connectivity = max(
                 (len(self.graph.adjacency.get(n, [])) for n in range(self.num_nodes)),
@@ -149,11 +140,11 @@ class BaseQUBO(ABC):
             )
             max_free_cells = self.num_nodes
         else:  # grid
-            M = self.problem.grid.M
-            N = self.problem.grid.N
             connectivity = len(self.problem.grid.moves)  # 4 for standard 4-connected grid
-            max_free_cells = M * N - len(self.problem.grid.obstacles)
-            use_bfs = True
+            max_free_cells = (
+                self.problem.grid.M * self.problem.grid.N
+                - len(self.problem.grid.obstacles)
+            )
 
         robot_active_timeline = self.problem.get_robot_per_timestep()
 
@@ -164,22 +155,19 @@ class BaseQUBO(ABC):
 
         needed_vars = 0
         result = None
-        bfs_flooded = False  # once connectivity^step >= max_free_cells, stay flat
+        flooded = False  # once connectivity^step >= max_free_cells, stay flat
 
         for t in range(self.current_T, self.total_t):
             step = t - self.current_T
 
-            if use_bfs:
-                if not bfs_flooded:
-                    bfs_raw = connectivity ** step
-                    if bfs_raw >= max_free_cells:
-                        bfs_raw = max_free_cells
-                        bfs_flooded = True
-                    vars_at_step = bfs_raw
-                else:
-                    vars_at_step = max_free_cells
+            if not flooded:
+                bfs_raw = connectivity ** step
+                if bfs_raw >= max_free_cells:
+                    bfs_raw = max_free_cells
+                    flooded = True
+                vars_at_step = bfs_raw
             else:
-                vars_at_step = flat_vars
+                vars_at_step = max_free_cells
 
             active_robots_at_t = [r for r in robot_active_timeline.get(t, [])
                                   if self.problem.robots[r].active]
@@ -444,26 +432,24 @@ class BaseQUBO(ABC):
     def reduce_diag_fixed_vars_iterative(self):
         """
         Iteratively apply diag_fixed_vars until no new fixed variables are found.
-        Uses self.log_reductions to control whether reductions are logged
-        (needed for BFS recalculation within diag when a violation is detected).
+
+        diag_fixed_vars() applies every reduction to self.Q internally (via
+        _process_robot_timesteps and _handle_bfs_recalculation), so no outer
+        reduce_qubo call is needed here. self.reduction_log is maintained during
+        the run so that reverse_reduction can undo fixings when BFS recalculation
+        is triggered, then cleared on exit.
 
         Returns:
             dict: {variable_index: fixed_value} where fixed_value is 0 or 1
         """
         self.reduction_log = []
-
         total_fixed = {}
         while True:
             new_fixed = self.diag_fixed_vars()
             if not new_fixed:
                 break
             total_fixed.update(new_fixed)
-            self.Q, _, log = self.reduce_qubo(new_fixed, log_reductions=self.log_reductions)
-            self.reduction_log.extend(log)
-
-        # Clear reduction log after we're done to free memory
         self.reduction_log = []
-
         return total_fixed
 
     def list_to_dict_solution(self, solution_list):

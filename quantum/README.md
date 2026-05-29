@@ -63,6 +63,23 @@ python qubo.py
 
 Inside `qubo.py`, you can switch between different problem configurations (e.g., grid vs. graph) and solvers by uncommenting the relevant lines.
 
+## Solving Pipeline
+
+![Spooky Pipeline](../assets/Spooky_diagram.drawio.svg)
+
+**General (top):** the map enters a Build Phase — `get_logical_variables()` (BFS reachability), `builder.build()` (constraints over active cells), `reduce_diag_fixed_vars_iterative()` (diagonal-dominant elimination) — then `solve_qubo()` and `_handle_iteration_result()`.  
+**Iterative (bottom):** `solve_qubo_smart()` checks after each window whether the last timestep or goal is reached. If yes, post-processing runs. If no, `current_T` advances, `_prepare_window()` runs the Build Phase again, and the result feeds back into the next iteration.
+
+### Stage details
+
+| Stage | Key function | Description |
+|---|---|---|
+| **Logical Reduction** | `get_logical_variables()` | BFS forward from each robot's current position. Variables at unreachable `(robot, t, position)` triplets are never added to the QUBO. Start/goal variables are pinned to 1 in `fixed_ones`. |
+| **Build QUBO** | `builder.build()` | All constraint methods query `_cells()` / `_nodes()` which return only the active sparse set, so the resulting `Q` matrix is minimal by construction. |
+| **Numerical Reduction** | `reduce_diag_fixed_vars_iterative()` | Variables whose diagonal coefficient dominates the sum of all off-diagonal magnitudes are fixed to 0 and removed. The process repeats until no further reductions are possible. |
+| **Solve** | `solve_qubo()` | The reduced QUBO (typically 50–80 % smaller than the naive formulation) is optionally normalized and submitted to the backend. |
+| **Post-process** | `_handle_iteration_result()` | The raw binary sample is merged with `fixed_vars`, decoded to `(row, col, t)` coordinates, validated for adjacency and collision, and corrected where possible via BFS repair. |
+
 ## Key Concepts
 
 - **Windowing**: To overcome the qubit limitations of current quantum hardware, paths are solved in "sliding windows" (e.g., 5 steps at a time) rather than all at once.

@@ -32,6 +32,21 @@ quantum_nav/
 └── fastapi_app/         # FastAPI server for remote solving
 ```
 
+## 🔄 Solving Pipeline
+
+![Spooky Pipeline](assets/Spooky_diagram.drawio.svg)
+
+**General (top):** the map enters a Build Phase (Logical Reduction → QUBO Building → Numerical Reduction), then goes to Solve and Post-processing.  
+**Iterative (bottom):** at each window the solver checks whether the last timestep or goal is reached. If yes, post-processing runs. If no, a new window triggers another Build Phase → Solve cycle, and the result feeds back into the next iteration.
+
+| Stage | What happens |
+|---|---|
+| **Logical Reduction** | BFS forward-reachability per robot fixes start/goal variables and computes the sparse `_active_cells` set — constraints are only built over reachable positions. |
+| **Build QUBO** | Penalty terms (one-hot, adjacency, start/goal, lock-after-goal, backtracking, collision) are applied exclusively over `_active_cells`, keeping the matrix small. |
+| **Numerical Reduction** | `reduce_diag_fixed_vars_iterative()` eliminates variables whose diagonal coefficient dominates all off-diagonal interactions, propagating fixings until convergence. |
+| **Solve** | The reduced QUBO (optionally normalized) is submitted to the selected backend. |
+| **Post-process** | Fixed variables are merged back into the raw sample, the path is decoded, invalid moves are detected and corrected, and the window advances. |
+
 ## 🚀 Installation
 
 ### Basic Installation
