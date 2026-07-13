@@ -591,6 +591,14 @@ class GridQUBOBuilder(BaseQUBO):
             if end_time > self.current_T + self.t_max:
                 end = self.t_max
 
+            # BFS-restricted windows already exclude obstacle cells from active_cells
+            # (reachable_positions_aggressive filters them out), so this hard penalty
+            # is redundant there and would only leak unconstrained phantom variables
+            # into Q. Only needed when building without active-cell restriction.
+            # It is caused even with K_obs = 0, that happens because of the indexing .get that always create a var (and occupies a Qubit)
+            if self._active_cells is not None:
+                continue
+
             for t in range(start, end):
                 for obs_i, obs_j in self.problem.grid.obstacles:
                     obs_idx = obs_i * N + obs_j + M * N * t + robot_offset
