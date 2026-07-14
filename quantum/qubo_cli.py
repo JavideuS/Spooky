@@ -14,6 +14,9 @@ Usage examples:
   # Benchmark run with PennyLane on GPU
   python qubo_cli.py --map maps/synthetic/5x5/obs5x5 --solver pennylane --device lightning.gpu --benchmark --num-runs 5
 
+  # Benchmark run with PennyLane on Windows (no lightning.gpu wheels; use lightning.qubit)
+  python qubo_cli.py --map maps/synthetic/5x5/obs5x5 --solver pennylane --device lightning.qubit --benchmark --num-runs 5
+
   # Graph-based problem
   python qubo_cli.py --map maps/graph/city --problem two_robots --builder graph --solver dwave --penalty-set graph
 

@@ -75,6 +75,12 @@ all = [
     "spooky[gpu,dwave,ibm,jupyter,dev,visualizer]",
 ]
 
+# PennyLane ships no CUDA/lightning-gpu wheels for Windows, so this mirrors
+# "all" minus the gpu extra.
+windows = [
+    "spooky[dwave,ibm,jupyter,dev,visualizer]",
+]
+
 [project.urls]
 Homepage = "https://github.com/JavideuS/Spooky"
 Repository = "https://github.com/JavideuS/Spooky"

@@ -70,7 +70,7 @@ python quantum/maps/generate_all_maps.py
 ### Optional Dependencies
 
 ```bash
-# For PennyLane GPU acceleration (requires NVIDIA CUDA)
+# For PennyLane GPU acceleration (requires NVIDIA CUDA, not available on Windows)
 pip install -e ".[gpu]"
 
 # For D-Wave quantum annealing
@@ -87,6 +87,10 @@ pip install -e ".[gpu,dwave,ibm,jupyter]"
 
 # To install all
 pip install -e ".[all]"
+
+# On Windows: same as [all], but without the gpu extra (PennyLane ships no
+# lightning-gpu/CUDA wheels for Windows). Use --device lightning.qubit instead.
+pip install -e ".[windows]"
 ```
 
 ## 📖 Quick Start
@@ -103,6 +107,9 @@ spooky-solve --map quantum/maps/synthetic/10x10/obs10x10_hard --problem four_rob
 
 # PennyLane (GPU)
 spooky-solve --map quantum/maps/synthetic/5x5/obs5x5_hard --problem hard --solver pennylane --device lightning.gpu --benchmark --num-runs 5
+
+# PennyLane (windows/gpuless)
+spooky-solve --map quantum/maps/synthetic/5x5/obs5x5_hard --problem hard --solver pennylane --device lightning.qubit --benchmark --num-runs 5
 
 # Qiskit (IBM Quantum hardware)
 spooky-solve --map quantum/maps/synthetic/10x10/no_obs10x10 --problem two_robots --solver qiskit_remote --verbose 3
