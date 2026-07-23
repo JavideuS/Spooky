@@ -1,9 +1,14 @@
 # Binary encoding: investigation and verdict
 
-**Verdict: dead end, not pursued further.** Binary position encoding
-(`B = ceil(log2(N))` vars per robot/timestep instead of one-hot's `N`) cannot
-support a genuine adjacency/movement constraint without more variables than
-one-hot already uses. Kept on this branch as a documented negative result,
+**Verdict: not usable, not pursued further, but the boundary is now precisely
+characterized.** Binary position encoding (`B = ceil(log2(N))` vars per
+robot/timestep instead of one-hot's `N`) cannot support a genuine
+adjacency/movement constraint without more variables than one-hot already
+uses. A later refinement (see "Stay-in-place + split-field encoding" below)
+found a real, verified condition under which the LP *does* separate — but it
+only holds for small, obstacle-free grids, degrades as size grows, and is
+highly sensitive to obstacles (which are the common case, not the exception,
+for real MAPF maps). Kept on this branch as a documented negative result,
 not merged into `main`.
 
 ## What's implemented here
@@ -66,6 +71,90 @@ and genuinely using extra bits (a random subset of a bigger code space, not
 zero-padding), both still land at margin=0 for grids >= 4x4 across many
 random trials.
 
+### Stay-in-place + split-field encoding: a real but narrow exception
+
+Two changes together (neither alone is sufficient) do produce a positive LP
+margin at sizes that were previously exactly 0:
+
+1. **Staying in place must be legal** (`target=0`, i.e. add a self-loop to
+   the adjacency used to build the truth table). The original truth table
+   never had this: a robot staying at cell `c` got `target=1` — the *same*
+   class as "one hop past a real neighbor" — which was `N` needlessly-hard
+   constraints sitting in the wrong bucket.
+2. **Split-field encoding instead of row-major.** `code = i*N + j`
+   (identity) smears row and column across shared bits whenever `N` isn't a
+   power of 2, via non-power-of-2 carries that aren't degree-2 capturable.
+   Padding each axis to its own power-of-2 field —
+   `code = next_pow2(N)*i + j`, `B = ceil(log2 next_pow2(M)) + ceil(log2
+   next_pow2(N))` — puts row and column bits in disjoint fields instead.
+
+Verified directly against `_lp_margin_for_code_map`
+(`test_binary_encoding_lp_code_assignment.py`), which builds the LP from the
+*entire* `2^(2B)` truth table (a positive margin here is already a full
+enumeration proof, not a sample):
+
+```
+identity, no stay:        4x4=0        5x5=0
+split-field, stay legal:  4x4=0.833    5x5=0.3125   6x6=0.263   7x7=0 (!)
+                           8x8=0.3125  9x9=0.096   10x10=0.096  12x12=0.096
+                           15x15=0 (!) 16x16=0.096
+```
+
+Non-monotonic in exactly the same way the original identity-encoding
+boundary was (some sizes fail even where neighboring same-`B` sizes pass —
+7x7 and 15x15 both fail while their same-B neighbors succeed), and the
+margin among sizes that *do* pass keeps shrinking (0.83 → 0.31 → 0.26 → 0.10
+→ plateauing near 0.096).
+
+`quantum/tests/binary_margin_report.py` runs this same comparison against
+every real map shape in `quantum/maps/synthetic/` (output:
+`binary_margin_report.json`).
+
+**The raw margin isn't the meaningful number.** The LP's feasible region is
+a cone (every constraint is homogeneous in the joint
+(coefficients, margin) vector), so the optimal margin scales exactly
+linearly with the coefficient cap — verified empirically (cap=1/5/10/25 all
+give the same `margin/cap` to 6 decimal places). `margin/cap` is the actual
+cap-invariant separation strength, and it's what maps onto hardware
+relevance: it's directly comparable to a solver's *relative* coefficient
+precision. Simulated annealing (float64 throughout) doesn't care whether
+the ratio is 6% or 0.02% — both solve exactly. D-Wave-class hardware is
+commonly quoted at a few percent relative coefficient noise, so a ratio
+under roughly 1% is likely to vanish into that noise floor even though it's
+mathematically separated on paper. That splits the table into
+"SA-viable, hardware-dead" and "viable on both":
+
+| Map | baseline margin (ratio) | candidate margin (ratio) | candidate viable on |
+|---|---|---|---|
+| 2x2 | fails | 2.5000 (50.0%) | SA + hardware |
+| 3x2 | fails | 0.7143 (14.3%) | SA + hardware |
+| 3x3, 0 obstacles | 0.3333 (6.7%) | 0.6250 (12.5%) | SA + hardware |
+| 3x3, 1 obstacle | 0.2778 (5.6%) | 0.3261 (6.5%) | SA + hardware |
+| 5x5, 0 obstacles | fails | 0.3125 (6.3%) | SA + hardware |
+| 5x5, 2 obstacles | fails | 0.0794 (1.6%) | SA + hardware (marginal) |
+| 5x5, 3 obstacles | fails | 0.0325 (0.65%) | SA only |
+| 5x5, 4 obstacles | fails | 0.0199 (0.40%) | SA only |
+| 10x10, 0 obstacles | fails | 0.0962 (1.9%) | SA + hardware (marginal) |
+| 10x10, 10 obs (`obs10x10_medium`) | fails | 0.0009 (0.02%) | SA only, barely |
+| 10x10, 5/20 obs (`obs10x10_easy`/`hard`) | fails | **fails** | neither |
+| 50x50 / 100x100 / 1000x1000 | — | **not computable** (2^24/2^28/2^40 truth-table rows) | — |
+
+So: real, reproducible improvement over the flat "always 0" baseline for
+small, clean grids — feasible in the pure LP-feasibility sense, and
+certified (full truth-table enumeration, not sampled) for every open grid
+tested. But it does not rescue the project's actual obstacle benchmark maps
+(`obs10x10_easy`, `obs10x10_hard`, both named in the root `CLAUDE.md` CLI
+examples) at all, and even where it's "feasible," the ratio degrades fast
+enough that most of the obstacle cases are SA-only, not hardware-usable.
+Obstacles hurt disproportionately: the ratio drops by roughly an order of
+magnitude going from 0 to 4 obstacles on a 5x5 grid, even though obstacles
+*reduce* the number of transitions that need classifying — the remaining
+pattern loses the regularity the shared block needs to fit uniformly across
+every "from" cell. Since obstacles are the common case for real MAPF maps,
+not a corner case, this keeps the encoding out of practical reach even with
+this fix. And 50x50+ — where binary's qubit savings would actually
+matter — is untestable either way with brute-force enumeration.
+
 ### LS (soft fit): weak, empirically
 
 `_fit_binary_pairwise_block_ls` always returns *a* fit (least-squares
@@ -126,7 +215,10 @@ See `quantum/tests/README.md` for how to run the suite and poke at the
 LP/LS fit manually. `test_binary_encoding.py` is the fast (~2s) regression
 suite for the plumbing and implemented constraints;
 `test_binary_encoding_lp_code_assignment.py` (~14s) is the exploratory
-code-assignment sweep referenced above.
+code-assignment sweep referenced above. `binary_margin_report.py` (run with
+`python quantum/tests/binary_margin_report.py`, ~few seconds) recomputes the
+per-real-map stay-legal/split-field table above and regenerates
+`binary_margin_report.json`.
 
 ## If revisited later
 
@@ -137,3 +229,10 @@ code-assignment sweep referenced above.
   algorithm" (settled — LP is exact, SDP can't beat it, LS is the best
   soft-fit option) but whether the ancilla-based exact-detection cost can be
   brought below `N` some other way; nothing tried here does.
+- The stay-legal + split-field combination is worth remembering as a
+  building block if the ancilla-based approach is ever attempted for real
+  (it at least fixes the "stay in place" and "row/column smearing" failure
+  modes for free), but on its own it doesn't change the verdict: it's
+  size- and obstacle-sensitive in a way that makes it unpredictable per-map
+  without just running the LP on that exact map first, and it's untestable
+  at the sizes (50x50+) where this would matter.
