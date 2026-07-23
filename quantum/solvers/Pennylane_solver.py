@@ -207,7 +207,7 @@ class PennylaneSolver(BaseSolver):
 
             # Update problem for next iteration
             try:
-                last_pos = self.decode_path(samples[best_idx], builder.problem)[-1]
+                last_pos = self.decode_path(samples[best_idx], builder.problem, encoding=builder.encoding)[-1]
                 builder.update_problem(last_pos[:2])
             except Exception as e:
                 self.logger.minimal(f"Warning: Could not decode path: {e}")
@@ -475,7 +475,7 @@ class PennylaneSolver(BaseSolver):
                     
                     # CRITICAL: Force builder to advance to next window to avoid infinite loop
                     # Decode the path from the invalid solution and update the problem
-                    path = self.decode_path(full_sol, builder.problem, t_offset=builder.current_T)
+                    path = self.decode_path(full_sol, builder.problem, t_offset=builder.current_T, encoding=builder.encoding)
                     robot_paths = self.get_robot_paths(path)
                     robot_paths = self._resolve_duplicate_timesteps(robot_paths, builder.problem)
                     # Note: We skip _resolve_invalid_moves since we already know there are invalid moves

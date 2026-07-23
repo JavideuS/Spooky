@@ -1,5 +1,4 @@
 # Solver (Quantum annealing)
-from tracemalloc import start
 from dimod import BinaryQuadraticModel, SimulatedAnnealingSampler
 from .base_solver import BaseSolver
 
@@ -35,7 +34,7 @@ class DWaveSolver(BaseSolver):
             # print("Sample:", self.decode_path(sample_dict, builder.problem))
             best_sample.append(first.sample)
             best_energy.append(response.first.energy)
-            last_pos = self.decode_path(first.sample, builder.problem)[-1]
+            last_pos = self.decode_path(first.sample, builder.problem, encoding=builder.encoding)[-1]
             builder.update_problem(last_pos[:2])
 
         return {
@@ -114,7 +113,7 @@ class DWaveSolver(BaseSolver):
                         f"Keeping last result (invalid moves for robots {list(invalid_moves.keys())})."
                     )
                     path = self.decode_path(
-                        full_sol, builder.problem, t_offset=builder.current_T
+                        full_sol, builder.problem, t_offset=builder.current_T, encoding=builder.encoding
                     )
                     robot_paths = self.get_robot_paths(path)
                     robot_paths = self._resolve_duplicate_timesteps(

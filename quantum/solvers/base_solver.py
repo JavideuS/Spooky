@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 import numpy as np
 from typing import Dict, Any, List, Tuple
+from quantum.utils import paths
 from quantum.utils.paths import decode_position
 from quantum.utils.validation import is_valid_move
 from quantum.utils.logger import get_logger
@@ -89,10 +90,17 @@ class BaseSolver(ABC):
         scale_factor = scale / max_val
         return {k: v * scale_factor for k, v in Q.items()}
 
-    def decode_path(self, sample: Dict, problem, t_offset: int = 0) -> List[Tuple[Tuple[int, int, int], int]]:
+    def decode_path(self, sample: Dict, problem, t_offset: int = 0, encoding: str = "one_hot") -> List[Tuple[Tuple[int, int, int], int]]:
         """
         Decode the binary sample into a path of ((i, j, t), robot_num) tuples.
         Merges multiple time-window samples while ensuring continuity per robot.
+
+        encoding="binary": each (robot, t) is a B-bit code (see
+        BaseQUBO.binary_var_index / paths.bits_to_code) rather than a one-hot
+        indicator per position. A code >= the number of real positions has no
+        corresponding cell (grid/graph size isn't a power of 2) -- decoded as
+        the sentinel position (-code, -code) so it's visible in the path
+        instead of silently aliasing onto a real cell.
         """
         path = []
 
@@ -107,7 +115,7 @@ class BaseSolver(ABC):
                 last_positions = {}
 
                 for index, s in enumerate(sample):
-                    sub_path = self.decode_path(s, problem, t_offset=t_offset_running)
+                    sub_path = self.decode_path(s, problem, t_offset=t_offset_running, encoding=encoding)
                     if not sub_path:
                         continue
 
@@ -145,13 +153,37 @@ class BaseSolver(ABC):
         if isinstance(sample, dict):
             qubo_type = problem.get_format_type()
             num_robots = problem.num_robots
+            T = problem.T
+
+            if encoding == "binary":
+                num_positions = (
+                    problem.grid.M * problem.grid.N
+                    if qubo_type == "grid"
+                    else len(problem.graph.nodes)
+                )
+                B = paths.bit_width(num_positions)
+
+                for robot_num in range(num_robots):
+                    for t in range(T):
+                        bits = [
+                            sample.get(robot_num * (T * B) + t * B + b, 0)
+                            for b in range(B)
+                        ]
+                        code = paths.bits_to_code(bits)
+                        if code >= num_positions:
+                            i, j = -code, -code
+                        else:
+                            i, j = paths.decode_position_binary(bits, problem)
+                        path.append(((i, j, t + t_offset), robot_num))
+
+                return path
+
             if qubo_type == "grid":
                 M = problem.grid.M
                 N = problem.grid.N
-                T = problem.T
                 total_vars = M * N * T * num_robots
             else:
-                total_vars = len(problem.graph.nodes) * problem.T * num_robots
+                total_vars = len(problem.graph.nodes) * T * num_robots
 
             for idx in range(total_vars):
                 if sample.get(idx, 0) == 1:
@@ -403,6 +435,14 @@ class BaseSolver(ABC):
         builder.build()
         t2 = timing.time()
 
+        if builder.encoding == "binary" and fixed_vars:
+            # One-hot gets its size reduction from active_cells restricting
+            # what build() creates in the first place; binary has no such
+            # restriction, so the known start bits are still in self.Q at
+            # this point and need an explicit reduce_qubo() pass to fold
+            # them out (see get_logical_variables()).
+            builder.Q, _, _ = builder.reduce_qubo(fixed_vars, log_reductions=builder.log_reductions)
+
         initial_vars = builder.get_num_wires()
         diag_fixed = builder.reduce_diag_fixed_vars_iterative()
         fixed_vars.update(diag_fixed)
@@ -558,7 +598,7 @@ class BaseSolver(ABC):
             total_vars=builder.initial_num_vars
         )
 
-        path = self.decode_path(full_sol, builder.problem, t_offset=builder.current_T)
+        path = self.decode_path(full_sol, builder.problem, t_offset=builder.current_T, encoding=builder.encoding)
         robot_paths = self.get_robot_paths(path)
         
         # Apply post-processing to resolve duplicate timesteps

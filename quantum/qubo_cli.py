@@ -79,6 +79,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="QUBO builder type: 'grid' (QUBOBuilder) or 'graph' (GraphQUBO) (default: grid)",
     )
     prob.add_argument(
+        "--encoding",
+        choices=["one_hot", "binary"],
+        default="one_hot",
+        help=(
+            "QUBO variable encoding: 'one_hot' (default, N vars per robot/"
+            "timestep) or 'binary' (B=ceil(log2 N) vars per robot/timestep, "
+            "fewer qubits but only start/goal_later/adjacency_reward are "
+            "implemented so far -- see quantum/builder/QUBOBuilder.py)."
+        ),
+    )
+    prob.add_argument(
         "--distance-scaling",
         default="enhanced_linear",
         metavar="MODE",
@@ -469,6 +480,7 @@ def main():
         "name": args.problem,
         "robot_window_limits": window_limits if window_limits else None,
         "log_reductions": not args.no_reduction_log,
+        "encoding": args.encoding,
     }
     if args.var_limit is not None:
         builder_kwargs["var_limit"] = args.var_limit

@@ -193,19 +193,20 @@ class DynamicSolver:
         """
         return self.solver.get_combined_path(path)
 
-    def decode_path(self, sample, problem, t_offset=0):
+    def decode_path(self, sample, problem, t_offset=0, encoding="one_hot"):
         """
         Decode path using the current solver.
-        
+
         Args:
             sample: Binary solution
             problem: Problem instance
             t_offset: Time offset
-            
+            encoding: "one_hot" or "binary" -- see BaseSolver.decode_path
+
         Returns:
             Decoded path
         """
-        return self.solver.decode_path(sample, problem, t_offset)
+        return self.solver.decode_path(sample, problem, t_offset, encoding=encoding)
     
     def total_energy(self, solution):
         """

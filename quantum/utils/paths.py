@@ -1,3 +1,4 @@
+import math
 from typing import Dict, Any, List, Tuple
 
 def merge_paths(old_path: List[Tuple[int, int, int]], new_path: List[Tuple[int, int, int]]) -> List[Tuple[int, int, int]]:
@@ -62,3 +63,54 @@ def decode_position(idx: int, problem) -> Tuple[int, int, int, int]:
         i = pos // N
         j = pos % N
         return i, j, t, robot_num
+
+def bit_width(n: int) -> int:
+        """
+        Number of bits B = ceil(log2(n)) needed to binary-encode n distinct
+        position states. n <= 1 needs no bits (only one possible state).
+        """
+        if n <= 1:
+            return 0
+        return math.ceil(math.log2(n))
+
+def bits_to_code(bits: List[int]) -> int:
+        """
+        Convert a list of bit values into an integer code.
+
+        Single source of truth for the binary-encoding bit convention used
+        throughout the codebase: bits[b] is the coefficient of 2**b
+        (LSB-first), matching BaseQUBO.binary_var_index(robot, t, b) directly
+        — i.e. bits[b] is the value of the variable at binary_var_index(r, t, b).
+        Any code that turns a bitstring into a position (or vice versa) must
+        go through this convention to stay consistent.
+        """
+        code = 0
+        for b, bit in enumerate(bits):
+            code |= (int(bit) & 1) << b
+        return code
+
+def decode_position_binary(bits: List[int], problem) -> Tuple[int, int]:
+        """
+        Decode the B bits of a single (robot, timestep) block into a
+        grid/graph (i, j) position. See bits_to_code for the bit convention.
+
+        A binary code can exceed the number of valid positions (2^B > N);
+        those codes are invalid/non-existent states with no corresponding
+        position. Callers are responsible for ensuring the code is in range —
+        this function does not guard against it.
+
+        Args:
+            bits: B bit values (0/1), bits[b] as returned by binary_var_index(robot, t, b)
+            problem: Problem instance
+
+        Returns:
+            (i, j) position tuple
+        """
+        code = bits_to_code(bits)
+
+        if problem.get_format_type() == "graph":
+            pos = problem.graph.get_node_position(code)
+            return int(pos[0]), int(pos[1])
+
+        N = problem.grid.N
+        return code // N, code % N

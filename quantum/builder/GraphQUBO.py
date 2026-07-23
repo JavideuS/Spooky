@@ -14,6 +14,7 @@ class GraphQUBO(BaseQUBO):
         robot_window_limits=None,
         log_reductions=True,
         verbose_level=2,
+        encoding="one_hot",
     ):
         self.graph = problem.graph
         self.num_nodes = len(self.graph.nodes)
@@ -27,6 +28,7 @@ class GraphQUBO(BaseQUBO):
             robot_window_limits=robot_window_limits,
             log_reductions=log_reductions,
             verbose_level=verbose_level,
+            encoding=encoding,
         )
         # Multi-robot support: calculate total variables for all robots
         # Use problem.T (total timeline) not total_t (window size) to match QUBOBuilder
@@ -39,6 +41,10 @@ class GraphQUBO(BaseQUBO):
         # Store per-robot potentials for multi-robot scenarios
         self.P_connectivity_per_robot = {}
         self.P_obs = self.compute_spatial_obstacle_potential()
+        # Cached LP-fitted adjacency block (binary encoding only) — depends
+        # only on B and the static graph adjacency, computed once and tiled
+        # across every (robot, t) pair. See apply_adjacency_reward_binary.
+        self._adjacency_binary_block = None
 
         self.logger.standard("Window max steps:", self.max_window_size())
 
@@ -59,27 +65,154 @@ class GraphQUBO(BaseQUBO):
             ]
 
         self.Q = {}
+        binary = self.encoding == "binary"
 
         if "one_hot" in constraints_to_apply:
-            self.apply_one_hot()
+            self.apply_one_hot_binary() if binary else self.apply_one_hot()
         if "start" in constraints_to_apply:
-            self.apply_start_penalty()
+            self.apply_start_penalty_binary() if binary else self.apply_start_penalty()
         if "goal" in constraints_to_apply:
-            self.apply_goal_penalty()
+            self.apply_goal_penalty_binary() if binary else self.apply_goal_penalty()
         if "adjacency" in constraints_to_apply:
-            self.apply_adjacency_constraint()
+            self.apply_adjacency_constraint_binary() if binary else self.apply_adjacency_constraint()
         if "lock" in constraints_to_apply:
-            self.apply_lock_after_goal()
+            self.apply_lock_after_goal_binary() if binary else self.apply_lock_after_goal()
         if "adjacency_reward" in constraints_to_apply:
-            self.apply_adjacency_reward()
+            self.apply_adjacency_reward_binary() if binary else self.apply_adjacency_reward()
         if "backtracking" in constraints_to_apply:
-            self.apply_backtracking_penalty()
+            self.apply_backtracking_penalty_binary() if binary else self.apply_backtracking_penalty()
         if "multi_robot_collision" in constraints_to_apply:
-            self.apply_multi_robot_penalty()
+            self.apply_multi_robot_penalty_binary() if binary else self.apply_multi_robot_penalty()
         if "multi_robot_proximity" in constraints_to_apply:
-            self.apply_multi_robot_proximity_penalty()
+            self._binary_not_implemented("multi_robot_proximity") if binary else self.apply_multi_robot_proximity_penalty()
 
         return self.Q
+
+    # --- Binary-encoding constraint placeholders -------------------------
+    # Each mirrors a one-hot constraint method above. Bodies are filled in
+    # one at a time via the LP max-margin fitting machinery (not yet built).
+
+    def apply_one_hot_binary(self):
+        raise NotImplementedError("Binary encoding: one_hot constraint not implemented yet")
+
+    def apply_start_penalty_binary(self):
+        """
+        Closed form: K_start * sum_b (x_b^start - s_b)^2, which collapses to
+        a linear diagonal term per bit since s_b (the start node's bits) is
+        a known constant — see GridQUBOBuilder.apply_start_penalty_binary
+        for the derivation.
+        """
+        K_start = self.penalties["K_start"]
+        robot_nums = self.problem.get_robot_nums()
+
+        for robot_id in self.get_active_robot_in_window():
+            robot_num = robot_nums[robot_id]
+            start_time = self.problem.robots[robot_id].start_time
+            start = 0
+            if self.current_T < start_time:
+                start = start_time - self.current_T
+
+            start_node = self.problem.get_graph_robot_current_goal(robot_id)[0]
+
+            for b in range(self.B):
+                s_b = (start_node >> b) & 1
+                idx = self.binary_var_index(robot_num, start, b)
+                self.Q[(idx, idx)] = self.Q.get((idx, idx), 0) + K_start * (1 - 2 * s_b)
+
+    def apply_goal_penalty_binary(self):
+        """
+        Closed form: K_goal * sum_t (1 + t/T) * sum_b (x_b^t - g_b)^2,
+        applied at every t in the window — same linear collapse as
+        apply_start_penalty_binary, summed over t with a growing weight.
+        """
+        K_goal = self.penalties["K_goal"]
+        T = self.total_t
+        robot_nums = self.problem.get_robot_nums()
+
+        for robot_id in self.get_active_robot_in_window():
+            robot_num = robot_nums[robot_id]
+            robot = self.problem.robots[robot_id]
+            goal_node = self.problem.get_graph_robot_current_goal(robot_id)[1]
+
+            start_time = robot.start_time
+            start = 0
+            if self.current_T < start_time:
+                start = start_time - self.current_T
+            end_time = robot.T + start_time
+            end = end_time - self.current_T
+            if end_time > self.current_T + self.t_max:
+                end = self.t_max
+
+            for t in range(start + 1, end):
+                time_factor = 1 + (t / T)
+                for b in range(self.B):
+                    g_b = (goal_node >> b) & 1
+                    idx = self.binary_var_index(robot_num, t, b)
+                    self.Q[(idx, idx)] = (
+                        self.Q.get((idx, idx), 0) + K_goal * time_factor * (1 - 2 * g_b)
+                    )
+
+    def apply_adjacency_constraint_binary(self):
+        raise NotImplementedError("Binary encoding: adjacency constraint not implemented yet")
+
+    def apply_lock_after_goal_binary(self):
+        raise NotImplementedError("Binary encoding: lock constraint not implemented yet")
+
+    def apply_adjacency_reward_binary(self):
+        """
+        LP max-margin fit of the adjacency transition block (see
+        BaseQUBO._fit_binary_pairwise_block) tiled across every (robot, t)
+        pair in the window. Cached on the builder instance since it depends
+        only on B and the static graph adjacency.
+        """
+        if self._adjacency_binary_block is None:
+            adjacency = self.graph.adjacency
+
+            def neighbor_codes(code):
+                return [n for n, _ in adjacency.get(code, [])]
+
+            self._adjacency_binary_block = self._fit_binary_pairwise_block(
+                self.num_nodes, neighbor_codes
+            )
+
+        block = self._adjacency_binary_block
+        B = self.B
+        K_adj = self.penalties["K_adj"]
+        robot_nums = self.problem.get_robot_nums()
+
+        for robot_id in self.get_active_robot_in_window():
+            robot_num = robot_nums[robot_id]
+            robot = self.problem.robots[robot_id]
+
+            start_time = robot.start_time
+            start = 0
+            if self.current_T < start_time:
+                start = start_time - self.current_T
+            end_time = robot.T + start_time
+            end = end_time - self.current_T
+            if end_time > self.current_T + self.t_max:
+                end = self.t_max
+
+            for t in range(start, end - 1):
+                def local_to_global(local_i, t=t):
+                    t_off, b = divmod(local_i, B)
+                    return self.binary_var_index(robot_num, t + t_off, b)
+
+                for i in range(2 * B):
+                    gi = local_to_global(i)
+                    if block[i, i] != 0:
+                        self.Q[(gi, gi)] = self.Q.get((gi, gi), 0) + K_adj * block[i, i]
+                    for j in range(i + 1, 2 * B):
+                        if block[i, j] == 0:
+                            continue
+                        gj = local_to_global(j)
+                        self.Q[(gi, gj)] = self.Q.get((gi, gj), 0) + K_adj * block[i, j]
+
+    def apply_backtracking_penalty_binary(self):
+        raise NotImplementedError("Binary encoding: backtracking constraint not implemented yet")
+
+    def apply_multi_robot_penalty_binary(self):
+        raise NotImplementedError("Binary encoding: multi_robot_collision constraint not implemented yet")
 
     def _nodes(self, robot_id, t):
         """Return active node IDs for (robot_id, t), falling back to all nodes."""
@@ -94,6 +227,34 @@ class GraphQUBO(BaseQUBO):
           Absent entries are implicitly 0 — no zeros stored.
         - active_cells: {(robot_id, t): [node_id, ...]} built directly from BFS.
         """
+        if self.encoding == "binary":
+            if not self._FIX_BINARY_START:
+                return {}, {}
+
+            # Only the window-start position is ever fully known bit-for-bit
+            # (no partial-reachability analog exists for binary -- see
+            # apply_adjacency_reward_binary's docstring). All B bits must be
+            # listed explicitly, 0s included: reduce_qubo() treats "absent"
+            # as "still free", not "fixed to 0", unlike one-hot's fixed_ones.
+            robot_nums = self.problem.get_robot_nums()
+            fixed_vars = {}
+
+            for robot_id in self.get_active_robot_in_window():
+                robot_num = robot_nums[robot_id]
+                robot = self.problem.robots[robot_id]
+                start_node = self.problem.get_graph_robot_current_goal(robot_id)[0]
+
+                start_time = robot.start_time
+                start = 0
+                if self.current_T < start_time:
+                    start = start_time - self.current_T
+
+                for b in range(self.B):
+                    s_b = (start_node >> b) & 1
+                    fixed_vars[self.binary_var_index(robot_num, start, b)] = s_b
+
+            return fixed_vars, {}
+
         fixed_ones = {}
         active_cells = {}
         robot_nums = self.problem.get_robot_nums()

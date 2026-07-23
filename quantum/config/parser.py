@@ -81,7 +81,12 @@ def validate_solver(solver):
 
 
 def validate_penalty_set(name, penalty_set):
-    required_keys = ["K_hot", "K_adj", "K_start", "K_goal", "K_lock"]
+    # K_hot/K_lock are only meaningful for one-hot encoding (they map to
+    # constraints that raise NotImplementedError for binary -- see
+    # QUBOBuilder.apply_one_hot_binary/apply_lock_after_goal_binary), so a
+    # binary-only penalty set (e.g. just K_adj/K_start/K_goal) is valid and
+    # shouldn't be rejected here.
+    required_keys = ["K_adj", "K_start", "K_goal"]
     for key in required_keys:
         if not isinstance(penalty_set.get(key), (int, float)):
             raise ValueError(f"Penalty set '{name}' missing or invalid value for {key}")
