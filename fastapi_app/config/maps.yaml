@@ -1,0 +1,86 @@
+# Named map registry for the FastAPI planner service.
+#
+# Mirrors the solvers.yaml pattern: each entry is a stable map_id the API
+# exposes to callers, pointing at a map file under quantum/ (no extension —
+# both the .h5 and its sibling .yaml are resolved from this path).
+#
+# Grids are NOT loaded at startup. fastapi_app/registry.py parses the HDF5
+# file lazily, the first time a map_id is actually requested, and caches the
+# resulting Grid in memory for the lifetime of the process. Maps that are
+# never requested are never loaded.
+#
+# Maps uploaded at runtime via POST /v1/maps/{map_id} are added to the same
+# in-memory registry but are not persisted back to this file.
+
+maps:
+  # 2x2 / 3x2 — smoke-test scale
+  no_obs2x2:
+    path: maps/synthetic/2x2/no_obs2x2
+    description: "2x2 grid, no obstacles"
+  no_obs3x2:
+    path: maps/synthetic/3x2/no_obs3x2
+    description: "3x2 grid, no obstacles"
+
+  # 3x3
+  no_obs3x3:
+    path: maps/synthetic/3x3/no_obs3x3
+    description: "3x3 grid, no obstacles"
+  no_obs3x3_elev:
+    path: maps/synthetic/3x3/no_obs3x3_elev
+    description: "3x3 grid, no obstacles, with elevation layer"
+  no_obs3x3_mix:
+    path: maps/synthetic/3x3/no_obs3x3_mix
+    description: "3x3 grid, no obstacles, mixed terrain"
+  no_obs3x3_ter:
+    path: maps/synthetic/3x3/no_obs3x3_ter
+    description: "3x3 grid, no obstacles, terrain variant"
+  no_obs3x3ter_alt:
+    path: maps/synthetic/3x3/no_obs3x3ter_alt
+    description: "3x3 grid, no obstacles, alternate terrain variant"
+  obs3x3_standard:
+    path: maps/synthetic/3x3/obs3x3_standard
+    description: "3x3 grid, standard obstacle layout"
+
+  # 5x5
+  no_obs5x5:
+    path: maps/synthetic/5x5/no_obs5x5
+    description: "5x5 grid, no obstacles"
+  obs5x5_easy:
+    path: maps/synthetic/5x5/obs5x5_easy
+    description: "5x5 grid, easy obstacle layout"
+  obs5x5_medium:
+    path: maps/synthetic/5x5/obs5x5_medium
+    description: "5x5 grid, medium obstacle layout"
+  obs5x5_hard:
+    path: maps/synthetic/5x5/obs5x5_hard
+    description: "5x5 grid, hard obstacle layout"
+
+  # 10x10
+  no_obs10x10:
+    path: maps/synthetic/10x10/no_obs10x10
+    description: "10x10 grid, no obstacles"
+  obs10x10_easy:
+    path: maps/synthetic/10x10/obs10x10_easy
+    description: "10x10 grid, easy obstacle layout"
+  obs10x10_medium:
+    path: maps/synthetic/10x10/obs10x10_medium
+    description: "10x10 grid, medium obstacle layout"
+  obs10x10_hard:
+    path: maps/synthetic/10x10/obs10x10_hard
+    description: "10x10 grid, hard obstacle layout"
+
+  # 50x50
+  no_obs50x50:
+    path: maps/synthetic/50x50/no_obs50x50
+    description: "50x50 grid, no obstacles"
+  obs50x50_medium:
+    path: maps/synthetic/50x50/obs50x50_medium
+    description: "50x50 grid, medium obstacle layout"
+
+  # 100x100 / 1000x1000 — large scale, definitely lazy-load only
+  no_obs100x100:
+    path: maps/synthetic/100x100/no_obs100x100
+    description: "100x100 grid, no obstacles"
+  no_obs1000x1000:
+    path: maps/synthetic/1000x1000/no_obs1000x1000
+    description: "1000x1000 grid, no obstacles"

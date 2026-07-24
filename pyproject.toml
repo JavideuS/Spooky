@@ -71,14 +71,20 @@ visualizer = [
     "kaleido",
 ]
 
+fastapi = [
+    "fastapi",
+    "uvicorn",
+    "python-multipart",  # required by FastAPI's UploadFile form parsing
+]
+
 all = [
-    "spooky[gpu,dwave,ibm,jupyter,dev,visualizer]",
+    "spooky[gpu,dwave,ibm,jupyter,dev,visualizer,fastapi]",
 ]
 
 # PennyLane ships no CUDA/lightning-gpu wheels for Windows, so this mirrors
 # "all" minus the gpu extra.
 windows = [
-    "spooky[dwave,ibm,jupyter,dev,visualizer]",
+    "spooky[dwave,ibm,jupyter,dev,visualizer,fastapi]",
 ]
 
 [project.urls]

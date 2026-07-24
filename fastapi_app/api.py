@@ -3,10 +3,17 @@ from contextlib import asynccontextmanager
 import uvicorn
 import quantum.config.hdf5parser as h5parser
 import quantum.config.parser as config_parser
-from quantum import map, QUBOBuilder
+from quantum import map
+from quantum.builder import QUBOBuilder, GraphQUBO
+from quantum.robotConfiguration import RobotConfig
 import quantum.pathFormulation as pathfinding
+import registry
 from profiles.robot import Robot, RegisterRobotRequest
-from profiles.models import MapInfo, RobotMapsResponse, PlanRequest, PlanResponse
+from profiles.models import (
+    MapInfo, RobotMapsResponse, PlanRequest, PlanResponse,
+    MapRegistryResponse, MapUploadResponse,
+    StatelessPlanRequest, StatelessPlanResponse, RobotPathResult,
+)
 from config_api import load_solver_configs, global_solver_configs, global_aliases, global_penalties_params
 from typing import Dict, Optional
 import datetime
@@ -37,7 +44,7 @@ async def lifespan(app: FastAPI):
     Application lifespan context manager to handle startup and shutdown events.
     """
     try:
-        solvers_config = config_parser.load_config("../quantum/config/solvers.yaml", sections=["solvers", "aliases"])
+        solvers_config = config_parser.load_config("config/solvers.yaml", sections=["solvers", "aliases"])
         solvers = solvers_config.get("solvers", {})
         aliases = solvers_config.get("aliases", {})
 
@@ -46,7 +53,11 @@ async def lifespan(app: FastAPI):
 
         penalties_conf = config_parser.load_config("../quantum/config/config.yaml", sections=["penalty_sets"])
         global_penalties_params.update(penalties_conf["penalty_sets"])
-        
+
+        maps_conf = config_parser.load_config("config/maps.yaml", sections=["maps"])
+        registry.load_map_registry(maps_conf.get("maps") or {})
+        print(f"Map registry loaded ({len(maps_conf.get('maps') or {})} entries, lazy-loaded on first use).")
+
         yield  # Application is ready to handle requests
     finally:
         # Cleanup if needed
@@ -266,18 +277,15 @@ def plan_path(robot_id: str, request: PlanRequest):
 
     # --- 3. Run planning ---
     try:
-        problem = pathfinding.PathfindingProblem(
-            map_obj,
-            start=tuple(request.start),
-            end=tuple(request.goal)
-        )
-        builder = QUBOBuilder.QUBOBuilder(problem, penalties=global_penalties_params["alt_later"], name="standard")
+        robot_config = RobotConfig(robot_id=robot_id, start=tuple(request.start), goal=tuple(request.goal))
+        problem = pathfinding.PathfindingProblem(robot_config, grid=map_obj)
+        builder = QUBOBuilder(problem, penalties=global_penalties_params["crash"], name="standard")
         start_time = time.time()
         builder.build()
-        path = solver.solve_qubo(builder)
+        solution = solver.solve_qubo_smart(builder, False)
         planning_time = time.time() - start_time
-        decoded_path = solver.decode_path(path["solution"], problem)
-        energy = solver.total_energy(path)
+        decoded_path = [[i, j] for (i, j, t), _ in solver.decode_path(solution["solution"], problem)]
+        energy = float(solver.total_energy(solution))
         print("Energy", energy)
         response = PlanResponse(
             path=decoded_path,
@@ -292,6 +300,169 @@ def plan_path(robot_id: str, request: PlanRequest):
                 "planning_time": planning_time,
                 "timestamp": datetime.datetime.now(datetime.UTC).isoformat()
             }
+        )
+        if request.details:
+            response.solver_details = solver.to_dict()
+
+        return response
+    except Exception as e:
+        raise HTTPException(500, f"Planning failed: {str(e)}")
+
+
+# STATELESS PLANNER (v1) — no per-robot session, maps/solvers already in memory
+
+
+@app.get("/v1/maps", response_model=MapRegistryResponse)
+def list_registered_maps():
+    """List every map_id in the registry (curated + runtime-uploaded), and whether it's loaded yet."""
+    maps = registry.list_maps()
+    return {"map_count": len(maps), "maps": maps}
+
+
+@app.post("/v1/maps/{map_id}", response_model=MapUploadResponse)
+async def upload_registered_map(map_id: str, file: UploadFile, materials_file: Optional[UploadFile] = None):
+    """
+    Register a new map at runtime by uploading its HDF5 file.
+    Stored in the same in-memory registry as the curated maps.yaml entries,
+    but not persisted back to maps.yaml — it only lives for this process.
+    Both grid and graph representations are parsed if present in the file.
+    """
+    try:
+        file.file.seek(0)
+        data = h5parser.load_both_from_hdf5(file.file)
+
+        materials_conf = None
+        if materials_file:
+            materials_conf = config_parser.load_config(materials_file.file)["materials"]
+
+        grid = None
+        if data["has_map"] and data["map_data"]:
+            grid = map.Grid.from_hdf5_data(data["map_data"], materials_conf)
+
+        graph = None
+        if data["has_graph"] and data["graph_data"]:
+            graph = map.Graph.from_hdf5_data(data["graph_data"])
+
+        if grid is None and graph is None:
+            raise ValueError("HDF5 file contains neither a grid ('map_structure') nor a graph representation")
+
+        registry.register_uploaded_map(map_id, grid=grid, graph=graph)
+
+        return MapUploadResponse(
+            status="registered",
+            map_id=map_id,
+            grid_size=f"{grid.M}x{grid.N}" if grid else None,
+            has_graph=graph is not None,
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Map loading failed: {str(e)}")
+
+
+@app.post("/v1/plan", response_model=StatelessPlanResponse)
+def plan_stateless(request: StatelessPlanRequest):
+    """
+    Stateless planning: map_id + solver + (start/goal or robots) in, paths + cost out.
+    No robot registration, no per-call map upload — map and solver instances are
+    resolved from the in-memory registries. Supports both a single robot
+    (request.start/request.goal) and multiple robots (request.robots), and both
+    the grid and graph builder (request.format).
+
+    Positions are always given as [row, col] — even in graph mode, where they're
+    resolved to node ids server-side via Graph.get_node_from_position. Paths are
+    returned the same way: [[row, col], ...], Spooky's native (row, col) matrix
+    convention — see quantum/utils/coordinates.py to convert to robotics (x, y)
+    Y-up if needed.
+    """
+    if request.format not in ("grid", "graph"):
+        raise HTTPException(400, f"Unknown format: {request.format}. Must be 'grid' or 'graph'.")
+
+    # --- 1. Resolve map ---
+    try:
+        env = registry.get_map(request.map_id, format=request.format)
+    except KeyError:
+        raise HTTPException(404, f"Unknown map_id: {request.map_id}")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(400, f"Failed to load map '{request.map_id}': {e}")
+
+    # --- 2. Resolve solver ---
+    try:
+        solver = registry.get_solver(request.solver)
+    except KeyError:
+        raise HTTPException(400, f"Unknown solver: {request.solver}")
+
+    # --- 3. Resolve penalties ---
+    if request.penalty_set not in global_penalties_params:
+        raise HTTPException(
+            400,
+            f"Unknown penalty_set: {request.penalty_set}. Available: {list(global_penalties_params.keys())}",
+        )
+    penalties = global_penalties_params[request.penalty_set]
+
+    # --- 4. Build robot configs (single or multi) ---
+    def resolve_position(pos: list[int]):
+        # Graph builders index robots by node id, not (row, col) — RobotConfig
+        # must hold the node id directly (see PathfindingProblem.from_graph_data).
+        if request.format != "graph":
+            return tuple(pos)
+        node_id = env.get_node_from_position(tuple(pos))
+        if node_id is None:
+            raise HTTPException(400, f"Position {pos} is not a node in map '{request.map_id}'")
+        return node_id
+
+    if request.robots:
+        robot_configs = [
+            RobotConfig(
+                robot_id=r.id or f"robot_{i}",
+                start=resolve_position(r.start),
+                goal=resolve_position(r.goal),
+                start_time=r.start_time,
+                priority=r.priority,
+                safety_radius=r.safety_radius,
+            )
+            for i, r in enumerate(request.robots)
+        ]
+    else:
+        robot_configs = [
+            RobotConfig(robot_id="robot_0", start=resolve_position(request.start), goal=resolve_position(request.goal))
+        ]
+
+    # --- 5. Solve ---
+    try:
+        if request.format == "graph":
+            problem = pathfinding.PathfindingProblem(robot_configs, graph=env, T=request.T)
+            builder = GraphQUBO(problem, penalties=penalties, name="v1_plan")
+        else:
+            problem = pathfinding.PathfindingProblem(robot_configs, grid=env, T=request.T)
+            builder = QUBOBuilder(problem, penalties=penalties, name="v1_plan")
+        start_time = time.time()
+        builder.build()
+        solution = solver.solve_qubo_smart(builder, False)
+        planning_time = time.time() - start_time
+
+        decoded = solver.decode_path(solution["solution"], problem)
+        robot_paths = solver.get_robot_paths(decoded)  # {robot_num: [(i, j, t), ...] sorted by t}
+        num_to_id = {num: rid for rid, num in problem.get_robot_nums().items()}
+
+        paths = [
+            RobotPathResult(
+                robot_id=num_to_id.get(robot_num, str(robot_num)),
+                path=[[i, j] for (i, j, t) in coords],
+            )
+            for robot_num, coords in robot_paths.items()
+        ]
+
+        response = StatelessPlanResponse(
+            paths=paths,
+            cost=float(solver.total_energy(solution)),
+            map_id=request.map_id,
+            solver_used=request.solver,
+            metrics={
+                "planning_time": planning_time,
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+            },
         )
         if request.details:
             response.solver_details = solver.to_dict()
