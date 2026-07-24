@@ -765,6 +765,8 @@ class GridQUBOBuilder(BaseQUBO):
             self.apply_obstacle_penalty()
         if "crash" in constraints_to_apply:
             self.apply_crash_penalty()
+        if "swap" in constraints_to_apply:
+            self.apply_swap_penalty()
 
         return self.Q
 

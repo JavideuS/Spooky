@@ -9,8 +9,9 @@ penalty_sets:
     K_tp: 1.2
     K_goal_approx: 0.7
     K_obs: 0
-    K_crash: 3
-    K_swap: 2.5 # Crash cant be higher thand adjacency, then there is no point
+    K_crash: 2.7
+    K_swap: 3 # Seems to do overcontrain a bit so does better when smaller than crashes
+
   crash:
     K_hot: 9
     K_adj: 4.8
