@@ -54,6 +54,9 @@ class BenchmarkRunner:
         self.logger.minimal(f"Benchmark Level: {self.level} ({'Summary' if self.level == 1 else 'Paths' if self.level == 2 else 'Full'})")
         self.logger.minimal("-" * 60)
 
+        valid_count = 0
+        total_solve_time = 0.0
+
         # Run multiple trials
         for run_id in range(1, self.num_runs + 1):
             self.builder.reset_problem()
@@ -74,11 +77,22 @@ class BenchmarkRunner:
             path = self.solver.decode_path(solution["solution"], self.problem)
             validation = is_solution_valid(path, self.problem)
 
+            # If invalid, work out whether pre-processing forced the conflict
+            # (bypassing K_crash/K_swap entirely) or the solver actually
+            # sampled a bitstring that violates a penalty that was present.
+            forced_collisions = solution.get("metadata", {}).get("forced_collisions", [])
+            invalid_cause = _attribute_invalid_cause(validation, forced_collisions)
+            if invalid_cause:
+                validation["invalid_cause"] = invalid_cause
+
             # Calculate total energy (handle both scalar and list energies)
             if isinstance(solution["energy"], list):
                 total_energy = sum(solution["energy"])
             else:
                 total_energy = solution["energy"]
+
+            valid_count += int(validation["valid"])
+            total_solve_time += solve_duration
 
             # Build result based on level
             result = {
@@ -88,7 +102,9 @@ class BenchmarkRunner:
                 "energy": total_energy,
                 "execution_time_sec": round(solve_duration, 3),
             }
-            
+            if invalid_cause:
+                result["invalid_cause"] = invalid_cause
+
             # Add variable stats from solver based on level
             window_stats = solution.get("metadata", {}).get("window_stats", [])
             if window_stats:
@@ -143,6 +159,8 @@ class BenchmarkRunner:
                 self.logger.standard("Validation details:", validation.get("details", {}))
                 self.logger.standard("Reason:", validation.get("reason", "unknown"))
                 self.logger.standard("Message:", validation.get("message", ""))
+                if invalid_cause:
+                    self.logger.standard("Cause:", invalid_cause)
             self.logger.minimal(
                 f"Run {run_id}: {status} | Time: {solve_duration:.2f}s | "
                 f"Energy: {total_energy:.4f}"
@@ -150,6 +168,19 @@ class BenchmarkRunner:
             self.logger.minimal(f"Path: {path}")
             for robot_id, robot in self.problem.robots.items():
                 self.logger.minimal(f" Robot {robot_id} path: {robot.path}")
+
+        avg_solve_time = total_solve_time / self.num_runs if self.num_runs else 0
+        self.logger.minimal(
+            f"\nAccuracy: {valid_count}/{self.num_runs} valid "
+            f"({valid_count / self.num_runs:.1%}) | "
+            f"Average solve time: {avg_solve_time:.3f}s"
+        )
+        self.results["summary"] = {
+            "valid_runs": valid_count,
+            "total_runs": self.num_runs,
+            "accuracy": round(valid_count / self.num_runs, 4) if self.num_runs else 0,
+            "average_solve_time_sec": round(avg_solve_time, 4),
+        }
 
         self.save_results()
         return self.results
@@ -162,6 +193,65 @@ class BenchmarkRunner:
             serializable_results = convert_tuple_keys_to_str(self.results)
             json.dump(serializable_results, f, indent=2, default=str)
         self.logger.minimal(f"\nBenchmark complete. Results saved to {filepath}")
+
+
+_FIX_MECHANISM_LABELS = {
+    "bfs": "bfs_fixing",
+    "diag": "diag_fixing",
+    "locked_inactive": "goal_lock",
+}
+
+
+def _attribute_invalid_cause(validation, forced_collisions):
+    """
+    Cross-reference a failed validation's reported vertex conflicts against
+    the solver's pre-processing forced-collision log (BaseSolver._flag_forced_collisions,
+    surfaced via solution["metadata"]["forced_collisions"]).
+
+    A run can be invalid for two very different reasons that call for
+    different fixes: the conflicting cell/time was already forced before
+    K_crash/K_swap ever ran (a pre-processing routing gap), or the QAOA/
+    annealing sample itself landed on a degenerate state that violates a
+    penalty which was genuinely present in Q (a solver-convergence issue).
+
+    Returns None if validation passed, otherwise a dict:
+    {"origin": "solver_sampling"} or
+    {"origin": "pre_processing", "matches": [{"cell", "time", "robots", "fixed_by"}, ...]}
+    where "fixed_by" names the mechanism(s) that forced the conflict — e.g.
+    "diag_fixing" when both robots were forced by the same mechanism, or
+    "diag_fixing + goal_lock" when one robot was still being fixed while the
+    other was an already-finished robot locked at its goal.
+    """
+    if validation.get("valid", True):
+        return None
+
+    forced_by_cell_time = {}
+    for fc in forced_collisions:
+        forced_by_cell_time.setdefault((fc["cell"], fc["time"]), []).append(fc)
+
+    matched = []
+    for conflict in validation.get("details", {}).get("conflicts", []):
+        key = (conflict["cell"], conflict["time"])
+        if key in forced_by_cell_time:
+            matched.extend(forced_by_cell_time[key])
+
+    if not matched:
+        # swap_conflicts have no pre-processing equivalent today (forced_collisions
+        # only ever records same-cell/same-time fixes), so any swap_conflict here
+        # is necessarily solver-side.
+        return {"origin": "solver_sampling"}
+
+    matches = []
+    for fc in matched:
+        labels = {_FIX_MECHANISM_LABELS.get(source, source) for _, source in fc["sources"]}
+        matches.append({
+            "cell": fc["cell"],
+            "time": fc["time"],
+            "robots": fc["robots"],
+            "fixed_by": " + ".join(sorted(labels)),
+        })
+
+    return {"origin": "pre_processing", "matches": matches}
 
 
 def is_solution_valid(solution, problem):
@@ -237,15 +327,46 @@ def is_solution_valid(solution, problem):
                 "robots": sorted(robots)
             })
 
-    if conflicts:
-        # Sort conflicts by time then cell for deterministic output
+    # multi-robot swap (edge) conflict check: two robots exchange cells
+    # between consecutive timesteps (robot A: X@t -> Y@t+1, robot B: Y@t -> X@t+1).
+    # This is invisible to the vertex check above since neither robot ever
+    # shares a cell at the same time — they cross mid-edge instead.
+    position_by_time = {
+        robot_num: {t: (i, j) for (i, j, t) in robot_path}
+        for robot_num, robot_path in robot_positions.items()
+    }
+    robot_nums_sorted = sorted(position_by_time.keys())
+    swap_conflicts = []
+    for idx, r1 in enumerate(robot_nums_sorted):
+        for r2 in robot_nums_sorted[idx + 1:]:
+            times_r1 = position_by_time[r1]
+            times_r2 = position_by_time[r2]
+            for t in set(times_r1) & set(times_r2):
+                if (t + 1) not in times_r1 or (t + 1) not in times_r2:
+                    continue
+                if times_r1[t] == times_r2[t + 1] and times_r2[t] == times_r1[t + 1]:
+                    swap_conflicts.append({
+                        "cells": (times_r1[t], times_r2[t]),
+                        "time": (t, t + 1),
+                        "robots": [r1, r2],
+                    })
+
+    if conflicts or swap_conflicts:
         conflicts.sort(key=lambda c: (c["time"], c["cell"]))
+        swap_conflicts.sort(key=lambda c: (c["time"], c["robots"]))
         result["valid"] = False
-        result["reason"] = "vertex_conflict"
-        result["message"] = (
-            f"❌ Vertex conflict detected: {len(conflicts)} collision(s) found"
-        )
-        result["details"]["conflicts"] = conflicts
+        reasons = []
+        messages = []
+        if conflicts:
+            reasons.append("vertex_conflict")
+            messages.append(f"{len(conflicts)} vertex collision(s)")
+            result["details"]["conflicts"] = conflicts
+        if swap_conflicts:
+            reasons.append("swap_conflict")
+            messages.append(f"{len(swap_conflicts)} swap collision(s)")
+            result["details"]["swap_conflicts"] = swap_conflicts
+        result["reason"] = "+".join(reasons)
+        result["message"] = f"❌ Multi-robot conflict detected: {', '.join(messages)}"
         return result
 
     result["valid"] = True

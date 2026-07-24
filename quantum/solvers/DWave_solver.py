@@ -49,6 +49,7 @@ class DWaveSolver(BaseSolver):
         best_sample = []
         best_energy = []
         window_stats = []
+        forced_collisions = []
         response = None
         correction_count = 0
         import time as timing
@@ -62,8 +63,9 @@ class DWaveSolver(BaseSolver):
                 break
 
             window_start = timing.time()
-            fixed_vars, window_stat, is_preprocessed = self._prepare_window(builder)
+            fixed_vars, window_stat, is_preprocessed, window_forced_collisions = self._prepare_window(builder)
             window_stats.append(window_stat)
+            forced_collisions.extend(window_forced_collisions)
 
             if is_preprocessed:
                 self.logger.standard(
@@ -134,6 +136,7 @@ class DWaveSolver(BaseSolver):
             "raw_response": response,
             "metadata": {
                 "window_stats": window_stats,
+                "forced_collisions": forced_collisions,
                 "num_robots": builder.problem.num_robots,
                 "total_variables": builder.initial_num_vars,
                 "fixed_variables": len(fixed_vars) if "fixed_vars" in dir() else 0,

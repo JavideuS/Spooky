@@ -606,7 +606,7 @@ class GridQUBOBuilder(BaseQUBO):
                         self.Q.get((obs_idx, obs_idx), 0) + K_obs
                     )
 
-    def apply_multi_robot_penalty(self):
+    def apply_crash_penalty(self):
         M, N = self.problem.grid.M, self.problem.grid.N
         K_crash = self.penalties.get("K_crash", 0)
         robot_nums = self.problem.get_robot_nums()
@@ -633,6 +633,82 @@ class GridQUBOBuilder(BaseQUBO):
                         idx2 = i * N + j + M * N * t_window + robot_offset2
                         self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_crash
 
+    def apply_swap_penalty(self):
+        """
+        Approximate inter-robot swap-collision penalty.
+
+        P_swap = K_crash * r1[t]*r2[t] + K_swap * (r1[t+1]*r2[t] + r1[t]*r2[t+1])
+
+        Summed over cells shared by two robots, this penalizes both a true swap
+        (robot1 moves into a cell as robot2 moves out, and vice versa at the
+        neighboring cell) and same-cell/same-time occupancy (the crash case).
+        The two are weighted independently: the same-cell/same-time term reuses
+        K_crash as-is (identical to apply_crash_penalty, so crash protection
+        doesn't get diluted), while the cross-time terms get their own K_swap.
+        Those cross-time terms also fire when one robot simply follows another
+        into a just-vacated cell, which isn't an actual collision — an accepted
+        overconstraint of this pairwise approximation vs. the exact ancilla-based
+        formulation — so K_swap is the knob to tune down if that false-positive
+        cost outweighs the benefit, independently of crash protection.
+        When K_swap is active it replaces apply_crash_penalty (see build())
+        so the same-time term isn't double counted.
+        """
+        M, N = self.problem.grid.M, self.problem.grid.N
+        K_crash = self.penalties.get("K_crash", 0)
+        K_swap = self.penalties.get("K_swap", 0)
+        robot_nums = self.problem.get_robot_nums()
+        active_robots_per_timestep = self.get_active_robots_per_timestep_in_window()
+
+        for t, active_robots in active_robots_per_timestep.items():
+            if len(active_robots) < 2:
+                continue
+            t_window = t - self.current_T
+            next_active_robots = active_robots_per_timestep.get(t + 1, [])
+
+            for robot_id1 in active_robots:
+                for robot_id2 in active_robots:
+                    if robot_nums[robot_id1] >= robot_nums[robot_id2]:
+                        continue
+
+                    robot_offset1 = robot_nums[robot_id1] * (M * N * self.total_t)
+                    robot_offset2 = robot_nums[robot_id2] * (M * N * self.total_t)
+
+                    # Same-cell, same-time term (native crash constraint)
+                    shared_cells_t = set(self._cells(robot_id1, t_window)) & set(
+                        self._cells(robot_id2, t_window)
+                    )
+                    for i, j in shared_cells_t:
+                        idx1 = i * N + j + M * N * t_window + robot_offset1
+                        idx2 = i * N + j + M * N * t_window + robot_offset2
+                        self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_crash
+
+                    # Cross-time swap terms, only meaningful if both robots are
+                    # still active in the window at t+1
+                    if (
+                        robot_id1 not in next_active_robots
+                        or robot_id2 not in next_active_robots
+                    ):
+                        continue
+                    t_next_window = t_window + 1
+
+                    # robot1 arrives at t+1 where robot2 was at t
+                    shared_r1_next = set(self._cells(robot_id1, t_next_window)) & set(
+                        self._cells(robot_id2, t_window)
+                    )
+                    for i, j in shared_r1_next:
+                        idx1 = i * N + j + M * N * t_next_window + robot_offset1
+                        idx2 = i * N + j + M * N * t_window + robot_offset2
+                        self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_swap
+
+                    # robot2 arrives at t+1 where robot1 was at t
+                    shared_r2_next = set(self._cells(robot_id1, t_window)) & set(
+                        self._cells(robot_id2, t_next_window)
+                    )
+                    for i, j in shared_r2_next:
+                        idx1 = i * N + j + M * N * t_window + robot_offset1
+                        idx2 = i * N + j + M * N * t_next_window + robot_offset2
+                        self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_swap
+
     def build(self, constraints_to_apply=None):
         if constraints_to_apply is None:
             penalty_to_constraint = {
@@ -646,11 +722,17 @@ class GridQUBOBuilder(BaseQUBO):
                 "K_ter": "terrain",
                 "K_elev": "elevation",
                 "K_obs": "obstacle",
-                "K_crash": "multi_robot",
+                "K_crash": "crash",
+                "K_swap": "swap",
             }
             constraints_to_apply = [
                 v for k, v in penalty_to_constraint.items() if k in self.penalties
             ]
+            # apply_swap_penalty already applies the same-cell/same-time term
+            # itself (weighted by K_crash), so don't also run apply_crash_penalty
+            # separately — that would double-count it.
+            if "swap" in constraints_to_apply and "crash" in constraints_to_apply:
+                constraints_to_apply.remove("crash")
 
         # To clean the QUBO dictionary before building
         # In case there were previous qubo with different constraints/size
@@ -681,8 +763,8 @@ class GridQUBOBuilder(BaseQUBO):
             self.apply_elevation_penalty()
         if "obstacle" in constraints_to_apply:
             self.apply_obstacle_penalty()
-        if "multi_robot" in constraints_to_apply:
-            self.apply_multi_robot_penalty()
+        if "crash" in constraints_to_apply:
+            self.apply_crash_penalty()
 
         return self.Q
 

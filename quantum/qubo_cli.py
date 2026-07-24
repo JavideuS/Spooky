@@ -47,6 +47,7 @@ _HERE = Path(__file__).parent  # quantum/
 # Argument parser
 # ---------------------------------------------------------------------------
 
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="qubo_cli",
@@ -61,19 +62,22 @@ def build_parser() -> argparse.ArgumentParser:
     # ---- Problem definition ------------------------------------------------
     prob = parser.add_argument_group("Problem")
     prob.add_argument(
-        "--map", "-m",
+        "--map",
+        "-m",
         required=True,
         metavar="PATH",
         help="Path (without extension) to the map config, e.g. maps/synthetic/10x10/obs10x10_hard",
     )
     prob.add_argument(
-        "--problem", "-p",
+        "--problem",
+        "-p",
         default="four_robots",
         metavar="NAME",
         help="Problem name defined inside the map config (default: four_robots)",
     )
     prob.add_argument(
-        "--builder", "-b",
+        "--builder",
+        "-b",
         choices=["grid", "graph"],
         default="grid",
         help="QUBO builder type: 'grid' (QUBOBuilder) or 'graph' (GraphQUBO) (default: grid)",
@@ -117,29 +121,89 @@ def build_parser() -> argparse.ArgumentParser:
     pen = parser.add_argument_group("Penalties")
     pen.add_argument(
         "--penalty-set",
-        default="crash",
+        default="swap",
         metavar="SET",
         help=(
             "Named penalty set from config.yaml to use as base "
-            "(default: crash). Overridden by individual --K-* flags."
+            "(default: swap). Overridden by individual --K-* flags."
         ),
     )
     # Individual overrides — if given, they take precedence over the set
-    pen.add_argument("--K-hot",   type=float, default=None, metavar="VAL", help="Override K_hot penalty")
-    pen.add_argument("--K-adj",   type=float, default=None, metavar="VAL", help="Override K_adj penalty")
-    pen.add_argument("--K-start", type=float, default=None, metavar="VAL", help="Override K_start penalty")
-    pen.add_argument("--K-goal",  type=float, default=None, metavar="VAL", help="Override K_goal penalty")
-    pen.add_argument("--K-lock",  type=float, default=None, metavar="VAL", help="Override K_lock penalty")
-    pen.add_argument("--K-bt",    type=float, default=None, metavar="VAL", help="Override K_bt penalty")
-    pen.add_argument("--K-tp",    type=float, default=None, metavar="VAL", help="Override K_tp penalty")
-    pen.add_argument("--K-crash", type=float, default=None, metavar="VAL", help="Override K_crash penalty")
-    pen.add_argument("--K-obs",   type=float, default=None, metavar="VAL", help="Override K_obs penalty")
-    pen.add_argument("--K-goal-approx", type=float, default=None, metavar="VAL", help="Override K_goal_approx penalty")
+    pen.add_argument(
+        "--K-hot",
+        type=float,
+        default=None,
+        metavar="VAL",
+        help="Override K_hot penalty",
+    )
+    pen.add_argument(
+        "--K-adj",
+        type=float,
+        default=None,
+        metavar="VAL",
+        help="Override K_adj penalty",
+    )
+    pen.add_argument(
+        "--K-start",
+        type=float,
+        default=None,
+        metavar="VAL",
+        help="Override K_start penalty",
+    )
+    pen.add_argument(
+        "--K-goal",
+        type=float,
+        default=None,
+        metavar="VAL",
+        help="Override K_goal penalty",
+    )
+    pen.add_argument(
+        "--K-lock",
+        type=float,
+        default=None,
+        metavar="VAL",
+        help="Override K_lock penalty",
+    )
+    pen.add_argument(
+        "--K-bt", type=float, default=None, metavar="VAL", help="Override K_bt penalty"
+    )
+    pen.add_argument(
+        "--K-tp", type=float, default=None, metavar="VAL", help="Override K_tp penalty"
+    )
+    pen.add_argument(
+        "--K-crash",
+        type=float,
+        default=None,
+        metavar="VAL",
+        help="Override K_crash penalty",
+    )
+    pen.add_argument(
+        "--K-swap",
+        type=float,
+        default=None,
+        metavar="VAL",
+        help="Override K_swap penalty",
+    )
+    pen.add_argument(
+        "--K-obs",
+        type=float,
+        default=None,
+        metavar="VAL",
+        help="Override K_obs penalty",
+    )
+    pen.add_argument(
+        "--K-goal-approx",
+        type=float,
+        default=None,
+        metavar="VAL",
+        help="Override K_goal_approx penalty",
+    )
 
     # ---- Solver ------------------------------------------------------------
     sol = parser.add_argument_group("Solver")
     sol.add_argument(
-        "--solver", "-s",
+        "--solver",
+        "-s",
         choices=["dwave", "pennylane", "qiskit_remote"],
         default="dwave",
         help="Solver backend (default: dwave)",
@@ -166,7 +230,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # PennyLane / QAOA-specific
-    pl = parser.add_argument_group("PennyLane / QAOA (only used when --solver pennylane)")
+    pl = parser.add_argument_group(
+        "PennyLane / QAOA (only used when --solver pennylane)"
+    )
     pl.add_argument(
         "--device",
         default="lightning.gpu",
@@ -257,7 +323,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to the materials YAML file (default: <package>/config/materials.yaml)",
     )
     misc.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         type=int,
         choices=[0, 1, 2, 3],
         default=None,
@@ -274,6 +341,7 @@ def build_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def parse_window_limits(raw: list[str], robot_ids) -> dict:
     """
@@ -317,15 +385,16 @@ def build_penalties(config: dict, args: argparse.Namespace) -> dict:
     penalties.setdefault("name", args.penalty_set)
 
     overrides = {
-        "K_hot":        args.K_hot,
-        "K_adj":        args.K_adj,
-        "K_start":      args.K_start,
-        "K_goal":       args.K_goal,
-        "K_lock":       args.K_lock,
-        "K_bt":         args.K_bt,
-        "K_tp":         args.K_tp,
-        "K_crash":      args.K_crash,
-        "K_obs":        args.K_obs,
+        "K_hot": args.K_hot,
+        "K_adj": args.K_adj,
+        "K_start": args.K_start,
+        "K_goal": args.K_goal,
+        "K_lock": args.K_lock,
+        "K_bt": args.K_bt,
+        "K_tp": args.K_tp,
+        "K_crash": args.K_crash,
+        "K_swap": args.K_swap,
+        "K_obs": args.K_obs,
         "K_goal_approx": args.K_goal_approx,
     }
     for key, val in overrides.items():
@@ -341,7 +410,9 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
 
     if args.solver == "dwave":
         norm_scale = args.normalize_scale if args.normalize_scale is not None else 4.0
-        num_reads  = int(args.num_reads) if args.num_reads and args.num_reads != "auto" else 4
+        num_reads = (
+            int(args.num_reads) if args.num_reads and args.num_reads != "auto" else 4
+        )
         logger.minimal(f"Creating DWave solver (scale={norm_scale}, reads={num_reads})")
         return SolverFactory.create_solver(
             solver="dwave",
@@ -351,7 +422,7 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
 
     elif args.solver == "pennylane":
         norm_scale = args.normalize_scale if args.normalize_scale is not None else 1.0
-        num_reads  = args.num_reads if args.num_reads else "auto"
+        num_reads = args.num_reads if args.num_reads else "auto"
 
         # Initial QAOA params — load from file or use the defaults from qubo.py
         if args.init_params:
@@ -387,8 +458,8 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
         #   SolverFactory.create_solver(solver="pennylane", device="qiskit.remote", ...)
         # normalize_scale defaults to 4.0 (same as qubo.py's qiskit_hardware).
         norm_scale = args.normalize_scale if args.normalize_scale is not None else 4.0
-        num_reads  = args.num_reads if args.num_reads else "auto"
-        device     = args.device if args.device != "lightning.gpu" else "qiskit.remote"
+        num_reads = args.num_reads if args.num_reads else "auto"
+        device = args.device if args.device != "lightning.gpu" else "qiskit.remote"
 
         if args.init_params:
             init_params = np.load(args.init_params, allow_pickle=False)
@@ -425,15 +496,20 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = build_parser()
     args = parser.parse_args()
 
     # -- Config --------------------------------------------------------------
-    config = config_parser.load_config(args.config, sections=["penalty_sets", "verbose"])
+    config = config_parser.load_config(
+        args.config, sections=["penalty_sets", "verbose"]
+    )
 
     # Verbose: CLI > config.yaml
-    verbose_level = args.verbose if args.verbose is not None else config["verbose"]["level"]
+    verbose_level = (
+        args.verbose if args.verbose is not None else config["verbose"]["level"]
+    )
     set_verbose_level(verbose_level)
     logger = get_logger()
 
@@ -481,14 +557,18 @@ def main():
         p = problem.as_graph_only()
         builder = GraphQUBO(p, **builder_kwargs)
 
-    logger.minimal(f"Builder: {args.builder.upper()} | window_limits={window_limits or 'none'}")
+    logger.minimal(
+        f"Builder: {args.builder.upper()} | window_limits={window_limits or 'none'}"
+    )
 
     # -- Solver --------------------------------------------------------------
     solver = build_solver(args, verbose_level)
 
     # -- Run mode ------------------------------------------------------------
     if args.benchmark:
-        logger.minimal(f"Running benchmark: {args.num_runs} runs, level {args.benchmark_level}")
+        logger.minimal(
+            f"Running benchmark: {args.num_runs} runs, level {args.benchmark_level}"
+        )
         runner = bm_module.BenchmarkRunner(
             builder,
             solver,
@@ -508,7 +588,9 @@ def main():
         if isinstance(energy, list):
             energy = sum(energy)
 
-        logger.debug(f"Raw path:  {path}")  # Full decoded tuples — only useful at verbose=3
+        logger.debug(
+            f"Raw path:  {path}"
+        )  # Full decoded tuples — only useful at verbose=3
         logger.minimal(f"Energy:    {energy:.4f}")
         logger.minimal(f"Time:      {time.time() - timer:.4f}")
 

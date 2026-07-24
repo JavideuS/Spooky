@@ -233,6 +233,7 @@ class PennylaneSolver(BaseSolver):
         best_sample = []
         best_energy = []
         window_stats = []  # Track per-window variable reduction stats
+        forced_collisions = []  # Track pre-processing forced collisions across all windows
         correction_count = 0  # Track consecutive correction attempts for current window
 
         while (builder.total_t) > (builder.current_T):
@@ -244,8 +245,9 @@ class PennylaneSolver(BaseSolver):
                 self.logger.standard("✅ All robots reached goal or inactive. Stopping solver.")
                 break
 
-            fixed_vars, window_stat, is_preprocessed = self._prepare_window(builder)
+            fixed_vars, window_stat, is_preprocessed, window_forced_collisions = self._prepare_window(builder)
             window_stats.append(window_stat)
+            forced_collisions.extend(window_forced_collisions)
 
             # Track iteration time for quantum hardware
             if self.dev == "qiskit.remote":
@@ -507,6 +509,7 @@ class PennylaneSolver(BaseSolver):
             'optimized_params': self.params,
             'metadata': {
                 'window_stats': window_stats,  # Per-window variable reduction stats
+                'forced_collisions': forced_collisions,  # Pre-processing forced collisions (bypass K_crash/K_swap)
                 # 'window_solutions': best_sample  # Keep window solutions for debugging
             }
         }
