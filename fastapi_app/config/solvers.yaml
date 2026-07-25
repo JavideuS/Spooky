@@ -6,14 +6,13 @@ _defaults:
     backend: "pennylane"
     device: "lightning.qubit"
 
-
 # Main solver profiles
 solvers:
   dwave:
-    3x3:
+    general:
       <<: *dwave_defaults
-      normalization_scale: 2.0
-      num_reads: 15
+      normalization_scale: 4.0
+      num_reads: 4
     5x5:
       <<: *dwave_defaults
       normalization_scale: 1.0
@@ -39,12 +38,3 @@ solvers:
       layers: 2
       optimizer: "SPSA"
       opt_steps: 30
-
-
-# Optional: aliases for backward compatibility or simplicity
-aliases:
-  dwave_3x3: dwave.3x3
-  dwave_5x5: dwave.5x5
-  pennylane_qaoa_QNG: pennylane.qaoa_QNG
-  pennylane_qaoa_SPSA: pennylane.qaoa_SPSA
-

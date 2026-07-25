@@ -10,11 +10,21 @@ import quantum.pathFormulation as pathfinding
 import registry
 from profiles.robot import Robot, RegisterRobotRequest
 from profiles.models import (
-    MapInfo, RobotMapsResponse, PlanRequest, PlanResponse,
-    MapRegistryResponse, MapUploadResponse,
-    StatelessPlanRequest, StatelessPlanResponse, RobotPathResult,
+    MapInfo,
+    RobotMapsResponse,
+    PlanRequest,
+    PlanResponse,
+    MapRegistryResponse,
+    MapUploadResponse,
+    StatelessPlanRequest,
+    StatelessPlanResponse,
+    RobotPathResult,
 )
-from config_api import load_solver_configs, global_solver_configs, global_aliases, global_penalties_params
+from config_api import (
+    load_solver_configs,
+    global_solver_configs,
+    global_penalties_params,
+)
 from typing import Dict, Optional
 import datetime
 import time
@@ -26,15 +36,9 @@ robots: Dict[str, Robot] = {}
 # Atlhough I still don't have structure for this, need more data
 TEMPLATES = {
     "default": {},
-    "mobile-robot": {
-        "active_solver": "simulated_annealing"
-    },
-    "quantum-agent": {
-        "active_solver": "dwave.3x3"
-    },
-    "research-qaoa": {
-        "active_solver": "pennylane.qaoa_QNG"
-    }
+    "mobile-robot": {"active_solver": "simulated_annealing"},
+    "quantum-agent": {"active_solver": "dwave.general"},
+    "research-qaoa": {"active_solver": "pennylane.qaoa_QNG"},
 }
 
 
@@ -44,25 +48,29 @@ async def lifespan(app: FastAPI):
     Application lifespan context manager to handle startup and shutdown events.
     """
     try:
-        solvers_config = config_parser.load_config("config/solvers.yaml", sections=["solvers", "aliases"])
+        solvers_config = config_parser.load_config(
+            "config/solvers.yaml", sections=["solvers"]
+        )
         solvers = solvers_config.get("solvers", {})
-        aliases = solvers_config.get("aliases", {})
 
-        load_solver_configs(solvers, aliases)
+        load_solver_configs(solvers)
         print("Solver configurations loaded.")
 
-        penalties_conf = config_parser.load_config("../quantum/config/config.yaml", sections=["penalty_sets"])
+        penalties_conf = config_parser.load_config(
+            "../quantum/config/config.yaml", sections=["penalty_sets"]
+        )
         global_penalties_params.update(penalties_conf["penalty_sets"])
 
         maps_conf = config_parser.load_config("config/maps.yaml", sections=["maps"])
         registry.load_map_registry(maps_conf.get("maps") or {})
-        print(f"Map registry loaded ({len(maps_conf.get('maps') or {})} entries, lazy-loaded on first use).")
+        print(
+            f"Map registry loaded ({len(maps_conf.get('maps') or {})} entries, lazy-loaded on first use)."
+        )
 
         yield  # Application is ready to handle requests
     finally:
         # Cleanup if needed
         global_solver_configs.clear()
-        global_aliases.clear()
         print("Application shutdown complete.")
 
 
@@ -73,7 +81,7 @@ app = FastAPI(lifespan=lifespan)
 def list_solvers() -> Dict[str, dict]:
     """
     List all available solvers and their configurations.
-    
+
     Returns:
         Dict mapping solver_id → configuration
     """
@@ -81,12 +89,15 @@ def list_solvers() -> Dict[str, dict]:
 
 
 @app.post("/robots/{robot_id}/maps/{map_id}")
-async def upload_map(robot_id: str, map_id: str,
-                     file: UploadFile,
-                     materials_file: Optional[UploadFile] = None):
+async def upload_map(
+    robot_id: str,
+    map_id: str,
+    file: UploadFile,
+    materials_file: Optional[UploadFile] = None,
+):
     if robot_id not in robots:
         raise HTTPException(404, "Robot not found")
-    
+
     robot = robots[robot_id]
     try:
         file.file.seek(0)
@@ -101,27 +112,27 @@ async def upload_map(robot_id: str, map_id: str,
         robot.maps[map_id] = map_obj
         if robot.active_map is None:
             robot.active_map = map_id  # auto-activate first map
-    
+
         return {"status": "map_uploaded", "map_id": map_id}
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Map loading failed: {str(e)}")
 
 
-@app.get("/robots/{robot_id}/maps",  response_model=RobotMapsResponse)
+@app.get("/robots/{robot_id}/maps", response_model=RobotMapsResponse)
 def list_robot_maps(robot_id: str) -> Dict[str, dict]:
     """
     List all maps loaded for a specific robot.
-    
+
     Returns:
         Dict mapping map_id → metadata (name, grid size, materials, etc.)
     """
     if robot_id not in robots:
         raise HTTPException(404, "Robot not found")
-    
+
     robot = robots[robot_id]
     result = {}
-    
+
     for map_id, map_obj in robot.maps.items():
         try:
             # Extract metadata from your MapObject (adjust based on your class)
@@ -131,18 +142,12 @@ def list_robot_maps(robot_id: str) -> Dict[str, dict]:
                 resolution=getattr(map_obj, "resolution", "unknown"),
                 materials=getattr(map_obj, "materials", []),
                 loaded=True,
-                is_active=(map_id == robot.active_map)
+                is_active=(map_id == robot.active_map),
             )
         except Exception as e:
-            result[map_id] = {
-                "error": f"Failed to read metadata: {str(e)}"
-            }
-    
-    return {
-        "robot_id": robot_id,
-        "map_count": len(result),
-        "maps": result
-    }
+            result[map_id] = {"error": f"Failed to read metadata: {str(e)}"}
+
+    return {"robot_id": robot_id, "map_count": len(result), "maps": result}
 
 
 @app.get("/robots/{robot_id}/maps/{map_id}")
@@ -152,14 +157,14 @@ def get_robot_map_info(robot_id: str, map_id: str):
     """
     if robot_id not in robots:
         raise HTTPException(404, "Robot not found")
-    
+
     robot = robots[robot_id]
-    
+
     if map_id not in robot.maps:
         raise HTTPException(404, "Map not found for this robot")
-    
+
     map_obj = robot.maps[map_id]
-    
+
     # You can expose more attributes based on your MapObject
     return {
         "robot_id": robot_id,
@@ -172,7 +177,7 @@ def get_robot_map_info(robot_id: str, map_id: str):
         # Optional: expose internal flags
         "has_terrain": map_obj.terrain is not None,
         "has_elevation": map_obj.elevation is not None,
-        "metadata": "Map from HDF5 with custom layers"
+        "metadata": "Map from HDF5 with custom layers",
     }
 
 
@@ -184,15 +189,15 @@ def delete_robot_map(robot_id: str, map_id: str):
     """
     if robot_id not in robots:
         raise HTTPException(404, "Robot not found")
-    
+
     robot = robots[robot_id]
-    
+
     if map_id not in robot.maps:
         raise HTTPException(404, "Map not found for this robot")
-    
+
     # Remove map
     del robot.maps[map_id]
-    
+
     # If it was the active map, clear active_map_id
     if robot.active_map == map_id:
         if robot.maps:
@@ -200,12 +205,9 @@ def delete_robot_map(robot_id: str, map_id: str):
             robot.active_map = next(iter(robot.maps))
         else:
             robot.active_map = None
-    
-    return {
-        "status": "deleted",
-        "robot_id": robot_id,
-        "map_id": map_id
-    }
+
+    return {"status": "deleted", "robot_id": robot_id, "map_id": map_id}
+
 
 # ROBOTS
 
@@ -217,8 +219,10 @@ def register_robot(request: RegisterRobotRequest):
 
     if request.robot_id in robots:
         # Optional: return existing
-        return {"status": "already_registered",
-                "robot": robots[request.robot_id].to_dict()}
+        return {
+            "status": "already_registered",
+            "robot": robots[request.robot_id].to_dict(),
+        }
 
     # Validate template
     if request.template not in TEMPLATES:
@@ -235,10 +239,7 @@ def register_robot(request: RegisterRobotRequest):
     # Save
     robots[request.robot_id] = robot
 
-    return {
-        "status": "registered",
-        "robot": robot.to_dict()
-    }
+    return {"status": "registered", "robot": robot.to_dict()}
 
 
 @app.get("/robots/{robot_id}")
@@ -250,9 +251,8 @@ def get_robot(robot_id: str):
 
 @app.get("/robots")
 def list_robots():
-    return {
-        "robots": [robot.to_dict() for robot in robots.values()]
-    }
+    return {"robots": [robot.to_dict() for robot in robots.values()]}
+
 
 # PLANNING
 
@@ -261,7 +261,7 @@ def list_robots():
 def plan_path(robot_id: str, request: PlanRequest):
     if robot_id not in robots:
         raise HTTPException(404, "Robot not found")
-    
+
     robot = robots[robot_id]
 
     # --- 1. Resolve map ---
@@ -277,14 +277,20 @@ def plan_path(robot_id: str, request: PlanRequest):
 
     # --- 3. Run planning ---
     try:
-        robot_config = RobotConfig(robot_id=robot_id, start=tuple(request.start), goal=tuple(request.goal))
+        robot_config = RobotConfig(
+            robot_id=robot_id, start=tuple(request.start), goal=tuple(request.goal)
+        )
         problem = pathfinding.PathfindingProblem(robot_config, grid=map_obj)
-        builder = QUBOBuilder(problem, penalties=global_penalties_params["crash"], name="standard")
+        builder = QUBOBuilder(
+            problem, penalties=global_penalties_params["crash"], name="standard"
+        )
         start_time = time.time()
         builder.build()
         solution = solver.solve_qubo_smart(builder, False)
         planning_time = time.time() - start_time
-        decoded_path = [[i, j] for (i, j, t), _ in solver.decode_path(solution["solution"], problem)]
+        decoded_path = [
+            [i, j] for (i, j, t), _ in solver.decode_path(solution["solution"], problem)
+        ]
         energy = float(solver.total_energy(solution))
         print("Energy", energy)
         response = PlanResponse(
@@ -298,8 +304,8 @@ def plan_path(robot_id: str, request: PlanRequest):
                 "start": request.start,
                 "goal": request.goal,
                 "planning_time": planning_time,
-                "timestamp": datetime.datetime.now(datetime.UTC).isoformat()
-            }
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+            },
         )
         if request.details:
             response.solver_details = solver.to_dict()
@@ -320,7 +326,9 @@ def list_registered_maps():
 
 
 @app.post("/v1/maps/{map_id}", response_model=MapUploadResponse)
-async def upload_registered_map(map_id: str, file: UploadFile, materials_file: Optional[UploadFile] = None):
+async def upload_registered_map(
+    map_id: str, file: UploadFile, materials_file: Optional[UploadFile] = None
+):
     """
     Register a new map at runtime by uploading its HDF5 file.
     Stored in the same in-memory registry as the curated maps.yaml entries,
@@ -344,7 +352,9 @@ async def upload_registered_map(map_id: str, file: UploadFile, materials_file: O
             graph = map.Graph.from_hdf5_data(data["graph_data"])
 
         if grid is None and graph is None:
-            raise ValueError("HDF5 file contains neither a grid ('map_structure') nor a graph representation")
+            raise ValueError(
+                "HDF5 file contains neither a grid ('map_structure') nor a graph representation"
+            )
 
         registry.register_uploaded_map(map_id, grid=grid, graph=graph)
 
@@ -362,11 +372,11 @@ async def upload_registered_map(map_id: str, file: UploadFile, materials_file: O
 @app.post("/v1/plan", response_model=StatelessPlanResponse)
 def plan_stateless(request: StatelessPlanRequest):
     """
-    Stateless planning: map_id + solver + (start/goal or robots) in, paths + cost out.
+    Stateless planning: map_id + solver + robots in, paths + cost out.
     No robot registration, no per-call map upload — map and solver instances are
-    resolved from the in-memory registries. Supports both a single robot
-    (request.start/request.goal) and multiple robots (request.robots), and both
-    the grid and graph builder (request.format).
+    resolved from the in-memory registries. `robots` always takes a list — one
+    entry for a single robot, more for multi-robot — and both the grid and
+    graph builder are supported (request.format).
 
     Positions are always given as [row, col] — even in graph mode, where they're
     resolved to node ids server-side via Graph.get_node_from_position. Paths are
@@ -375,7 +385,9 @@ def plan_stateless(request: StatelessPlanRequest):
     Y-up if needed.
     """
     if request.format not in ("grid", "graph"):
-        raise HTTPException(400, f"Unknown format: {request.format}. Must be 'grid' or 'graph'.")
+        raise HTTPException(
+            400, f"Unknown format: {request.format}. Must be 'grid' or 'graph'."
+        )
 
     # --- 1. Resolve map ---
     try:
@@ -409,33 +421,34 @@ def plan_stateless(request: StatelessPlanRequest):
             return tuple(pos)
         node_id = env.get_node_from_position(tuple(pos))
         if node_id is None:
-            raise HTTPException(400, f"Position {pos} is not a node in map '{request.map_id}'")
+            raise HTTPException(
+                400, f"Position {pos} is not a node in map '{request.map_id}'"
+            )
         return node_id
 
-    if request.robots:
-        robot_configs = [
-            RobotConfig(
-                robot_id=r.id or f"robot_{i}",
-                start=resolve_position(r.start),
-                goal=resolve_position(r.goal),
-                start_time=r.start_time,
-                priority=r.priority,
-                safety_radius=r.safety_radius,
-            )
-            for i, r in enumerate(request.robots)
-        ]
-    else:
-        robot_configs = [
-            RobotConfig(robot_id="robot_0", start=resolve_position(request.start), goal=resolve_position(request.goal))
-        ]
+    robot_configs = [
+        RobotConfig(
+            robot_id=r.id or f"robot_{i}",
+            start=resolve_position(r.start),
+            goal=resolve_position(r.goal),
+            start_time=r.start_time,
+            priority=r.priority,
+            safety_radius=r.safety_radius,
+        )
+        for i, r in enumerate(request.robots)
+    ]
 
     # --- 5. Solve ---
     try:
         if request.format == "graph":
-            problem = pathfinding.PathfindingProblem(robot_configs, graph=env, T=request.T)
+            problem = pathfinding.PathfindingProblem(
+                robot_configs, graph=env, T=request.T
+            )
             builder = GraphQUBO(problem, penalties=penalties, name="v1_plan")
         else:
-            problem = pathfinding.PathfindingProblem(robot_configs, grid=env, T=request.T)
+            problem = pathfinding.PathfindingProblem(
+                robot_configs, grid=env, T=request.T
+            )
             builder = QUBOBuilder(problem, penalties=penalties, name="v1_plan")
         start_time = time.time()
         builder.build()
@@ -443,7 +456,9 @@ def plan_stateless(request: StatelessPlanRequest):
         planning_time = time.time() - start_time
 
         decoded = solver.decode_path(solution["solution"], problem)
-        robot_paths = solver.get_robot_paths(decoded)  # {robot_num: [(i, j, t), ...] sorted by t}
+        robot_paths = solver.get_robot_paths(
+            decoded
+        )  # {robot_num: [(i, j, t), ...] sorted by t}
         num_to_id = {num: rid for rid, num in problem.get_robot_nums().items()}
 
         paths = [

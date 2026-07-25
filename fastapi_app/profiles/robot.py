@@ -4,7 +4,7 @@ from quantum.map import Grid
 from quantum.pathFormulation import PathfindingProblem as Problem
 from pydantic import BaseModel
 from typing import Optional
-from config_api import global_solver_configs, global_aliases
+from config_api import global_solver_configs
 
 
 class RegisterRobotRequest(BaseModel):
@@ -22,7 +22,7 @@ class Robot:
         self.active_map = None  # e.g., "3x3_no_obs"
         self.problem = None
         self.solvers: Dict[str, SolverFactory] = {}
-        self.active_solver = None  # e.g., "dwave.3x3"
+        self.active_solver = None  # e.g., "dwave.general"
         self.metadata = {
             "created_at": "2025-04-05T12:00:00Z",
             "last_seen": None,

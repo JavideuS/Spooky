@@ -6,7 +6,7 @@ the same map/solver config but don't share state:
 - **`/v1/*` — stateless planner.** For external callers (e.g. a Go control
   circuit). No robot registration, no per-call map upload. Maps and solver
   instances live in server-side in-memory registries; a call is just
-  `map_id + solver + start/goal (or robots) in, paths + cost out`.
+  `map_id + solver + robots in, paths + cost out`.
 - **`/robots/*` — stateful, per-robot sessions.** For driving Spooky itself
   (animation tests, interactive experimentation from within the FastAPI
   layer). A robot is registered, maps are uploaded into its own namespace,
@@ -24,6 +24,7 @@ path is coupled to `argparse.Namespace` and isn't a good import target).
 pip install -e ".[fastapi]"   # fastapi, uvicorn, python-multipart
 cd fastapi_app/
 uvicorn api:app --reload
+# Then open http://127.0.0.1:8000/docs
 ```
 
 Must be run from `fastapi_app/` — config paths (`config/solvers.yaml`,
@@ -32,20 +33,15 @@ the working directory at startup.
 
 ## Config
 
-- `config/solvers.yaml` — named solver profiles (`dwave.3x3`,
-  `pennylane.qaoa_QNG`, ...) and aliases. Loaded into `global_solver_configs`
-  / `global_aliases` at startup (`config_api.py`).
+- `config/solvers.yaml` — named solver profiles (`dwave.general`,
+  `pennylane.qaoa_QNG`, ...), keyed `backend.name`. No aliases — one
+  canonical name per solver. Loaded into `global_solver_configs` at startup
+  (`config_api.py`).
 - `config/maps.yaml` — named map registry (`map_id -> {path, description}`),
   paths relative to `quantum/`. Loaded into the in-memory map registry at
   startup (`registry.py`).
 - `../quantum/config/config.yaml` — penalty sets (`crash`, `swap`, ...),
   shared with the core library. `crash` is the default for `/v1/plan`.
-
-Both `solvers.yaml` and `maps.yaml` live under `fastapi_app/config/`, not
-`quantum/config/`: nothing in the core library (`quantum/`) reads either
-file — they're purely how the API layer names things for HTTP callers. Only
-`config.yaml` and `materials.yaml` stay in `quantum/config/`, since the
-builders themselves depend on those.
 
 ## Map registry (`registry.py`)
 
@@ -71,8 +67,8 @@ per solver key on first use and reused across `/v1/plan` calls.
 ## Grid vs. graph (`/v1/plan`'s `format` field)
 
 `/v1/plan` accepts `format: "grid"` (default) or `format: "graph"`, selecting
-`QUBOBuilder` vs. `GraphQUBO`. Positions in the request (`start`/`goal`, or
-each entry in `robots`) are **always** `[row, col]`, even in graph mode —
+`QUBOBuilder` vs. `GraphQUBO`. Positions in each entry of the `robots` list
+(`start`/`goal`) are **always** `[row, col]`, even in graph mode —
 the endpoint resolves them to node ids server-side via
 `Graph.get_node_from_position` before building `RobotConfig` objects
 (`GraphQUBO` and the shared windowing code in `base_qubo.py` expect
@@ -106,7 +102,7 @@ explicitly using `quantum/utils/coordinates.py`
 | `GET /solvers` | List configured solver profiles. |
 | `GET /v1/maps` | List the map registry (curated + uploaded). |
 | `POST /v1/maps/{map_id}` | Upload/register a map at runtime. |
-| `POST /v1/plan` | Stateless plan: single robot (`start`/`goal`) or multi-robot (`robots: [...]`), `format: "grid"\|"graph"`. Returns `{paths: [{robot_id, path}], cost, ...}`. |
+| `POST /v1/plan` | Stateless plan: `robots: [{id?, start, goal, ...}, ...]` (one entry for single-robot, more for multi-robot), `format: "grid"\|"graph"`. Returns `{paths: [{robot_id, path}], cost, ...}`. |
 | `POST /robots` | Register a robot session. |
 | `GET /robots` / `GET /robots/{id}` | List / inspect robot sessions. |
 | `POST /robots/{id}/maps/{map_id}` | Upload a map into a robot's own namespace. |

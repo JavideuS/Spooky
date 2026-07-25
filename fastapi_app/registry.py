@@ -7,7 +7,7 @@ Two things are cached here for the lifetime of the process:
     maps are 1000x1000). Synthetic maps generally carry both a grid and a
     graph representation in the same HDF5 file; both are parsed together
     from a single file read the first time either is requested.
-  - Solvers: named solver key (e.g. "dwave.3x3") -> solver instance, built
+  - Solvers: named solver key (e.g. "dwave.general") -> solver instance, built
     once from the config loaded by config_api.py and reused across requests.
 
 Both registries are module-level dicts, mutated in place by design (mirrors
@@ -21,7 +21,7 @@ from quantum.config.hdf5parser import load_both_from_hdf5
 from quantum.map import Grid, Graph
 from quantum.solvers.solver_factory import SolverFactory
 
-from config_api import global_solver_configs, global_aliases
+from config_api import global_solver_configs
 
 # fastapi_app/ is the cwd the app is run from; map paths in maps.yaml are
 # relative to quantum/, same convention as config_api's "../quantum/..." loads.
@@ -99,20 +99,13 @@ def list_maps() -> Dict[str, dict]:
     }
 
 
-def resolve_solver_key(solver_key: str) -> str:
-    if solver_key in global_solver_configs:
-        return solver_key
-    if solver_key in global_aliases:
-        return global_aliases[solver_key]
-    raise KeyError(solver_key)
-
-
 def get_solver(solver_key: str):
     """Return a cached solver instance for solver_key, building it on first use."""
-    resolved_key = resolve_solver_key(solver_key)
+    if solver_key not in global_solver_configs:
+        raise KeyError(solver_key)
 
-    if resolved_key not in _solver_instances:
-        config = global_solver_configs[resolved_key]
-        _solver_instances[resolved_key] = SolverFactory.create_solver_from_config(config)
+    if solver_key not in _solver_instances:
+        config = global_solver_configs[solver_key]
+        _solver_instances[solver_key] = SolverFactory.create_solver_from_config(config)
 
-    return _solver_instances[resolved_key]
+    return _solver_instances[solver_key]

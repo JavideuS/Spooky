@@ -1,4 +1,4 @@
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, field_validator
 from typing import Dict, List, Optional, Any
 
 # Maps
@@ -52,23 +52,27 @@ class StatelessPlanRequest(BaseModel):
     map_id: str
     solver: str                     # required — stateless, no "active solver" to fall back to
     format: str = "grid"            # "grid" or "graph" — which representation of map_id to plan on
-    start: Optional[list[int]] = None   # single-robot shorthand; always [row, col], even in graph mode
-    goal: Optional[list[int]] = None
-    robots: Optional[List[RobotSpec]] = None  # multi-robot form
+    robots: List[RobotSpec]         # one entry for a single robot, more for multi-robot
     penalty_set: str = "crash"
-    T: Optional[int] = None
+    T: Optional[int] = None         # omit/null to auto-compute; a window of 0 steps is never valid
     details: bool = False
 
-    @model_validator(mode="after")
-    def _exactly_one_robot_shape(self):
-        single = self.start is not None and self.goal is not None
-        multi = bool(self.robots)
-        if single == multi:  # both provided, or neither
+    @field_validator("robots")
+    @classmethod
+    def _non_empty_robots(cls, robots: List[RobotSpec]) -> List[RobotSpec]:
+        if not robots:
+            raise ValueError("'robots' must contain at least one entry.")
+        return robots
+
+    @field_validator("T")
+    @classmethod
+    def _positive_T(cls, T: Optional[int]) -> Optional[int]:
+        if T is not None and T < 1:
             raise ValueError(
-                "Provide either 'start' and 'goal' (single robot) or a non-empty 'robots' list "
-                "(multi-robot) — not both, not neither."
+                "'T' must be a positive number of timesteps, or omitted/null to "
+                "auto-compute from robot start/goal distances."
             )
-        return self
+        return T
 
 
 class RobotPathResult(BaseModel):
@@ -100,7 +104,7 @@ class PlanResponse(BaseModel):
     # success: bool                   # did the solver succeed?
     map_id: str                     # which map was used
     # solve_time_ms: float            # wall-clock time
-    solver_used: str                # e.g., "dwave.3x3", "pennylane.qaoa_QNG"
+    solver_used: str                # e.g., "dwave.general", "pennylane.qaoa_QNG"
     
     # Optional: solver-specific details (only if requested)
     solver_details: Optional[Dict[str, Any]] = None
