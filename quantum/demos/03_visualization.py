@@ -145,6 +145,26 @@ def main():
         print("    ✓ Saved to: output/step_by_step_path.png")
     except Exception as e:
         print(f"    ⚠ Could not save PNG: {e}")
+
+    # --- Animated Plot (interactive timeline) ---
+    print("\n  Creating animated plot (play/pause + time slider)...")
+    # smooth=True (default): robots glide between cells (substeps frames per timestep).
+    # smooth=False: one frame per QUBO timestep — the raw discrete solution,
+    # better when analyzing the formulation itself.
+    anim_fig = viz.create_animated_plot(
+        obstacles=obstacles,
+        path=path,
+        start=start,
+        goal=goal,
+        problem=problem
+    )
+    viz.write_html(anim_fig, "output/animated_path.html")
+    viz.show(anim_fig) # Popup for user
+    print("    ✓ Saved to: output/animated_path.html")
+
+    # --- GIF export (shareable: README, slides, paper supplementary) ---
+    print("\n  Exporting animation as GIF (requires kaleido + pillow)...")
+    viz.write_gif(anim_fig, "output/animated_path.gif", timestep_duration=600)
     
     # Display in notebook (if running in Jupyter)
     # viz.show(static_fig)
@@ -153,13 +173,16 @@ def main():
     print("\n" + "=" * 70)
     print("✅ Demo complete!")
     print("\nVisualization files created:")
-    print("  - output/static_path.html (open in browser)")
+    print("  - visualization_static.html (open in browser)")
     print("  - output/step_by_step_path.html (open in browser)")
+    print("  - output/animated_path.html (play/pause + time slider)")
+    print("  - output/animated_path.gif (shareable animation)")
     print("\nVisualization features:")
-    print("  ✓ Interactive hover to see coordinates")
+    print("  ✓ Interactive hover to see robot ID and timestep")
     print("  ✓ Custom images for robots and obstacles")
     print("  ✓ Terrain background rendering")
     print("  ✓ Step-by-step path evolution")
+    print("  ✓ Animated timeline (smooth or discrete) + GIF export")
     print("\nNext steps:")
     print("  - Open the HTML files in your browser to explore")
     print("  - Try demo 04_multi_robot.py for multi-agent visualization")
