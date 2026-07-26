@@ -13,7 +13,7 @@ the same map/solver config but don't share state:
   and `/robots/{id}/plan` reuses that per-robot state across calls.
 
 Both call the same underlying solve pipeline
-(`builder.build()` → `solver.solve_qubo_smart(builder, False)` →
+(`builder.build()` → `solver.solve_qubo(builder)` →
 `solver.decode_path(...)`) — see `quantum/qubo_cli.py` for the reference
 version of that pipeline (kept deliberately separate: `qubo_cli.py`'s solve
 path is coupled to `argparse.Namespace` and isn't a good import target).
@@ -24,8 +24,16 @@ path is coupled to `argparse.Namespace` and isn't a good import target).
 pip install -e ".[fastapi]"   # fastapi, uvicorn, python-multipart
 cd fastapi_app/
 uvicorn api:app --reload
-# Then open http://127.0.0.1:8000/docs
 ```
+
+- **http://127.0.0.1:8000/demo** — interactive demo UI: pick a map and
+  solver, add robots, plan, and watch the solved paths animate. Easiest way
+  to try the service without writing any code — see "Demo page" below.
+- **http://127.0.0.1:8000/docs** — Swagger UI for the raw `/v1/*` and
+  `/robots/*` endpoints, for programmatic callers.
+
+`/` itself has no route and 404s by design (this app is a backend/demo
+service, not a website with a landing page).
 
 Must be run from `fastapi_app/` — config paths (`config/solvers.yaml`,
 `config/maps.yaml`, `../quantum/config/config.yaml`) are resolved relative to
@@ -64,6 +72,20 @@ file, so requesting either one loads both.
 Solver instances are cached the same way (`registry.get_solver`), built once
 per solver key on first use and reused across `/v1/plan` calls.
 
+`GET /v1/maps/{map_id}/preview` renders the map's grid (obstacles + terrain,
+no robots/paths) via `quantum/visualizer.py`. Two `embed` modes: `html`
+(default) — a self-contained Plotly fragment, plotly.js via CDN, good for a
+direct browser open or a Swagger link; `json` — `{"data": [...], "layout":
+{...}}` for a page that already has `Plotly` loaded and wants to call
+`Plotly.newPlot`/`Plotly.react` itself (this is what `/demo` uses, so it can
+later update the same figure with a solved path instead of re-embedding a
+whole new document). Grid-only — a graph-only map returns 400, since the
+visualizer has no graph rendering.
+
+`GET /v1/penalty-sets` lists the penalty_set names available to `/v1/plan`
+(from `../quantum/config/config.yaml`), with `crash` as the documented
+default.
+
 ## Grid vs. graph (`/v1/plan`'s `format` field)
 
 `/v1/plan` accepts `format: "grid"` (default) or `format: "graph"`, selecting
@@ -99,10 +121,13 @@ explicitly using `quantum/utils/coordinates.py`
 
 | Method & path | Purpose |
 |---|---|
+| `GET /demo` | Self-contained demo UI — map/solver pickers, a robot form (or raw JSON), a live Plotly view. See below. |
 | `GET /solvers` | List configured solver profiles. |
+| `GET /v1/penalty-sets` | List penalty_set names available to `/v1/plan`. |
 | `GET /v1/maps` | List the map registry (curated + uploaded). |
+| `GET /v1/maps/{map_id}/preview` | Render the map's grid (obstacles/terrain) via Plotly. `?embed=html\|json`. |
 | `POST /v1/maps/{map_id}` | Upload/register a map at runtime. |
-| `POST /v1/plan` | Stateless plan: `robots: [{id?, start, goal, ...}, ...]` (one entry for single-robot, more for multi-robot), `format: "grid"\|"graph"`. Returns `{paths: [{robot_id, path}], cost, ...}`. |
+| `POST /v1/plan` | Stateless plan: `robots: [{id?, start, goal, ...}, ...]` (one entry for single-robot, more for multi-robot), `format: "grid"\|"graph"`, `render: bool`. Returns `{paths: [{robot_id, path}], cost, ..., figure?}`. |
 | `POST /robots` | Register a robot session. |
 | `GET /robots` / `GET /robots/{id}` | List / inspect robot sessions. |
 | `POST /robots/{id}/maps/{map_id}` | Upload a map into a robot's own namespace. |
@@ -110,7 +135,49 @@ explicitly using `quantum/utils/coordinates.py`
 | `DELETE /robots/{id}/maps/{map_id}` | Remove a map from a robot's namespace. |
 | `POST /robots/{id}/plan` | Stateful single-robot plan using the robot's active/uploaded map + solver. |
 
+## Demo page (`GET /demo`, `static/demo.html`)
+
+A single self-contained HTML/JS page (no build step, no framework —
+`plotly.js` via CDN `<script>` in `<head>`), served straight from disk by the
+`/demo` route. It's a thin client over the existing `/v1/*` endpoints, not a
+new code path.
+
+**How to use it:**
+
+1. Open `http://127.0.0.1:8000/demo`.
+2. Pick a **map** (upper-left, above the preview) — it loads immediately.
+3. Pick a **solver** in the sidebar; profiles tagged `"general"` are
+   preselected as the recommended default. Tags and description show below
+   the picker.
+4. Add one or more **robots** (start/goal row/col) via the form rows, or
+   switch to the "Raw JSON" tab to hand-edit the exact `/v1/plan` request
+   body (start_time, priority, safety_radius, or anything the form doesn't
+   expose) — whichever tab is active when you click "Plan path" is what gets
+   sent.
+5. Click **Plan path**. The result strip shows cost / planning time / solver,
+   and the visualization animates the solved paths with play/pause and a
+   timestep slider (drag it to scrub forward or back). Single-robot problems
+   render as Scooby; 2–4 robots get the ninja pack, matched by robot name
+   (name your robot `"kai"`, `"jay"`, `"lloyd"`, `"zane"`, or `"cole"` to pin
+   its character, otherwise they're assigned in pool order) — this comes from
+   `visualizer.py`'s `create_animated_plot`, not page-specific code.
+
+Details on the wiring: map + solver `<select>`s are populated from
+`GET /v1/maps` / `GET /solvers` (solvers grouped by backend — `dwave` /
+`pennylane` / `qiskit`, qiskit split out since it's remote hardware, not a
+local simulator). Picking a map fetches `/v1/maps/{id}/preview?embed=json`
+and renders it with `Plotly.newPlot`. Planning posts to `/v1/plan` with
+`render: true`; the response's `figure` (`data` + `layout` + `frames`) is
+drawn with `Plotly.newPlot(...).then(() => Plotly.addFrames(...))` — a plain
+`Plotly.react` call would silently drop the animation frames, since it only
+takes `data`/`layout`.
+
+There's no manual solver-recommendation logic beyond the `"general"` tag
+match — a map-size/robot-count-aware recommendation is a possible future
+addition, not something this page attempts.
+
 ## `web_page.py`
 
 A standalone Dash dashboard prototype, not wired into `api.py` or the
-FastAPI app — scratch/demo code, not part of the served API surface.
+FastAPI app — scratch/demo code, not part of the served API surface. `/demo`
+above is the actively maintained one.

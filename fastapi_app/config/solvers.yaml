@@ -2,39 +2,80 @@
 _defaults:
   dwave: &dwave_defaults
     backend: "dwave"
-  pennylane: &pennylane_defaults
+  pennylane_gpu: &pennylane_gpu_defaults
+    backend: "pennylane"
+    device: "lightning.gpu"
+  pennylane_cpu: &pennylane_cpu_defaults
     backend: "pennylane"
     device: "lightning.qubit"
+  pennylane_qiskit: &pennylane_qiskit_defaults
+    backend: "pennylane"
+    device: "qiskit.remote"
 
 # Main solver profiles
 solvers:
   dwave:
-    general:
+    fast:
       <<: *dwave_defaults
       normalization_scale: 4.0
       num_reads: 4
-    5x5:
+      description: "Dwave benefits from big normalizations and small number of reads/shots"
+      tags: ["dwave", "fast", "small maps", "<15 qubits"]
+    general:
       <<: *dwave_defaults
-      normalization_scale: 1.0
-      num_reads: 35
-      # Add metadata
-      description: "Low-read D-Wave for small maps"
-      tags: ["dwave", "fast", "small"]
-      cache_instance: true
-      experimental: false
+      normalization_scale: 4.0
+      num_reads: 8
+      description: "General purpose D-Wave solver"
+      tags: ["dwave", "general", "20+ qubits", "Safe"]
+    hard:
+      <<: *dwave_defaults
+      normalization_scale: 4.0
+      num_reads: 15
+      description: "Usually 15 runs is a safe upper limit, more than that only waste of time"
+      tags: ["dwave", "hard", "30+ qubits", "Slow"]
 
   pennylane:
-    qaoa_QNG:
-      <<: *pennylane_defaults
-      normalization_scale: 2.0
-      num_reads: 800
-      layers: 2
-      optimizer: "QNG"
-      opt_steps: 30
-    qaoa_SPSA:
-      <<: *pennylane_defaults
-      normalization_scale: 2.0
-      num_reads: 800
-      layers: 2
-      optimizer: "SPSA"
-      opt_steps: 30
+    inference:
+      qaoa_qiskit:
+        <<: *pennylane_qiskit_defaults
+        normalization_scale: 2.0
+        num_reads: 3000
+        layers: 2
+        tags: ["pennylane", "qiskit", "real hardware"]
+        description: "To test circuits and scenarios on real quantum hardware. Note you need to set IBM Quantum first"
+
+      qaoa_GPU_fast:
+        <<: *pennylane_gpu_defaults
+        normalization_scale: 2.0
+        num_reads: 500
+        layers: 2
+        tags: ["pennylane", "fast", "small maps", "<10 qubits"]
+      qaoa_GPU_general:
+        <<: *pennylane_gpu_defaults
+        normalization_scale: 2.0
+        num_reads: 5000
+        layers: 2
+        tags: ["pennylane", "general", "15+ qubits", "Safe"]
+      qaoa_GPU_hard:
+        <<: *pennylane_gpu_defaults
+        normalization_scale: 2.0
+        num_reads: 10000
+        layers: 3
+        tags: ["pennylane", "hard", "20+ qubits", "Slow"]
+        description: "With more than 25+ qubits the memory starts to become troublesome"
+    train:
+      # To find optimal parameters/ Initial angles. Result: initial_angles.json
+      qaoa_QNG:
+        <<: *pennylane_gpu_defaults
+        normalization_scale: 2.0
+        num_reads: 800
+        layers: 2
+        optimizer: "QNG"
+        opt_steps: 30
+      qaoa_SPSA:
+        <<: *pennylane_gpu_defaults
+        normalization_scale: 2.0
+        num_reads: 800
+        layers: 2
+        optimizer: "SPSA"
+        opt_steps: 30

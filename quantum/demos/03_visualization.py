@@ -59,7 +59,7 @@ def main():
     
     solver = SolverFactory.create_solver(solver="dwave", normalize_scale=4, num_reads=10)
 
-    solution = solver.solve_qubo_smart(builder, False)
+    solution = solver.solve_qubo(builder)
     
     raw_path = solver.decode_path(solution["solution"], p_graph)
     # Extract path for the single robot (format: [(x, y, t), ...])

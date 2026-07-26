@@ -56,6 +56,7 @@ class StatelessPlanRequest(BaseModel):
     penalty_set: str = "crash"
     T: Optional[int] = None         # omit/null to auto-compute; a window of 0 steps is never valid
     details: bool = False
+    render: bool = False            # also return an animated Plotly figure (data+layout+frames) of the solved paths; grid only
 
     @field_validator("robots")
     @classmethod
@@ -87,6 +88,7 @@ class StatelessPlanResponse(BaseModel):
     solver_used: str
     solver_details: Optional[Dict[str, Any]] = None
     metrics: Optional[Dict[str, Any]] = None
+    figure: Optional[Dict[str, Any]] = None  # {"data": [...], "layout": {...}, "frames": [...]}; set only if request.render was true
 
 
 # Stateful (per-robot) planning

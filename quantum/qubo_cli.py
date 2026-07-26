@@ -472,7 +472,9 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
 
     elif args.solver == "pennylane":
         norm_scale = args.normalize_scale if args.normalize_scale is not None else 1.0
-        num_reads = args.num_reads if args.num_reads else "auto"
+        num_reads = (
+            int(args.num_reads) if args.num_reads and args.num_reads != "auto" else "auto"
+        )
 
         # Initial QAOA params — load from file or use the defaults from qubo.py
         if args.init_params:
@@ -508,7 +510,9 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
         #   SolverFactory.create_solver(solver="pennylane", device="qiskit.remote", ...)
         # normalize_scale defaults to 4.0 (same as qubo.py's qiskit_hardware).
         norm_scale = args.normalize_scale if args.normalize_scale is not None else 4.0
-        num_reads = args.num_reads if args.num_reads else "auto"
+        num_reads = (
+            int(args.num_reads) if args.num_reads and args.num_reads != "auto" else "auto"
+        )
         device = args.device if args.device != "lightning.gpu" else "qiskit.remote"
 
         if args.init_params:

@@ -115,7 +115,7 @@ def main():
     
     # Solve with DWave
     print("\n  Solving with DWave...")
-    dwave_solution = solver.solve_qubo_smart(builder, False)
+    dwave_solution = solver.solve_qubo(builder)
     dwave_raw_path = solver.decode_path(dwave_solution["solution"], p_graph)
     dwave_robot_paths = solver.get_robot_paths(dwave_raw_path)
     dwave_energy = solver.total_energy(dwave_solution)
@@ -147,7 +147,7 @@ def main():
     
     # Solve with Pennylane
     print("\n  Solving with Pennylane...")
-    pennylane_solution = solver.solve_qubo_smart(builder)
+    pennylane_solution = solver.solve_qubo(builder)
     pennylane_raw_path = solver.decode_path(pennylane_solution["solution"], p_graph)
     pennylane_robot_paths = solver.get_robot_paths(pennylane_raw_path)
     pennylane_energy = solver.total_energy(pennylane_solution)

@@ -1,11 +1,16 @@
 from fastapi import FastAPI, UploadFile, HTTPException
+from fastapi.responses import HTMLResponse
 from contextlib import asynccontextmanager
+from pathlib import Path
+from types import SimpleNamespace
+import json
 import uvicorn
 import quantum.config.hdf5parser as h5parser
 import quantum.config.parser as config_parser
 from quantum import map
 from quantum.builder import QUBOBuilder, GraphQUBO
 from quantum.robotConfiguration import RobotConfig
+from quantum.visualizer import QuantumRoboticsVisualizer
 import quantum.pathFormulation as pathfinding
 import registry
 from profiles.robot import Robot, RegisterRobotRequest
@@ -42,6 +47,30 @@ TEMPLATES = {
 }
 
 
+def _warm_start_gpu_devices():
+    """
+    Pay PennyLane's lightning.gpu CUDA/cuStateVec cold-start cost (~2s, a
+    one-time cost per process) here at startup instead of on whichever
+    request happens to be the first to use a GPU solver profile. The cost is
+    process-wide, not per solver instance, so a single throwaway device
+    covers every pennylane.* profile configured with device=lightning.gpu.
+    """
+    needs_gpu = any(
+        cfg.get("backend") == "pennylane" and cfg.get("device") == "lightning.gpu"
+        for cfg in global_solver_configs.values()
+    )
+    if not needs_gpu:
+        return
+    try:
+        import pennylane as qml
+
+        t0 = time.time()
+        qml.device("lightning.gpu", wires=2)
+        print(f"Warmed lightning.gpu device ({time.time() - t0:.2f}s).")
+    except Exception as e:
+        print(f"Skipping lightning.gpu warm-start: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -55,6 +84,7 @@ async def lifespan(app: FastAPI):
 
         load_solver_configs(solvers)
         print("Solver configurations loaded.")
+        _warm_start_gpu_devices()
 
         penalties_conf = config_parser.load_config(
             "../quantum/config/config.yaml", sections=["penalty_sets"]
@@ -76,6 +106,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+DEMO_HTML_PATH = Path(__file__).parent / "static" / "demo.html"
+
+
+@app.get("/demo", response_class=HTMLResponse)
+def demo_page():
+    """Self-contained demo UI: map/solver pickers, a robot form, and a live Plotly view."""
+    return DEMO_HTML_PATH.read_text()
+
 
 @app.get("/solvers")
 def list_solvers() -> Dict[str, dict]:
@@ -86,6 +124,12 @@ def list_solvers() -> Dict[str, dict]:
         Dict mapping solver_id → configuration
     """
     return global_solver_configs
+
+
+@app.get("/v1/penalty-sets")
+def list_penalty_sets() -> Dict[str, object]:
+    """List available penalty_set names for /v1/plan (see quantum/config/config.yaml)."""
+    return {"penalty_sets": list(global_penalties_params.keys()), "default": "crash"}
 
 
 @app.post("/robots/{robot_id}/maps/{map_id}")
@@ -286,7 +330,7 @@ def plan_path(robot_id: str, request: PlanRequest):
         )
         start_time = time.time()
         builder.build()
-        solution = solver.solve_qubo_smart(builder, False)
+        solution = solver.solve_qubo(builder)
         planning_time = time.time() - start_time
         decoded_path = [
             [i, j] for (i, j, t), _ in solver.decode_path(solution["solution"], problem)
@@ -323,6 +367,44 @@ def list_registered_maps():
     """List every map_id in the registry (curated + runtime-uploaded), and whether it's loaded yet."""
     maps = registry.list_maps()
     return {"map_count": len(maps), "maps": maps}
+
+
+@app.get("/v1/maps/{map_id}/preview")
+def preview_map(map_id: str, embed: str = "html"):
+    """
+    Render map_id's grid (obstacles + terrain, no robots/paths).
+    embed="html" (default): a standalone-ish Plotly HTML fragment, plotly.js via
+    CDN — good for a direct browser open or Swagger link, not for injecting into
+    a page that wants to update the same figure later (script tags in an
+    innerHTML-injected fragment don't execute).
+    embed="json": {"data": [...], "layout": {...}} — for pages that already load
+    plotly.js themselves and want to call Plotly.newPlot/react directly (this is
+    what /demo uses, so it can later update the same figure with a solved path).
+    Grid-only: graph-only maps have no visualizer support and return 400.
+    """
+    if embed not in ("html", "json"):
+        raise HTTPException(400, f"Unknown embed: {embed}. Must be 'html' or 'json'.")
+
+    try:
+        grid = registry.get_map(map_id, format="grid")
+    except KeyError:
+        raise HTTPException(404, f"Unknown map_id: {map_id}")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(400, f"Failed to load map '{map_id}': {e}")
+
+    visualizer = QuantumRoboticsVisualizer(
+        grid_size=(grid.M, grid.N), title=f"Map preview: {map_id}"
+    )
+    problem_stub = SimpleNamespace(grid=grid)
+    fig = visualizer.create_static_plot(obstacles=grid.obstacles, problem=problem_stub)
+
+    if embed == "json":
+        return json.loads(fig.to_json())
+
+    html = fig.to_html(full_html=False, include_plotlyjs="cdn")
+    return HTMLResponse(content=html)
 
 
 @app.post("/v1/maps/{map_id}", response_model=MapUploadResponse)
@@ -452,7 +534,7 @@ def plan_stateless(request: StatelessPlanRequest):
             builder = QUBOBuilder(problem, penalties=penalties, name="v1_plan")
         start_time = time.time()
         builder.build()
-        solution = solver.solve_qubo_smart(builder, False)
+        solution = solver.solve_qubo(builder)
         planning_time = time.time() - start_time
 
         decoded = solver.decode_path(solution["solution"], problem)
@@ -481,6 +563,20 @@ def plan_stateless(request: StatelessPlanRequest):
         )
         if request.details:
             response.solver_details = solver.to_dict()
+
+        if request.render and request.format == "grid":
+            visualizer = QuantumRoboticsVisualizer(
+                grid_size=(env.M, env.N), title=f"{request.map_id} — solved"
+            )
+            fig = visualizer.create_animated_plot(
+                obstacles=env.obstacles,
+                problem=problem,
+                robot_paths={
+                    num_to_id.get(num, str(num)): coords
+                    for num, coords in robot_paths.items()
+                },
+            )
+            response.figure = json.loads(fig.to_json())
 
         return response
     except Exception as e:

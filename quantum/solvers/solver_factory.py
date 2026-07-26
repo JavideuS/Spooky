@@ -71,7 +71,7 @@ class SolverFactory:
         Returns:
             Solver instance
         """
-        solver = config.get("solver", "dwave")
+        solver = config.get("backend", "dwave")
         
         if solver not in cls._solvers:
             available = ", ".join(cls.get_available_solvers())

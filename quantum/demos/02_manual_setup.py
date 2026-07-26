@@ -134,7 +134,7 @@ def main():
     
     builder.build()
     print("\nSolving with DWave quantum annealer...")
-    solution = solver.solve_qubo_smart(builder, False)
+    solution = solver.solve_qubo(builder)
     
     # Results
     print("\n" + "=" * 70)
