@@ -6,6 +6,7 @@ import plotly.io as pio
 import numpy as np
 import base64
 from io import BytesIO
+from pathlib import Path
 
 from quantum.utils.coordinates import to_robotics_xy
 try:
@@ -58,8 +59,28 @@ class QuantumRoboticsVisualizer:
     # Opacity for robots outside their active window (waiting / finished).
     INACTIVE_OPACITY = 0.35
 
+    # Character pack (quantum/images/). Single robot -> Scooby; 2-4 robots ->
+    # ninjas, each with its canonical color used for the robot's lane/lines.
+    # A robot whose name matches a ninja (case-insensitive) gets that ninja;
+    # the rest are assigned in pool order.
+    IMAGES_DIR = Path(__file__).parent / 'images'
+    SCOOBY_IMAGE = 'scooby.png'
+    SNACK_IMAGE = 'scoobysnack.png'    # single-robot goal
+    GHOST_IMAGE = 'ghost.png'          # single-robot obstacles
+    GARMADON_IMAGE = 'garmadon.png'    # multi-robot (ninja) obstacles
+    NINJA_POOL = [
+        ('kai', '#e34948'),    # red
+        ('jay', '#2a78d6'),    # blue (lightning)
+        ('lloyd', '#008300'),  # green
+        ('zane', '#1baf7a'),   # ice
+        ('cole', '#52514e'),   # earth/black (dark gray so lines stay readable)
+    ]
+    # Embedded robot images are thumbnailed to this max dimension: animation
+    # frames each carry a copy, so full-size PNGs would blow up the HTML.
+    ROBOT_IMAGE_MAX_PX = 128
+
     def __init__(self, grid_size, title="Quantum Pathfinding Visualization", start_image_path=None, goal_image_path=None, obstacle_image_path=None,
-                 convention="matrix"):
+                 convention="matrix", robot_images="auto"):
         """
         Initializes the visualizer.
         Args:
@@ -69,12 +90,21 @@ class QuantumRoboticsVisualizer:
             goal_image_path (str, optional): Path to the image file for the Goal marker.
             convention (str): "matrix" (Row/Column, origin top-left) or
                 "robotics" (X/Y, Cartesian Y-up, origin bottom-left).
+            robot_images: How robots are drawn:
+                - "auto" (default): Scooby for a single robot; the ninja pack
+                  for 2-4 robots (line colors match each ninja); plain markers
+                  for 5+.
+                - None: plain markers only.
+                - list/dict of image paths: explicit per-robot images (by
+                  position for a list, by robot name or index for a dict).
         """
         if convention not in ("matrix", "robotics"):
             raise ValueError(f"convention must be 'matrix' or 'robotics', got {convention!r}")
         self.rows, self.cols = grid_size # Store as rows, cols
         self.title = title
         self.convention = convention
+        self.robot_images = robot_images
+        self._img_cache = {}
         self.start_image_path = start_image_path
         self.goal_image_path = goal_image_path
         self._start_image_base64 = self._load_image_base64(start_image_path)
@@ -117,14 +147,25 @@ class QuantumRoboticsVisualizer:
         # compatibility with code that overrides it).
         self.robot_colors = list(self.ROBOT_PALETTE)
 
-    def _load_image_base64(self, image_path):
+    def _load_image_base64(self, image_path, max_px=None):
         """
         Loads an image file and converts it to a base64 string for embedding in Plotly.
         Supports PNG and JPG natively, SVG needs PIL for conversion or special handling.
+        Args:
+            max_px: If set (and PIL available), thumbnail the image so its
+                largest side is max_px — keeps embedded animations small.
         """
         if not image_path:
             return None
+        cache_key = (str(image_path), max_px)
+        if cache_key in self._img_cache:
+            return self._img_cache[cache_key]
 
+        result = self._load_image_base64_uncached(image_path, max_px)
+        self._img_cache[cache_key] = result
+        return result
+
+    def _load_image_base64_uncached(self, image_path, max_px=None):
         try:
             # Try to determine image type from extension
             if image_path.lower().endswith('.svg'):
@@ -139,6 +180,8 @@ class QuantumRoboticsVisualizer:
                 if PIL_AVAILABLE:
                     # Use PIL to open and convert to PNG bytes
                     img = Image.open(image_path)
+                    if max_px:
+                        img.thumbnail((max_px, max_px))
                     img_buffer = BytesIO()
                     # Convert to PNG to ensure compatibility
                     img.save(img_buffer, format='PNG')
@@ -190,6 +233,30 @@ class QuantumRoboticsVisualizer:
     def _cell_px(self):
         """Rendered pixel size of one grid cell — square in every layout."""
         return max(60, min(140, int(600 / max(self.rows, self.cols))))
+
+    def _image_hover_size(self, cell_px=None):
+        """
+        Marker size (px) matching a cell image's footprint. Layout images
+        emit no hover events, so a transparent marker of this size sits under
+        each image to make its whole area hoverable.
+        Args:
+            cell_px: rendered cell size to base it on; defaults to the main
+                plot's cell size (step-by-step subplots pass their own).
+        """
+        cell = cell_px if cell_px is not None else self._cell_px()
+        return max(12, int(cell * self.image_marker_size_factor))
+
+    def _effective_image_spec(self, use_images):
+        """
+        Resolve a per-figure use_images override against the constructor's
+        robot_images setting. None -> constructor default; False -> no images
+        (pure lines/markers); True -> force images ("auto" if none configured).
+        """
+        if use_images is False:
+            return None
+        if use_images is True:
+            return self.robot_images or "auto"
+        return self.robot_images
 
     def _layout_dims(self, extra_bottom=0):
         """
@@ -313,7 +380,8 @@ class QuantumRoboticsVisualizer:
             name='⚠ Collision', showlegend=showlegend and bool(xs),
             text=texts, hovertemplate='%{text}<extra></extra>')
 
-    def _normalize_robots(self, path=None, start=None, goal=None, problem=None, robot_paths=None):
+    def _normalize_robots(self, path=None, start=None, goal=None, problem=None, robot_paths=None,
+                          use_images=None):
         """
         Normalizes the legacy single-robot arguments and the multi-robot dict
         into {idx: {path, name, color, offset, start, goal, start_conv,
@@ -343,9 +411,11 @@ class QuantumRoboticsVisualizer:
 
         problem_robots_list = list(problem.robots.values()) if (problem and hasattr(problem, 'robots')) else []
         n = len(robots_data)
+        self._resolve_robot_images(robots_data, use_images=use_images)
 
         for idx, data in robots_data.items():
-            data['color'] = self.robot_colors[idx % len(self.robot_colors)]
+            # An image pack may have pinned the color (ninjas); otherwise palette
+            data.setdefault('color', self.robot_colors[idx % len(self.robot_colors)])
             data['offset'] = self._robot_offset(idx, n)
 
             start_time = 0
@@ -381,6 +451,82 @@ class QuantumRoboticsVisualizer:
             data['start_conv'] = self._offset_points(self._convert_coordinates([data['start']]), off)[0] if data.get('start') is not None else None
             data['goal_conv'] = self._offset_points(self._convert_coordinates([data['goal']]), off)[0] if data.get('goal') is not None else None
         return robots_data
+
+    def _resolve_robot_images(self, robots_data, use_images=None):
+        """
+        Attaches a base64 image (data['image']) — and for the ninja pack a
+        matching line color (data['color']) — to each robot according to
+        self.robot_images (optionally overridden per figure by use_images).
+        Missing/unloadable files fall back to markers.
+        """
+        spec = self._effective_image_spec(use_images)
+        n = len(robots_data)
+        if spec is None or n == 0:
+            return
+
+        # An explicit goal image applies to the single-robot case in any mode
+        if n == 1 and self._goal_image_base64:
+            robots_data[0]['goal_image'] = self._goal_image_base64
+
+        if spec == "auto":
+            if n == 1:
+                # Explicit start_image_path keeps precedence (legacy behavior)
+                img = self._start_image_base64 or self._load_image_base64(
+                    str(self.IMAGES_DIR / self.SCOOBY_IMAGE), max_px=self.ROBOT_IMAGE_MAX_PX)
+                robots_data[0]['image'] = img
+                robots_data[0].setdefault('goal_image', self._load_image_base64(
+                    str(self.IMAGES_DIR / self.SNACK_IMAGE), max_px=self.ROBOT_IMAGE_MAX_PX))
+            elif n < 5:
+                pool = dict(self.NINJA_POOL)
+                assign = {}
+                # Robots named after a ninja get that ninja
+                for idx, data in robots_data.items():
+                    key = data['name'].lower()
+                    if key in pool:
+                        assign[idx] = (key, pool.pop(key))
+                # The rest take the remaining ninjas in pool order
+                remaining = iter(pool.items())
+                for idx in robots_data:
+                    if idx not in assign:
+                        assign[idx] = next(remaining)
+                for idx, (ninja, color) in assign.items():
+                    img = self._load_image_base64(str(self.IMAGES_DIR / f'{ninja}.png'),
+                                                  max_px=self.ROBOT_IMAGE_MAX_PX)
+                    robots_data[idx]['image'] = img
+                    if img:
+                        robots_data[idx]['color'] = color
+            return
+
+        # Explicit list (by position) or dict (by robot name or position)
+        for idx, data in robots_data.items():
+            path = None
+            if isinstance(spec, (list, tuple)):
+                if idx < len(spec):
+                    path = spec[idx]
+            elif isinstance(spec, dict):
+                path = spec.get(data['name'], spec.get(idx))
+            if path:
+                data['image'] = self._load_image_base64(str(path), max_px=self.ROBOT_IMAGE_MAX_PX)
+
+    def _resolve_obstacle_image(self, n_robots, use_images=None):
+        """
+        Effective obstacle image: an explicit obstacle_image_path always wins;
+        otherwise the "auto" theme uses the ghost for a single robot and
+        Garmadon for 2-4 robots (the ninja scenario). None -> black squares.
+        use_images=False suppresses images entirely for the figure.
+        """
+        if use_images is False:
+            return None
+        if self._obstacle_image_base64:
+            return self._obstacle_image_base64
+        if self._effective_image_spec(use_images) == "auto":
+            if n_robots == 1:
+                return self._load_image_base64(str(self.IMAGES_DIR / self.GHOST_IMAGE),
+                                               max_px=self.ROBOT_IMAGE_MAX_PX)
+            if 1 < n_robots < 5:
+                return self._load_image_base64(str(self.IMAGES_DIR / self.GARMADON_IMAGE),
+                                               max_px=self.ROBOT_IMAGE_MAX_PX)
+        return None
 
     @staticmethod
     def _timeline(robots_data):
@@ -450,32 +596,21 @@ class QuantumRoboticsVisualizer:
         else:  # Very large grids
             return 3
 
-    def _add_image_marker(self, fig, x, y, image_base64_data, name, size_factor=0.8):
+    def _image_dict(self, source, x, y, opacity=1.0, xref="x", yref="y", size_factor=None):
+        """Layout-image dict centered on (x, y), sized relative to a grid cell."""
+        f = size_factor if size_factor is not None else self.image_marker_size_factor
+        return dict(source=source, x=x, y=y, xref=xref, yref=yref,
+                    sizex=f, sizey=f, sizing="contain", opacity=opacity,
+                    layer="above", xanchor="center", yanchor="middle")
+
+    def _add_image_marker(self, fig, x, y, image_base64_data, name, size_factor=0.8, opacity=1.0):
         """
         Adds an image as a marker to the figure at the specified coordinates.
         The image is centered at (x,y) and sized to fit within a grid cell.
         """
         if image_base64_data:
-            # Use consistent image size relative to grid cell size
-            image_size = size_factor  # Since grid cells are unit size (1x1) in plot coordinates
-
-            # Add the image as a layout image, centered at (x,y)
-            fig.add_layout_image(
-                dict(
-                    source=image_base64_data,
-                    x=x,  # Center x
-                    y=y,  # Center y
-                    xref="x",
-                    yref="y",
-                    sizex=image_size,
-                    sizey=image_size,
-                    sizing="contain",  # How the image fits within sizex/sizey
-                    opacity=1.0,
-                    layer="above",  # Place above traces
-                    xanchor="center",  # Anchor point for x positioning
-                    yanchor="middle"   # Anchor point for y positioning
-                )
-            )
+            fig.add_layout_image(self._image_dict(image_base64_data, x, y,
+                                                  opacity=opacity, size_factor=size_factor))
 
     def _draw_board(self, fig, problem=None, row=None, col=None):
         """Draws terrain background and grid lines (optionally on a subplot)."""
@@ -498,7 +633,7 @@ class QuantumRoboticsVisualizer:
                         line=dict(color=self.colors['grid_lines'], width=1), **subplot)
 
     def create_static_plot(self, obstacles=None, path=None, start=None, goal=None, current_step=None,
-                        problem=None, robot_paths=None, show_collisions=True):
+                        problem=None, robot_paths=None, show_collisions=True, use_images=None):
         """
         Creates a single static plot with support for multiple robots.
         Paths are drawn as thin subway-style lanes (per-robot offset) so
@@ -513,23 +648,29 @@ class QuantumRoboticsVisualizer:
             problem: Problem instance (needed for multi-robot start/goals)
             robot_paths: Dictionary {robot_id: path_list}
             show_collisions: Mark vertex/swap conflicts with red X markers.
+            use_images: Per-figure override of the robot_images setting —
+                False for pure lines/markers, True to force images, None to
+                follow the constructor.
         """
-        robots_data = self._normalize_robots(path, start, goal, problem, robot_paths)
+        robots_data = self._normalize_robots(path, start, goal, problem, robot_paths,
+                                             use_images=use_images)
         collisions = self._collisions_for(robots_data, show_collisions)
 
         fig = go.Figure()
         self._draw_board(fig, problem)
 
         # --- Obstacles ---
+        obstacle_image = self._resolve_obstacle_image(len(robots_data), use_images=use_images)
         obstacles_converted = self._convert_coordinates(obstacles) if obstacles else []
         if obstacles_converted:
             obs_xs, obs_ys = zip(*obstacles_converted)
             hover_text_obs = [f"Obstacle<br>X: {int(x)}<br>Y: {int(y)}" for x, y in zip(obs_xs, obs_ys)]
 
-            if self._obstacle_image_base64:
+            if obstacle_image:
                 for x, y, text in zip(obs_xs, obs_ys, hover_text_obs):
-                    self._add_image_marker(fig, x, y, self._obstacle_image_base64, 'Obstacle', self.image_marker_size_factor)
-                fig.add_trace(go.Scatter(x=obs_xs, y=obs_ys, mode='markers', marker=dict(color='rgba(0,0,0,0)', size=0),
+                    self._add_image_marker(fig, x, y, obstacle_image, 'Obstacle', self.image_marker_size_factor)
+                fig.add_trace(go.Scatter(x=obs_xs, y=obs_ys, mode='markers',
+                                       marker=dict(color='rgba(0,0,0,0)', size=self._image_hover_size()),
                                        name='Obstacles', showlegend=True, hovertemplate='%{text}<extra></extra>', text=hover_text_obs))
             else:
                 fig.add_trace(go.Scatter(x=obs_xs, y=obs_ys, mode='markers',
@@ -579,15 +720,27 @@ class QuantumRoboticsVisualizer:
                 opacity = 1.0
                 if curr_conv and curr_conv == goal_conv:
                     opacity = 0.3
-                fig.add_trace(go.Scatter(x=[goal_conv[0]], y=[goal_conv[1]], mode='markers',
-                                       marker=dict(color=color, size=self._calculate_marker_size('goal'), symbol='diamond', opacity=opacity),
-                                       name=f'{name} Goal', showlegend=False, hovertemplate=f'{name} Goal<extra></extra>'))
+                goal_image = data.get('goal_image')
+                if goal_image:
+                    self._add_image_marker(fig, goal_conv[0], goal_conv[1], goal_image, f'{name} Goal',
+                                           self.image_marker_size_factor, opacity=opacity)
+                    fig.add_trace(go.Scatter(x=[goal_conv[0]], y=[goal_conv[1]], mode='markers',
+                                           marker=dict(color='rgba(0,0,0,0)', size=self._image_hover_size()),
+                                           showlegend=False, hovertemplate=f'{name} Goal<extra></extra>'))
+                else:
+                    fig.add_trace(go.Scatter(x=[goal_conv[0]], y=[goal_conv[1]], mode='markers',
+                                           marker=dict(color=color, size=self._calculate_marker_size('goal'), symbol='diamond', opacity=opacity),
+                                           name=f'{name} Goal', showlegend=False, hovertemplate=f'{name} Goal<extra></extra>'))
 
             # 4. Current Position
             if curr_conv:
-                use_image = (idx == 0 and self._start_image_base64)
-                if use_image:
-                     self._add_image_marker(fig, curr_conv[0], curr_conv[1], self._start_image_base64, name, self.image_marker_size_factor)
+                image = data.get('image') or (self._start_image_base64 if idx == 0 else None)
+                if image:
+                    self._add_image_marker(fig, curr_conv[0], curr_conv[1], image, name, self.image_marker_size_factor)
+                    # Invisible marker sized to the image keeps its whole area hoverable
+                    fig.add_trace(go.Scatter(x=[curr_conv[0]], y=[curr_conv[1]], mode='markers',
+                                           marker=dict(color='rgba(0,0,0,0)', size=self._image_hover_size()),
+                                           showlegend=False, hovertemplate=f'{name} (Current)<extra></extra>'))
                 else:
                     fig.add_trace(go.Scatter(x=[curr_conv[0]], y=[curr_conv[1]], mode='markers',
                                            marker=dict(color=color, size=self._calculate_marker_size('current_position'), symbol='star',
@@ -614,7 +767,8 @@ class QuantumRoboticsVisualizer:
 
     def create_animated_plot(self, obstacles=None, path=None, start=None, goal=None,
                              problem=None, robot_paths=None, frame_duration=500,
-                             show_collisions=True, smooth=True, substeps=4):
+                             show_collisions=True, smooth=True, substeps=4,
+                             use_images=None):
         """
         Creates an animated timeline of the paths: play/pause buttons plus a
         time slider. Each robot is a moving marker with a growing trail; the
@@ -632,12 +786,16 @@ class QuantumRoboticsVisualizer:
                 one frame per QUBO timestep — better for analyzing the
                 formulation itself.
             substeps: interpolation frames per timestep when smooth=True.
+            use_images: Per-figure override of the robot_images setting —
+                False for pure lines/markers, True to force images, None to
+                follow the constructor.
             (remaining args as in create_static_plot)
         Returns:
             go.Figure with frames, slider and play controls. The slider always
             steps on whole timesteps, even when smooth.
         """
-        robots_data = self._normalize_robots(path, start, goal, problem, robot_paths)
+        robots_data = self._normalize_robots(path, start, goal, problem, robot_paths,
+                                             use_images=use_images)
         if not robots_data or all(not d['times'] for d in robots_data.values()):
             raise ValueError("A path (or robot_paths) is required for the animated plot.")
 
@@ -648,16 +806,24 @@ class QuantumRoboticsVisualizer:
         self._draw_board(fig, problem)
 
         # --- Static base traces ---
+        obstacle_imgs = []
+        obstacle_image = self._resolve_obstacle_image(len(robots_data), use_images=use_images)
         obstacles_converted = self._convert_coordinates(obstacles) if obstacles else []
         if obstacles_converted:
             obs_xs, obs_ys = zip(*obstacles_converted)
-            if self._obstacle_image_base64:
+            if obstacle_image:
+                # Collected as dicts: animation frames replace layout.images
+                # wholesale, so obstacles must be re-included in every frame.
                 for ox, oy in zip(obs_xs, obs_ys):
-                    self._add_image_marker(fig, ox, oy, self._obstacle_image_base64, 'Obstacle', self.image_marker_size_factor)
+                    obstacle_imgs.append(self._image_dict(obstacle_image, ox, oy))
+                fig.add_trace(go.Scatter(x=obs_xs, y=obs_ys, mode='markers',
+                                       marker=dict(color='rgba(0,0,0,0)', size=self._image_hover_size()),
+                                       name='Obstacles', showlegend=False,
+                                       hovertemplate='Obstacle<extra></extra>'))
             else:
                 fig.add_trace(go.Scatter(x=obs_xs, y=obs_ys, mode='markers',
                                        marker=dict(color=self.colors['obstacle'], size=self._calculate_marker_size('obstacle'), symbol='square'),
-                                       name='Obstacles', hoverinfo='skip'))
+                                       name='Obstacles', hovertemplate='Obstacle<extra></extra>'))
 
         for data in robots_data.values():
             color, name = data['color'], data['name']
@@ -674,10 +840,20 @@ class QuantumRoboticsVisualizer:
                                        marker=dict(color=color, size=12, symbol='circle-open', line=dict(width=2)),
                                        showlegend=False, hovertemplate=f'{name} Start<extra></extra>'))
             if data['goal_conv']:
-                fig.add_trace(go.Scatter(x=[data['goal_conv'][0]], y=[data['goal_conv'][1]],
-                                       mode='markers',
-                                       marker=dict(color=color, size=11, symbol='diamond'),
-                                       showlegend=False, hovertemplate=f'{name} Goal<extra></extra>'))
+                if data.get('goal_image'):
+                    # Static image, but frames replace layout.images wholesale,
+                    # so it joins the per-frame list next to the obstacles.
+                    obstacle_imgs.append(self._image_dict(data['goal_image'],
+                                                          data['goal_conv'][0], data['goal_conv'][1]))
+                    fig.add_trace(go.Scatter(x=[data['goal_conv'][0]], y=[data['goal_conv'][1]],
+                                           mode='markers',
+                                           marker=dict(color='rgba(0,0,0,0)', size=self._image_hover_size()),
+                                           showlegend=False, hovertemplate=f'{name} Goal<extra></extra>'))
+                else:
+                    fig.add_trace(go.Scatter(x=[data['goal_conv'][0]], y=[data['goal_conv'][1]],
+                                           mode='markers',
+                                           marker=dict(color=color, size=11, symbol='diamond'),
+                                           showlegend=False, hovertemplate=f'{name} Goal<extra></extra>'))
 
         # --- Animated traces (trail + head per robot, then collisions) ---
         import bisect
@@ -723,10 +899,16 @@ class QuantumRoboticsVisualizer:
                         status = f'finished at t = {data["t_max"]}'
                     cell = data['times'].get(int(tau))
                     cell_txt = f'<br>cell = ({cell[0]}, {cell[1]})' if cell else ''
+                    if data.get('image'):
+                        # Sprite drawn as a layout image; a transparent marker
+                        # its size makes the whole character hoverable
+                        head_marker = dict(color='rgba(0,0,0,0)', size=self._image_hover_size())
+                    else:
+                        head_marker = dict(color=color, size=14, symbol='circle',
+                                           line=dict(color='white', width=2))
                     traces.append(go.Scatter(
                         x=[head[0]], y=[head[1]], mode='markers',
-                        marker=dict(color=color, size=14, symbol='circle',
-                                    line=dict(color='white', width=2)),
+                        marker=head_marker,
                         opacity=1.0 if active else self.INACTIVE_OPACITY,
                         showlegend=False,
                         hovertemplate=f'{name}<br>{status}{cell_txt}<extra></extra>'))
@@ -752,11 +934,33 @@ class QuantumRoboticsVisualizer:
             fig.add_trace(tr)
         anim_indices = list(range(anim_start, len(fig.data)))
 
-        fig.frames = [go.Frame(name=f'{tau:g}', data=frame_traces(tau), traces=anim_indices)
+        # Robot character images ride along in each frame's layout.images
+        # (traces can't animate images); obstacles are re-included since the
+        # list is replaced per frame.
+        any_robot_imgs = any(d.get('image') for d in robots_data.values())
+
+        def frame_images(tau):
+            imgs = list(obstacle_imgs)
+            for data in robots_data.values():
+                if data.get('image'):
+                    _, head, active = robot_state(data, tau)
+                    if head is not None:
+                        imgs.append(self._image_dict(data['image'], head[0], head[1],
+                                                     opacity=1.0 if active else self.INACTIVE_OPACITY))
+            return imgs
+
+        for img in frame_images(taus[0]):
+            fig.add_layout_image(img)
+
+        fig.frames = [go.Frame(name=f'{tau:g}', data=frame_traces(tau), traces=anim_indices,
+                               layout=dict(images=frame_images(tau)) if any_robot_imgs else None)
                       for tau in taus]
 
         # --- Controls (slider steps on whole timesteps only) ---
-        frame_args = {'frame': {'duration': per_frame, 'redraw': False},
+        # Layout images only refresh on redraw, so it must be on when robots
+        # are drawn as characters.
+        redraw = any_robot_imgs
+        frame_args = {'frame': {'duration': per_frame, 'redraw': redraw},
                       'mode': 'immediate', 'fromcurrent': True,
                       'transition': {'duration': transition, 'easing': 'linear'}}
         fig.update_layout(
@@ -766,13 +970,13 @@ class QuantumRoboticsVisualizer:
                 buttons=[
                     dict(label='▶ Play', method='animate', args=[None, frame_args]),
                     dict(label='⏸ Pause', method='animate',
-                         args=[[None], {'frame': {'duration': 0, 'redraw': False}, 'mode': 'immediate'}]),
+                         args=[[None], {'frame': {'duration': 0, 'redraw': redraw}, 'mode': 'immediate'}]),
                 ])],
             sliders=[dict(
                 x=0.22, y=-0.1, xanchor='left', yanchor='top', len=0.78,
                 currentvalue=dict(prefix='t = ', font=dict(size=14)),
                 steps=[dict(label=f'{tau:g}', method='animate',
-                            args=[[f'{tau:g}'], {'frame': {'duration': 0, 'redraw': False}, 'mode': 'immediate'}])
+                            args=[[f'{tau:g}'], {'frame': {'duration': 0, 'redraw': redraw}, 'mode': 'immediate'}])
                        for tau in taus if tau.is_integer()])],
         )
 
@@ -790,14 +994,16 @@ class QuantumRoboticsVisualizer:
         return fig
 
     def create_step_by_step_plot(self, obstacles, path=None, start=None, goal=None, problem=None, robot_paths=None,
-                                 show_collisions=True):
+                                 show_collisions=True, use_images=None):
         """
         Creates a subplot visualization showing the path evolution over time.
         One subplot per global timestep; uses the same subway-style lane
         offsets as the static plot, and marks conflicts occurring at each
         timestep with red X markers.
+        use_images: per-figure override of robot_images (False -> lines only).
         """
-        robots_data = self._normalize_robots(path, start, goal, problem, robot_paths)
+        robots_data = self._normalize_robots(path, start, goal, problem, robot_paths,
+                                             use_images=use_images)
         if not robots_data or all(not d['times'] for d in robots_data.values()):
              raise ValueError("Path is required for step-by-step visualization.")
 
@@ -822,7 +1028,10 @@ class QuantumRoboticsVisualizer:
         )
 
         # Convert obstacles once
+        obstacle_image = self._resolve_obstacle_image(len(robots_data), use_images=use_images)
         obstacles_converted = self._convert_coordinates(obstacles) if obstacles else []
+        # Subplot cells are smaller than the main plot's; size hover zones to them
+        step_hover = self._image_hover_size(min(base_width / self.cols, base_height / self.rows))
 
         # Loop through each timestep
         for i, t in enumerate(timeline):
@@ -839,15 +1048,18 @@ class QuantumRoboticsVisualizer:
             # 3. Obstacles
             if obstacles_converted:
                 obs_xs, obs_ys = zip(*obstacles_converted)
-                if self._obstacle_image_base64:
+                if obstacle_image:
                     for ox, oy in zip(obs_xs, obs_ys):
-                        fig.add_layout_image(dict(source=self._obstacle_image_base64, x=ox, y=oy, xref=xref, yref=yref,
-                                                sizex=self.image_marker_size_factor, sizey=self.image_marker_size_factor,
-                                                sizing="contain", opacity=1.0, layer="above", xanchor="center", yanchor="middle"))
+                        fig.add_layout_image(self._image_dict(obstacle_image, ox, oy, xref=xref, yref=yref))
+                    fig.add_trace(go.Scatter(x=list(obs_xs), y=list(obs_ys), mode='markers',
+                                           marker=dict(color='rgba(0,0,0,0)', size=step_hover),
+                                           showlegend=(i==0), name='Obstacles',
+                                           hovertemplate='Obstacle<extra></extra>'), row=row_subplot, col=col_subplot)
                 else:
                     fig.add_trace(go.Scatter(x=list(obs_xs), y=list(obs_ys), mode='markers',
                                            marker=dict(color=self.colors['obstacle'], size=self._calculate_marker_size('obstacle'), symbol='square'),
-                                           showlegend=(i==0), name='Obstacles'), row=row_subplot, col=col_subplot)
+                                           showlegend=(i==0), name='Obstacles',
+                                           hovertemplate='Obstacle<extra></extra>'), row=row_subplot, col=col_subplot)
 
             # 4. Robots
             for idx, data in robots_data.items():
@@ -862,7 +1074,8 @@ class QuantumRoboticsVisualizer:
                 if start_conv and i == 0:
                      fig.add_trace(go.Scatter(x=[start_conv[0]], y=[start_conv[1]], mode='markers',
                                             marker=dict(color=color, size=6, symbol='circle-open', line=dict(width=2)),
-                                            showlegend=False), row=row_subplot, col=col_subplot)
+                                            showlegend=False,
+                                            hovertemplate=f'{name} Start<extra></extra>'), row=row_subplot, col=col_subplot)
 
                 # Goal
                 if goal_conv:
@@ -872,9 +1085,18 @@ class QuantumRoboticsVisualizer:
                     if curr_conv == goal_conv:
                         opacity = 0.3
 
-                    fig.add_trace(go.Scatter(x=[goal_conv[0]], y=[goal_conv[1]], mode='markers',
-                                           marker=dict(color=color, size=8, symbol='diamond', opacity=opacity),
-                                           showlegend=False), row=row_subplot, col=col_subplot)
+                    if data.get('goal_image'):
+                        fig.add_layout_image(self._image_dict(data['goal_image'], goal_conv[0], goal_conv[1],
+                                                              opacity=opacity, xref=xref, yref=yref))
+                        fig.add_trace(go.Scatter(x=[goal_conv[0]], y=[goal_conv[1]], mode='markers',
+                                               marker=dict(color='rgba(0,0,0,0)', size=step_hover),
+                                               showlegend=False,
+                                               hovertemplate=f'{name} Goal<extra></extra>'), row=row_subplot, col=col_subplot)
+                    else:
+                        fig.add_trace(go.Scatter(x=[goal_conv[0]], y=[goal_conv[1]], mode='markers',
+                                               marker=dict(color=color, size=8, symbol='diamond', opacity=opacity),
+                                               showlegend=False,
+                                               hovertemplate=f'{name} Goal<extra></extra>'), row=row_subplot, col=col_subplot)
 
                 # Path history up to time t
                 if len(trail_ts) > 1:
@@ -888,17 +1110,22 @@ class QuantumRoboticsVisualizer:
                 if trail_ts:
                     curr = data['times_conv'][trail_ts[-1]]
                     active = t <= data['t_max']
-                    # Use scooby for first robot
-                    if idx == 0 and self._start_image_base64:
-                        fig.add_layout_image(dict(source=self._start_image_base64, x=curr[0], y=curr[1],
-                                                xref=xref, yref=yref, sizex=self.image_marker_size_factor, sizey=self.image_marker_size_factor,
-                                                sizing="contain", opacity=1.0 if active else self.INACTIVE_OPACITY,
-                                                layer="above", xanchor="center", yanchor="middle"))
+                    curr_hover = f'{name} (t = {trail_ts[-1]})<extra></extra>'
+                    image = data.get('image') or (self._start_image_base64 if idx == 0 else None)
+                    if image:
+                        fig.add_layout_image(self._image_dict(image, curr[0], curr[1],
+                                                              opacity=1.0 if active else self.INACTIVE_OPACITY,
+                                                              xref=xref, yref=yref))
+                        fig.add_trace(go.Scatter(x=[curr[0]], y=[curr[1]], mode='markers',
+                                               marker=dict(color='rgba(0,0,0,0)', size=step_hover),
+                                               showlegend=False,
+                                               hovertemplate=curr_hover), row=row_subplot, col=col_subplot)
                     else:
                         fig.add_trace(go.Scatter(x=[curr[0]], y=[curr[1]], mode='markers',
                                                marker=dict(color=color, size=10, symbol='star'),
                                                opacity=1.0 if active else self.INACTIVE_OPACITY,
-                                               showlegend=False), row=row_subplot, col=col_subplot)
+                                               showlegend=False,
+                                               hovertemplate=curr_hover), row=row_subplot, col=col_subplot)
 
             # 5. Collisions occurring at this timestep
             step_collisions = [c for c in collisions if c['t'] == t]
@@ -969,6 +1196,9 @@ class QuantumRoboticsVisualizer:
                 for i, tr in zip(idxs, fr['data']):
                     data[i] = tr
                 frame_fig = go.Figure(data=data, layout=layout)
+                if fr.get('layout'):
+                    # Per-frame layout carries the moving robot images
+                    frame_fig.update_layout(fr['layout'])
                 t_label = int(float(fr.get('name', 0)))
                 frame_fig.add_annotation(text=f"t = {t_label}",
                                          xref='paper', yref='paper', x=1, y=1.06,

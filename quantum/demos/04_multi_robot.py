@@ -164,7 +164,21 @@ def main():
         )
         viz.write_html(static_fig, "output/multi_robot_static.html")
         viz.show(static_fig) # Popup for user
-        
+
+        # Animated timeline — where multi-robot really shines: watch the robots
+        # move simultaneously, with real conflicts (if any) flagged in red at
+        # the timestep they occur. smooth=False gives the discrete QUBO timeline.
+        print("  Generating animated plot...")
+        anim_fig = viz.create_animated_plot(
+            obstacles=problem.grid.obstacles,
+            problem=problem,
+            robot_paths=robot_paths,
+        )
+        viz.write_html(anim_fig, "output/multi_robot_animated.html")
+        viz.show(anim_fig) # Popup for user
+        # Shareable GIF (requires kaleido + pillow):
+        # viz.write_gif(anim_fig, "output/multi_robot_animated.gif")
+
     except ImportError:
         print("  Skipping visualization (plotly not installed or other import error)")
     except Exception as e:

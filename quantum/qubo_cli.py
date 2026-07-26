@@ -25,6 +25,12 @@ Usage examples:
 
   # Suppress all output (silent mode)
   python qubo_cli.py --map maps/synthetic/10x10/obs10x10_hard --verbose 0
+
+  # Solve and open an animated visualization in the browser
+  python qubo_cli.py --map maps/synthetic/5x5/obs5x5 --problem two_robots --visualize
+
+  # Solve and save the animation as a GIF (or .html for interactive)
+  python qubo_cli.py --map maps/synthetic/5x5/obs5x5 --problem two_robots --visualize -o run.gif
 """
 
 import argparse
@@ -308,6 +314,40 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # ---- Visualization -----------------------------------------------------
+    viz_g = parser.add_argument_group("Visualization (single-solve mode only)")
+    viz_g.add_argument(
+        "--visualize",
+        nargs="?",
+        const="animated",
+        choices=["animated", "static", "steps"],
+        default=None,
+        metavar="MODE",
+        help=(
+            "Visualize the solved paths: 'animated' (default), 'static', or "
+            "'steps'. Opens a browser window unless -o/--output is given."
+        ),
+    )
+    viz_g.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        metavar="FILE",
+        help=(
+            "Save the visualization instead of opening a browser. Format from "
+            "extension: .html (interactive), .gif (animated mode only), "
+            ".png/.svg/.pdf (static image via kaleido)."
+        ),
+    )
+    viz_g.add_argument(
+        "--viz-discrete",
+        action="store_true",
+        help=(
+            "Animate the raw discrete timeline (one frame per QUBO timestep) "
+            "instead of smooth interpolated motion."
+        ),
+    )
+
     # ---- Config & misc -----------------------------------------------------
     misc = parser.add_argument_group("Config & misc")
     misc.add_argument(
@@ -492,6 +532,54 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
         raise ValueError(f"Unknown solver: {args.solver}")
 
 
+def run_visualization(args: argparse.Namespace, problem, robot_paths: dict) -> None:
+    """
+    Render the solved paths per --visualize / --output.
+
+    No --output: opens the figure in the default browser (plotly's fig.show()).
+    With --output: saves to the file, format chosen by extension.
+    """
+    logger = get_logger()
+    from quantum.visualizer import QuantumRoboticsVisualizer
+
+    if not robot_paths:
+        logger.minimal("[viz] No robot paths to visualize.")
+        return
+
+    mode = args.visualize
+    out = args.output
+    if out and out.lower().endswith(".gif") and mode != "animated":
+        logger.minimal(f"[viz] GIF export requires the animated mode — switching from '{mode}'.")
+        mode = "animated"
+
+    viz = QuantumRoboticsVisualizer(
+        (problem.grid.M, problem.grid.N),
+        title=f"{args.problem} — {Path(args.map).name}",
+    )
+    obstacles = problem.grid.obstacles
+
+    if mode == "static":
+        fig = viz.create_static_plot(obstacles=obstacles, robot_paths=robot_paths, problem=problem)
+    elif mode == "steps":
+        fig = viz.create_step_by_step_plot(obstacles, robot_paths=robot_paths, problem=problem)
+    else:  # animated
+        fig = viz.create_animated_plot(
+            obstacles=obstacles,
+            robot_paths=robot_paths,
+            problem=problem,
+            smooth=not args.viz_discrete,
+        )
+
+    if not out:
+        viz.show(fig)
+    elif out.lower().endswith(".gif"):
+        viz.write_gif(fig, out)
+    elif out.lower().endswith((".html", ".htm")):
+        viz.write_html(fig, out)
+    else:
+        viz.write_image(fig, out)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -566,6 +654,10 @@ def main():
 
     # -- Run mode ------------------------------------------------------------
     if args.benchmark:
+        if args.visualize:
+            logger.minimal(
+                "[viz] --visualize is only available in single-solve mode; ignoring."
+            )
         logger.minimal(
             f"Running benchmark: {args.num_runs} runs, level {args.benchmark_level}"
         )
@@ -596,6 +688,9 @@ def main():
 
         for robot_id, robot in problem.robots.items():
             logger.minimal(f"  [{robot_id}] {robot.path}")
+
+        if args.visualize:
+            run_visualization(args, problem, solver.get_robot_paths(path))
 
 
 if __name__ == "__main__":
