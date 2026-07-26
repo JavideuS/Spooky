@@ -145,29 +145,21 @@ class DynamicSolver:
         """
         return self.solver.get_solver_info()
     
-    def solve_qubo(self, builder):
+    def solve_qubo(self, builder, optimization=False, preprocess=True):
         """
         Solve QUBO using the current solver.
-        
-        Args:
-            builder: QUBOBuilder instance
-            
-        Returns:
-            Solution dictionary
-        """
-        return self.solver.solve_qubo(builder)
 
-    def solve_qubo_smart(self, builder, optimization=False):
-        """
-        Solve QUBO using the current solver.
-        
         Args:
             builder: QUBOBuilder instance
-            
+            optimization: Whether to run variational optimization before sampling
+                (PennyLane only; ignored by other solvers).
+            preprocess: When True (default), applies variable reduction and
+                correction loop. When False, runs the simple raw loop.
+
         Returns:
             Solution dictionary
         """
-        return self.solver.solve_qubo_smart(builder, optimization)
+        return self.solver.solve_qubo(builder, optimization=optimization, preprocess=preprocess)
     
     def get_robot_paths(self, path):
         """

@@ -568,12 +568,19 @@ class BaseSolver(ABC):
         return fixed_vars, window_stat, final_vars == 0, forced_collisions
 
     @abstractmethod
-    def solve_qubo(self, builder) -> Dict[str, Any]:
+    def solve_qubo(self, builder, optimization=False, preprocess=True) -> Dict[str, Any]:
         """
         Solve the QUBO problem.
 
         Args:
             builder: QUBOBuilder instance
+            optimization: Whether to run variational parameter optimization before
+                sampling (PennyLane only; ignored by classical/annealing solvers).
+            preprocess: When True (default), runs _prepare_window() to apply BFS
+                logical-variable reduction and diagonal fixed-var pruning, tracks
+                window stats, and retries invalid moves up to max_corrections times.
+                When False, runs a simpler loop with no preprocessing — useful for
+                debugging the raw sampler.
 
         Returns:
             Dictionary containing solution, energy, and raw response

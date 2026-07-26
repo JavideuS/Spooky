@@ -14,38 +14,20 @@ class DWaveSolver(BaseSolver):
             **kwargs,
         )
 
-    def solve_qubo(self, builder, opt):
-        best_sample = []
-        best_energy = []
-        response = None
+    def solve_qubo(self, builder, optimization=False, preprocess=True):
+        """
+        Solve QUBO using simulated annealing.
 
-        while (builder.total_t) > (builder.current_T):
-            Q = builder.Q
-            if self.norm_scale != 0:
-                Q = self.normalize_qubo(builder.Q, self.norm_scale)
-            self.logger.standard(
-                "Start position:", builder.problem.start, "Iteration:", builder.iter
-            )
-            bqm = BinaryQuadraticModel.from_qubo(Q)
-            sampler = SimulatedAnnealingSampler()
-            response = sampler.sample(bqm, num_reads=self.num_reads)
+        Args:
+            builder: QUBOBuilder instance
+            optimization: Accepted for interface compatibility; unused by DWave/SA.
+            preprocess: When True (default), applies BFS variable reduction,
+                diagonal pruning, correction loop, and window stats tracking.
+                When False, runs a simple loop with no preprocessing.
 
-            first = response.first
-            # sample_dict = dict(first.sample)  # OrderedDict → dict
-            # print("Sample:", self.decode_path(sample_dict, builder.problem))
-            best_sample.append(first.sample)
-            best_energy.append(response.first.energy)
-            last_pos = self.decode_path(first.sample, builder.problem)[-1]
-            builder.update_problem(last_pos[:2])
-
-        return {
-            "solution": best_sample,
-            "energy": best_energy,
-            # 'success': is_solution_valid(best_sample, M, N, T, s_i, s_j, e_i, e_j),
-            "raw_response": response,
-        }
-
-    def solve_qubo_smart(self, builder, opt):
+        Returns:
+            Dictionary containing solution, energy, and raw response
+        """
         best_sample = []
         best_energy = []
         window_stats = []
@@ -54,6 +36,31 @@ class DWaveSolver(BaseSolver):
         correction_count = 0
         import time as timing
 
+        if not preprocess:
+            # Simple loop — no variable reduction, no correction retries
+            while (builder.total_t) > (builder.current_T):
+                Q = builder.Q
+                if self.norm_scale != 0:
+                    Q = self.normalize_qubo(builder.Q, self.norm_scale)
+                self.logger.standard(
+                    "Start position:", builder.problem.start, "Iteration:", builder.iter
+                )
+                bqm = BinaryQuadraticModel.from_qubo(Q)
+                sampler = SimulatedAnnealingSampler()
+                response = sampler.sample(bqm, num_reads=self.num_reads)
+                first = response.first
+                best_sample.append(first.sample)
+                best_energy.append(response.first.energy)
+                last_pos = self.decode_path(first.sample, builder.problem)[-1]
+                builder.update_problem(last_pos[:2])
+
+            return {
+                "solution": best_sample,
+                "energy": best_energy,
+                "raw_response": response,
+            }
+
+        # preprocess=True: full pipeline with variable reduction and correction loop
         while (builder.total_t) > (builder.current_T):
             active_robots = [r for r in builder.problem.robots.values() if r.active]
             if not active_robots:

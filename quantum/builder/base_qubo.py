@@ -263,7 +263,7 @@ class BaseQUBO(ABC):
                 self.logger.standard(f"Window size increased from {self.t_max} to {new_t_max} after robots became inactive")
                 self.t_max = new_t_max
 
-            # Clear stale BFS data — solve_qubo_smart will repopulate before next build
+            # Clear stale BFS data — solve_qubo will repopulate before next build
             self._active_cells = None
             self.build()
 

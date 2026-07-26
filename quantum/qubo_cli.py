@@ -234,6 +234,16 @@ def build_parser() -> argparse.ArgumentParser:
             "(default: dwave=4, pennylane=auto)"
         ),
     )
+    sol.add_argument(
+        "--no-preprocess",
+        action="store_true",
+        default=False,
+        help=(
+            "Disable variable reduction and correction loop (runs the simple "
+            "raw-sampler loop). By default, BFS logical-variable reduction and "
+            "diagonal pruning are applied before each window."
+        ),
+    )
 
     # PennyLane / QAOA-specific
     pl = parser.add_argument_group(
@@ -673,7 +683,7 @@ def main():
         # Single solve
         timer = time.time()
         builder.build()
-        solution = solver.solve_qubo_smart(builder, False)
+        solution = solver.solve_qubo(builder, preprocess=not args.no_preprocess)
         path = solver.decode_path(solution["solution"], problem)
 
         energy = solution["energy"]
