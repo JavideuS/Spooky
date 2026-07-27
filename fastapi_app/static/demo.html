@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Spooky demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #080c10; color: #dde;
+         height: 100vh; overflow: hidden; }
+
+  header { display: flex; align-items: center; gap: 10px; padding: 9px 16px;
+           background: #0d1117; border-bottom: 1px solid #1e2d3d; height: 44px; }
+  header h1 { font-size: 16px; color: #4fc3f7; font-weight: 600; }
+  .badge { font-size: 10px; padding: 2px 8px; border-radius: 10px;
+           background: #1e3a1e; color: #81c784; border: 1px solid #2e5a2e; }
+  #conn-dot { width: 8px; height: 8px; border-radius: 50%; background: #444;
+              transition: background 0.3s; margin-left: auto; }
+  #conn-dot.live { background: #81c784; box-shadow: 0 0 6px #81c784; }
+  #conn-dot.err { background: #e57373; box-shadow: 0 0 6px #e57373; }
+
+  /* Layout: map + results (left) | drag handle | planning sidebar (right) */
+  .layout { display: grid; height: calc(100vh - 44px);
+            grid-template-columns: 1fr 5px clamp(300px, 34vw, 440px); }
+  #h-resize { background: transparent; cursor: col-resize;
+              border-left: 1px solid #1e2d3d; border-right: 1px solid #1e2d3d;
+              transition: background 0.15s; }
+  #h-resize:hover, #h-resize.active { background: rgba(79,195,247,0.3); }
+
+  #left-col { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+
+  #map-panel { position: relative; background: #080c10; flex: 1 1 62%;
+               min-height: 220px; display: flex; flex-direction: column;
+               overflow: hidden; }
+  #viz { flex: 1; min-height: 0; }
+  #viz .placeholder { font-size: 12px; padding: 60px 14px; text-align: center; color: #556; }
+
+  /* Map picker: its own toolbar row above the plot, so it never covers the map */
+  #map-toolbar { display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+                 padding: 7px 12px; border-bottom: 1px solid #1e2d3d; background: #0a0e14; }
+  #map-toolbar .field-label { font-size: 9px; font-weight: 700; color: #4fc3f7;
+                              letter-spacing: 0.08em; text-transform: uppercase;
+                              margin: 0; flex-shrink: 0; }
+  #map-toolbar select { width: auto; flex: 1 1 auto; min-width: 140px; max-width: 420px;
+                        padding: 5px 7px; font-size: 12px; }
+  #mapMeta { font-size: 10px; color: #556; flex-shrink: 0; white-space: nowrap; }
+
+  /* Playback bar — appears once a plan has been rendered */
+  #playbar { display: none; align-items: center; gap: 8px; flex-shrink: 0;
+             padding: 7px 12px; border-top: 1px solid #1e2d3d; background: #0a0e14; }
+  #playbar.visible { display: flex; }
+  .pb-btn { background: #12313d; border: 1px solid #1e4a5a; color: #4fc3f7;
+            border-radius: 6px; padding: 4px 10px; font-size: 13px; cursor: pointer;
+            line-height: 1.4; }
+  .pb-btn:hover { background: #17414f; }
+  .pb-btn:disabled { opacity: 0.4; cursor: default; }
+  #tRange { flex: 1; min-width: 80px; accent-color: #4fc3f7; padding: 0; }
+  #tLabel { font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 11.5px;
+            color: #81c784; min-width: 74px; text-align: right; }
+
+  #v-resize { flex: 0 0 5px; cursor: row-resize; background: transparent;
+              border-top: 1px solid #1e2d3d; border-bottom: 1px solid #1e2d3d;
+              transition: background 0.15s; }
+  #v-resize:hover, #v-resize.active { background: rgba(79,195,247,0.3); }
+
+  #results-panel { flex: 1 1 38%; min-height: 110px; overflow-y: auto; padding: 9px 12px; }
+  .section-title { font-size: 10px; font-weight: 700; color: #4fc3f7;
+                   letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 6px; }
+  #result-chips { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .chip { background: #0d1117; border: 1px solid #1e2d3d; border-radius: 6px; padding: 6px 10px; }
+  .chip .k { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em; color: #556; }
+  .chip .v { font-size: 14px; font-weight: 600; margin-top: 1px; color: #dde; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  td, th { padding: 4px 6px; text-align: left; border-bottom: 1px solid #1a2530; }
+  th { color: #4fc3f7; font-weight: 600; background: #0d1117; position: sticky; top: 0; }
+  .empty-row td { color: #555; text-align: center; padding: 10px; }
+  .path-cell { font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 10.5px;
+               color: #b8c4d0; word-break: break-word; }
+  .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+            margin-right: 5px; vertical-align: middle; }
+
+  #sidebar { display: flex; flex-direction: column; border-left: 1px solid #1e2d3d;
+             overflow-y: auto; }
+  .section { padding: 9px 12px; border-bottom: 1px solid #1e2d3d; flex-shrink: 0; }
+  .field-label { display: block; font-size: 10px; text-transform: uppercase;
+                 letter-spacing: 0.06em; color: #556; margin-bottom: 5px; }
+
+  select, input[type="text"], input[type="number"], textarea {
+    width: 100%; background: #080c10; color: #eee; border: 1px solid #2a3a4a;
+    border-radius: 6px; padding: 7px 9px; font-size: 13px; font-family: inherit; outline: none;
+  }
+  select:focus, input:focus, textarea:focus { border-color: #4fc3f7; }
+  textarea { font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 12px; resize: vertical; }
+
+  .meta-line { margin-top: 6px; font-size: 11px; color: #556; line-height: 1.4; }
+  .tag-row { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .tag { font-size: 10px; padding: 2px 7px; border-radius: 10px;
+         background: #12313d; color: #4fc3f7; border: 1px solid #1e4a5a; white-space: nowrap; }
+
+  .radio-row { display: flex; gap: 16px; font-size: 13px; }
+  .radio-row label { display: flex; align-items: center; gap: 5px; color: #dde; }
+
+  .mode-toggle { display: flex; gap: 4px; margin-bottom: 8px; }
+  .mode-btn { flex: 1; padding: 5px 0; font-size: 10px; font-weight: 700;
+              letter-spacing: 0.06em; text-transform: uppercase; border: none;
+              border-radius: 5px; cursor: pointer; background: transparent;
+              color: #556; transition: background 0.15s, color 0.15s; }
+  .mode-btn.active { background: #1e2d3d; color: #4fc3f7; }
+  .mode-btn:hover:not(.active) { color: #99a; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  .robot-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr auto;
+               gap: 5px; align-items: center; margin-bottom: 6px; }
+  .robot-row input { padding: 5px 6px; font-size: 12px; }
+  .robot-row .rm-btn { background: transparent; border: none; color: #e57373;
+                       cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px; }
+  .robot-row-labels { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr auto;
+                      gap: 5px; font-size: 9px; color: #556; text-transform: uppercase;
+                      letter-spacing: 0.04em; margin-bottom: 4px; }
+
+  .secondary-btn { width: 100%; margin-top: 4px; background: transparent;
+                   border: 1px dashed #2a3a4a; color: #556; padding: 6px 0;
+                   border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .secondary-btn:hover { color: #99a; border-color: #4fc3f7; }
+  .hint { margin-top: 8px; font-size: 10px; color: #556; line-height: 1.45; }
+
+  .primary-btn { width: 100%; padding: 9px 0; background: #1565c0; border: none;
+                 border-radius: 6px; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .primary-btn:hover { background: #1976d2; }
+  .primary-btn:disabled { opacity: 0.5; cursor: default; }
+
+  .error-box { margin-top: 8px; background: rgba(229,115,115,0.1); border: 1px solid #5a2020;
+               color: #ef9a9a; border-radius: 6px; padding: 8px 10px; font-size: 12px;
+               white-space: pre-wrap; word-break: break-word; }
+
+  @media (max-width: 768px) {
+    .layout { display: flex; flex-direction: column; height: calc(100vh - 44px); overflow-y: auto; }
+    #left-col { flex: 0 0 auto; }
+    #map-panel { height: 52vh; flex: 0 0 auto; }
+    #results-panel { flex: 0 0 auto; overflow-y: visible; }
+    #h-resize, #v-resize { display: none; }
+    #sidebar { border-left: none; border-top: 1px solid #1e2d3d; overflow-y: visible; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Spooky</h1>
+  <span class="badge">MAPF · QUBO</span>
+  <div id="conn-dot"></div>
+</header>
+
+<div class="layout">
+  <div id="left-col">
+    <div id="map-panel">
+      <div id="map-toolbar">
+        <label class="field-label" for="mapSelect">Map</label>
+        <select id="mapSelect"></select>
+        <span id="mapMeta"></span>
+      </div>
+      <div id="viz"></div>
+      <div id="playbar">
+        <button type="button" class="pb-btn" id="playBtn" title="Play / pause">▶</button>
+        <button type="button" class="pb-btn" id="prevBtn" title="Previous timestep">⏮</button>
+        <button type="button" class="pb-btn" id="nextBtn" title="Next timestep">⏭</button>
+        <input type="range" id="tRange" min="0" max="0" value="0" step="1">
+        <span id="tLabel">t = 0 / 0</span>
+      </div>
+    </div>
+    <div id="v-resize" title="drag to resize map vs results"></div>
+    <div id="results-panel">
+      <div class="section-title">Result</div>
+      <div id="result-chips">
+        <div class="chip"><div class="k">Cost</div><div class="v" id="resCost">&mdash;</div></div>
+        <div class="chip"><div class="k">Energy</div><div class="v" id="resEnergy">&mdash;</div></div>
+        <div class="chip"><div class="k">Planning time</div><div class="v" id="resTime">&mdash;</div></div>
+        <div class="chip"><div class="k">Solver</div><div class="v" id="resSolver">&mdash;</div></div>
+      </div>
+      <div class="section-title">Paths</div>
+      <table>
+        <thead><tr><th>Robot</th><th>Steps</th><th>Path (row,col)</th></tr></thead>
+        <tbody id="pathsBody">
+          <tr class="empty-row"><td colspan="3">Plan a path to see results</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="h-resize" title="drag to resize sidebar"></div>
+
+  <div id="sidebar">
+    <div class="section">
+      <label class="field-label">Solver</label>
+      <select id="solverSelect"></select>
+      <div id="solverTags" class="tag-row"></div>
+      <div id="solverDesc" class="meta-line"></div>
+    </div>
+
+    <div class="section">
+      <label class="field-label">Format</label>
+      <div class="radio-row">
+        <label><input type="radio" name="format" value="grid" checked> grid</label>
+        <label><input type="radio" name="format" value="graph"> graph</label>
+      </div>
+    </div>
+
+    <div class="section">
+      <label class="field-label">Penalty set</label>
+      <select id="penaltySelect"></select>
+    </div>
+
+    <div class="section">
+      <div class="mode-toggle">
+        <button type="button" class="mode-btn active" data-tab="form">Robots</button>
+        <button type="button" class="mode-btn" data-tab="json">Raw JSON</button>
+      </div>
+
+      <div id="formTab" class="tab-panel active">
+        <div class="robot-row-labels">
+          <span>id</span><span>start row</span><span>start col</span><span>goal row</span><span>goal col</span><span></span>
+        </div>
+        <div id="robotRows"></div>
+        <button type="button" id="addRobotBtn" class="secondary-btn">+ Add robot</button>
+        <div class="hint">One robot renders as Scooby (ghosts as obstacles). 2&ndash;4 robots get the ninja pack
+          (Garmadon as obstacles) &mdash; name a robot kai / jay / lloyd / zane / cole to pin its character,
+          otherwise they're assigned in that order. 5+ robots fall back to plain markers.</div>
+      </div>
+
+      <div id="jsonTab" class="tab-panel">
+        <textarea id="jsonBody" rows="14" spellcheck="false"></textarea>
+      </div>
+    </div>
+
+    <div class="section" style="border-bottom: none;">
+      <button type="button" id="planBtn" class="primary-btn">Plan path</button>
+      <div id="errorBox" class="error-box" hidden></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const vizEl = document.getElementById('viz');
+  const mapSelect = document.getElementById('mapSelect');
+  const mapMeta = document.getElementById('mapMeta');
+  const solverSelect = document.getElementById('solverSelect');
+  const solverTags = document.getElementById('solverTags');
+  const solverDesc = document.getElementById('solverDesc');
+  const penaltySelect = document.getElementById('penaltySelect');
+  const robotRows = document.getElementById('robotRows');
+  const addRobotBtn = document.getElementById('addRobotBtn');
+  const jsonBody = document.getElementById('jsonBody');
+  const planBtn = document.getElementById('planBtn');
+  const errorBox = document.getElementById('errorBox');
+  const connDot = document.getElementById('conn-dot');
+  const resCost = document.getElementById('resCost');
+  const resEnergy = document.getElementById('resEnergy');
+  const resTime = document.getElementById('resTime');
+  const resSolver = document.getElementById('resSolver');
+  const pathsBody = document.getElementById('pathsBody');
+  const playbar = document.getElementById('playbar');
+  const playBtn = document.getElementById('playBtn');
+  const prevBtn = document.getElementById('prevBtn');
+  const nextBtn = document.getElementById('nextBtn');
+  const tRange = document.getElementById('tRange');
+  const tLabel = document.getElementById('tLabel');
+
+  const PLOT_CONFIG = { responsive: true, displaylogo: false };
+
+  let solverConfigs = {};
+  let mapInfoById = {};
+  let activeTab = 'form';
+  let robotRowCount = 0;
+
+  // Animation state, rebuilt on every successful plan
+  let stepNames = [];      // integer-timestep frame names, in order
+  let stepIndex = 0;
+  let playing = false;
+  let playArgs = null;     // reused from the figure's own Play button
+  let pauseArgs = null;
+
+  // ---------- helpers ----------
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  /**
+   * The visualizer sizes figures for standalone HTML export (fixed width/height)
+   * and draws its own title. Inside a flex panel we want it to fill the space
+   * instead, so those are dropped and autosize is turned on.
+   */
+  function fitLayout(layout) {
+    const fitted = Object.assign({}, layout, { autosize: true });
+    delete fitted.width;
+    delete fitted.height;
+    delete fitted.title;
+    fitted.margin = Object.assign({}, layout.margin || {}, { t: 16 });
+    fitted.paper_bgcolor = 'rgba(0,0,0,0)';
+    fitted.font = Object.assign({ color: '#b8c4d0' }, layout.font || {});
+    return fitted;
+  }
+
+  // ---------- tabs ----------
+  document.querySelectorAll('.mode-btn[data-tab]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      activeTab = btn.dataset.tab;
+      document.querySelectorAll('.mode-btn[data-tab]').forEach((b) => b.classList.toggle('active', b === btn));
+      document.getElementById('formTab').classList.toggle('active', activeTab === 'form');
+      document.getElementById('jsonTab').classList.toggle('active', activeTab === 'json');
+      if (activeTab === 'json') jsonBody.value = JSON.stringify(buildRequestFromForm(), null, 2);
+    });
+  });
+
+  // ---------- drag handles ----------
+  function makeDraggable(handle, onDrag) {
+    let dragging = false;
+    handle.addEventListener('mousedown', (e) => { dragging = true; handle.classList.add('active'); e.preventDefault(); });
+    window.addEventListener('mouseup', () => {
+      if (!dragging) return;
+      dragging = false;
+      handle.classList.remove('active');
+      Plotly.Plots.resize(vizEl);
+    });
+    window.addEventListener('mousemove', (e) => { if (dragging) onDrag(e); });
+  }
+  makeDraggable(document.getElementById('h-resize'), (e) => {
+    const w = Math.max(300, Math.min(window.innerWidth - e.clientX, window.innerWidth * 0.6));
+    document.querySelector('.layout').style.gridTemplateColumns = `1fr 5px ${w}px`;
+  });
+  makeDraggable(document.getElementById('v-resize'), (e) => {
+    const rect = document.getElementById('left-col').getBoundingClientRect();
+    const mapH = Math.max(160, Math.min(e.clientY - rect.top, rect.height - 110));
+    document.getElementById('map-panel').style.flex = `0 0 ${mapH}px`;
+  });
+
+  // ---------- robot form ----------
+  function addRobotRow(defaults) {
+    defaults = defaults || {};
+    robotRowCount += 1;
+    const row = document.createElement('div');
+    row.className = 'robot-row';
+    row.innerHTML = `
+      <input type="text" class="r-id" placeholder="robot_${robotRowCount - 1}" value="${defaults.id || ''}">
+      <input type="number" class="r-sr" placeholder="0" value="${defaults.sr ?? ''}">
+      <input type="number" class="r-sc" placeholder="0" value="${defaults.sc ?? ''}">
+      <input type="number" class="r-gr" placeholder="0" value="${defaults.gr ?? ''}">
+      <input type="number" class="r-gc" placeholder="0" value="${defaults.gc ?? ''}">
+      <button type="button" class="rm-btn" title="Remove robot">&times;</button>
+    `;
+    row.querySelector('.rm-btn').addEventListener('click', () => {
+      if (robotRows.children.length > 1) row.remove();
+    });
+    robotRows.appendChild(row);
+  }
+  addRobotBtn.addEventListener('click', () => addRobotRow());
+  addRobotRow({ sr: 0, sc: 0, gr: 2, gc: 2 });
+
+  function collectRobotsFromForm() {
+    const robots = [];
+    robotRows.querySelectorAll('.robot-row').forEach((row) => {
+      const id = row.querySelector('.r-id').value.trim();
+      const sr = row.querySelector('.r-sr').value;
+      const sc = row.querySelector('.r-sc').value;
+      const gr = row.querySelector('.r-gr').value;
+      const gc = row.querySelector('.r-gc').value;
+      if (sr === '' || sc === '' || gr === '' || gc === '') return;
+      const spec = { start: [Number(sr), Number(sc)], goal: [Number(gr), Number(gc)] };
+      if (id) spec.id = id;
+      robots.push(spec);
+    });
+    return robots;
+  }
+
+  function buildRequestFromForm() {
+    return {
+      map_id: mapSelect.value,
+      solver: solverSelect.value,
+      format: document.querySelector('input[name="format"]:checked').value,
+      robots: collectRobotsFromForm(),
+      penalty_set: penaltySelect.value || 'crash',
+      details: false,
+      render: true,
+    };
+  }
+
+  // ---------- maps ----------
+  async function fetchMapList() {
+    const res = await fetch('/v1/maps');
+    const data = await res.json();
+    mapInfoById = data.maps || {};
+    return mapInfoById;
+  }
+
+  async function loadMaps() {
+    const maps = await fetchMapList();
+    mapSelect.innerHTML = '';
+    Object.entries(maps).forEach(([mapId, info]) => {
+      const opt = document.createElement('option');
+      opt.value = mapId;
+      opt.textContent = info.description ? `${mapId} — ${info.description}` : mapId;
+      mapSelect.appendChild(opt);
+    });
+    if (mapSelect.options.length) await showMapPreview();
+  }
+
+  function updateMapMeta(mapId) {
+    const info = mapInfoById[mapId];
+    mapMeta.textContent = info ? `${info.grid_size || 'size unknown'} · ${info.loaded ? 'loaded' : 'not loaded yet'}` : '';
+  }
+
+  /** Draw the selected map's grid, replacing whatever (preview or animation) is on screen. */
+  async function showMapPreview() {
+    const mapId = mapSelect.value;
+    if (!mapId) return;
+    resetPlayback();
+    Plotly.purge(vizEl);
+    vizEl.innerHTML = '';
+    try {
+      const res = await fetch(`/v1/maps/${encodeURIComponent(mapId)}/preview?embed=json`);
+      if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+      const fig = await res.json();
+      await Plotly.newPlot(vizEl, fig.data, fitLayout(fig.layout), PLOT_CONFIG);
+    } catch (err) {
+      vizEl.innerHTML = `<div class="placeholder">Couldn't preview this map: ${escapeHtml(String(err.message || err))}</div>`;
+    }
+    // The first preview of a map loads it server-side, so grid_size appears now.
+    await fetchMapList().catch(() => {});
+    updateMapMeta(mapId);
+  }
+
+  mapSelect.addEventListener('change', async () => {
+    clearResults();
+    await showMapPreview();
+  });
+
+  // ---------- solvers ----------
+  function groupForSolver(cfg) {
+    if (cfg.backend === 'dwave') return 'dwave';
+    if (cfg.device === 'qiskit.remote') return 'qiskit';
+    return 'pennylane';
+  }
+
+  async function loadSolvers() {
+    const res = await fetch('/solvers');
+    solverConfigs = await res.json();
+
+    const groups = { dwave: [], pennylane: [], qiskit: [] };
+    Object.entries(solverConfigs).forEach(([key, cfg]) => groups[groupForSolver(cfg)].push(key));
+
+    solverSelect.innerHTML = '';
+    let defaultKey = null;
+    Object.entries(groups).forEach(([groupName, keys]) => {
+      if (!keys.length) return;
+      const optgroup = document.createElement('optgroup');
+      optgroup.label = groupName;
+      keys.sort().forEach((key) => {
+        const opt = document.createElement('option');
+        opt.value = key;
+        opt.textContent = key;
+        optgroup.appendChild(opt);
+        if (!defaultKey && (solverConfigs[key].tags || []).includes('general')) defaultKey = key;
+      });
+      solverSelect.appendChild(optgroup);
+    });
+    if (!defaultKey) defaultKey = Object.keys(solverConfigs)[0];
+    if (defaultKey) solverSelect.value = defaultKey;
+    onSolverChange();
+  }
+
+  function onSolverChange() {
+    const cfg = solverConfigs[solverSelect.value];
+    solverTags.innerHTML = '';
+    solverDesc.textContent = '';
+    if (!cfg) return;
+    (cfg.tags || []).forEach((tag) => {
+      const span = document.createElement('span');
+      span.className = 'tag';
+      span.textContent = tag;
+      solverTags.appendChild(span);
+    });
+    solverDesc.textContent = cfg.description || '';
+  }
+  solverSelect.addEventListener('change', onSolverChange);
+
+  // ---------- penalty sets ----------
+  async function loadPenaltySets() {
+    const res = await fetch('/v1/penalty-sets');
+    const data = await res.json();
+    penaltySelect.innerHTML = '';
+    data.penalty_sets.forEach((name) => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      penaltySelect.appendChild(opt);
+    });
+    penaltySelect.value = data.default || 'crash';
+  }
+
+  // ---------- results ----------
+  function clearResults() {
+    resCost.textContent = '—';
+    resEnergy.textContent = '—';
+    resTime.textContent = '—';
+    resSolver.textContent = '—';
+    pathsBody.innerHTML = '<tr class="empty-row"><td colspan="3">Plan a path to see results</td></tr>';
+  }
+
+  /** Robot line colors come from the figure's legend traces, so the table matches the plot. */
+  function colorsFromFigure(figData) {
+    const colors = {};
+    (figData || []).forEach((trace) => {
+      if (trace.showlegend && trace.name && trace.line && trace.line.color) {
+        if (!(trace.name in colors)) colors[trace.name] = trace.line.color;
+      }
+    });
+    return colors;
+  }
+
+  function renderPathsTable(paths, colors) {
+    pathsBody.innerHTML = '';
+    if (!paths || !paths.length) {
+      pathsBody.innerHTML = '<tr class="empty-row"><td colspan="3">No paths returned</td></tr>';
+      return;
+    }
+    paths.forEach((p) => {
+      const tr = document.createElement('tr');
+      const pathStr = p.path.map((pos) => `(${pos[0]},${pos[1]})`).join(' → ');
+      const color = (colors || {})[p.robot_id];
+      const swatch = color ? `<span class="swatch" style="background:${escapeHtml(color)}"></span>` : '';
+      tr.innerHTML = `<td>${swatch}${escapeHtml(p.robot_id)}</td><td>${p.path.length}</td>` +
+                     `<td class="path-cell">${escapeHtml(pathStr)}</td>`;
+      pathsBody.appendChild(tr);
+    });
+  }
+
+  // ---------- animation playback ----------
+  function resetPlayback() {
+    playing = false;
+    stepNames = [];
+    stepIndex = 0;
+    playArgs = null;
+    pauseArgs = null;
+    playBtn.textContent = '▶';
+    playbar.classList.remove('visible');
+  }
+
+  function syncPlaybar() {
+    const last = Math.max(0, stepNames.length - 1);
+    tRange.max = String(last);
+    tRange.value = String(stepIndex);
+    tLabel.textContent = `t = ${stepNames[stepIndex] ?? 0} / ${stepNames[last] ?? 0}`;
+    prevBtn.disabled = stepIndex <= 0;
+    nextBtn.disabled = stepIndex >= last;
+  }
+
+  /** Jump straight to one whole timestep (no tweening) — the "analyze" mode. */
+  function gotoStep(idx) {
+    if (!stepNames.length) return;
+    stepIndex = Math.max(0, Math.min(idx, stepNames.length - 1));
+    pausePlayback();
+    Plotly.animate(vizEl, [stepNames[stepIndex]], {
+      frame: { duration: 0, redraw: true },
+      mode: 'immediate',
+      transition: { duration: 0 },
+    });
+    syncPlaybar();
+  }
+
+  function pausePlayback() {
+    if (!playing) return;
+    playing = false;
+    playBtn.textContent = '▶';
+    if (pauseArgs) Plotly.animate(vizEl, [null], pauseArgs);
+  }
+
+  function startPlayback() {
+    if (!stepNames.length || !playArgs) return;
+    // Once the timeline has run out, replay from the top. fromcurrent:false
+    // does that within the same animate call — rewinding with a separate call
+    // first would race the queued play against its own plotly_animated event.
+    const atEnd = stepIndex >= stepNames.length - 1;
+    playing = true;
+    playBtn.textContent = '⏸';
+    Plotly.animate(vizEl, null, Object.assign({}, playArgs, { fromcurrent: !atEnd }));
+  }
+
+  playBtn.addEventListener('click', () => (playing ? pausePlayback() : startPlayback()));
+  prevBtn.addEventListener('click', () => gotoStep(stepIndex - 1));
+  nextBtn.addEventListener('click', () => gotoStep(stepIndex + 1));
+  tRange.addEventListener('input', () => gotoStep(Number(tRange.value)));
+
+  document.addEventListener('keydown', (e) => {
+    if (!stepNames.length) return;
+    // Buttons included so space keeps activating a focused button natively
+    // instead of also toggling playback here.
+    const focused = /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(document.activeElement.tagName);
+    if (focused && document.activeElement !== tRange) return;
+    if (e.key === ' ') { e.preventDefault(); playing ? pausePlayback() : startPlayback(); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); gotoStep(stepIndex - 1); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); gotoStep(stepIndex + 1); }
+  });
+
+  /**
+   * Draw the solved figure and wire the playbar to it.
+   * The figure ships its own Play/Pause buttons and slider; those are stripped
+   * so the page's controls (which also step whole timesteps) are the only ones,
+   * but their animate arguments are reused so frame duration and the redraw
+   * flag (required for the character images, which live in layout.images) stay
+   * exactly as the visualizer intended.
+   */
+  async function renderSolvedFigure(figure) {
+    const frames = figure.frames || [];
+    const layout = fitLayout(figure.layout);
+    const menus = layout.updatemenus || [];
+    const buttons = (menus[0] && menus[0].buttons) || [];
+    playArgs = buttons[0] && buttons[0].args ? buttons[0].args[1] : null;
+    pauseArgs = buttons[1] && buttons[1].args ? buttons[1].args[1] : null;
+    delete layout.updatemenus;
+    delete layout.sliders;
+
+    Plotly.purge(vizEl);
+    await Plotly.newPlot(vizEl, figure.data, layout, PLOT_CONFIG);
+    if (frames.length) await Plotly.addFrames(vizEl, frames);
+
+    // Frames are interpolated (t, t.25, t.5, ...); only whole timesteps are
+    // meaningful QUBO steps, so the slider and step buttons walk those.
+    stepNames = frames.map((f) => f.name).filter((n) => n !== undefined && Number.isInteger(Number(n)));
+    stepIndex = 0;
+    playbar.classList.toggle('visible', stepNames.length > 1);
+    syncPlaybar();
+
+    // Keep the playbar in step with the animation while it plays.
+    vizEl.on('plotly_animatingframe', (e) => {
+      const name = e && e.frame && e.frame.name;
+      if (name === undefined) return;
+      const idx = stepNames.indexOf(name);
+      if (idx >= 0) { stepIndex = idx; syncPlaybar(); }
+    });
+    vizEl.on('plotly_animated', () => {
+      if (!playing) return;
+      playing = false;
+      playBtn.textContent = '▶';
+      stepIndex = Math.max(0, stepNames.length - 1);
+      syncPlaybar();
+    });
+  }
+
+  // ---------- planning ----------
+  planBtn.addEventListener('click', async () => {
+    errorBox.hidden = true;
+    let body;
+    try {
+      body = activeTab === 'json' ? JSON.parse(jsonBody.value) : buildRequestFromForm();
+    } catch (err) {
+      errorBox.hidden = false;
+      errorBox.textContent = `Invalid JSON: ${err.message}`;
+      return;
+    }
+    if (!body.robots || !body.robots.length) {
+      errorBox.hidden = false;
+      errorBox.textContent = 'Add at least one robot (start/goal) before planning.';
+      return;
+    }
+
+    planBtn.disabled = true;
+    planBtn.textContent = 'Planning…';
+    resetPlayback();
+    try {
+      const res = await fetch('/v1/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+
+      const cost = typeof data.cost === 'number' ? data.cost.toFixed(4) : '—';
+      resCost.textContent = cost;
+      resEnergy.textContent = cost;
+      resTime.textContent = data.metrics && data.metrics.planning_time !== undefined
+        ? (data.metrics.planning_time * 1000).toFixed(1) + ' ms'
+        : '—';
+      resSolver.textContent = data.solver_used || body.solver || '—';
+
+      if (data.figure) {
+        await renderSolvedFigure(data.figure);
+        renderPathsTable(data.paths, colorsFromFigure(data.figure.data));
+      } else {
+        renderPathsTable(data.paths, {});
+      }
+      connDot.classList.remove('err');
+      connDot.classList.add('live');
+    } catch (err) {
+      errorBox.hidden = false;
+      errorBox.textContent = `Planning failed: ${err.message}`;
+    } finally {
+      planBtn.disabled = false;
+      planBtn.textContent = 'Plan path';
+    }
+  });
+
+  // ---------- init ----------
+  Promise.all([loadMaps(), loadSolvers(), loadPenaltySets()])
+    .then(() => connDot.classList.add('live'))
+    .catch((err) => {
+      connDot.classList.add('err');
+      errorBox.hidden = false;
+      errorBox.textContent = `Failed to initialize: ${err.message}`;
+    });
+})();
+</script>
+
+</body>
+</html>
