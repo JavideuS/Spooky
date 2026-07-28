@@ -6,7 +6,7 @@ from pathlib import Path
 
 # Load materials mapping
 def load_materials(config_path="config/materials.yaml"):
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         data = yaml.safe_load(f)
     material_to_id = {mat: info['index'] for mat, info in data['materials'].items()}
     return material_to_id
@@ -95,7 +95,7 @@ def grid_to_graph_edges(occupancy, connectivity=4):
 
 # Main function
 def generate_map_from_yaml(yaml_path, output_dir="maps", materials_path="config/materials.yaml"):
-    with open(yaml_path, 'r') as f:
+    with open(yaml_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
 
     map_config = config['map']
@@ -117,7 +117,7 @@ def generate_map_from_yaml(yaml_path, output_dir="maps", materials_path="config/
     material_to_id = {}
     mat_config = {}
     if os.path.exists(materials_path):
-        with open(materials_path, 'r') as f:
+        with open(materials_path, 'r', encoding='utf-8') as f:
             mat_config = yaml.safe_load(f)
         material_to_id = {mat: info['index'] for mat, info in mat_config['materials'].items()}
 

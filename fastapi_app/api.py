@@ -119,7 +119,7 @@ DEMO_HTML_PATH = APP_ROOT / "web" / "demo.html"
 @app.get("/demo", response_class=HTMLResponse)
 def demo_page():
     """Self-contained demo UI: map/solver pickers, a robot form, and a live Plotly view."""
-    return DEMO_HTML_PATH.read_text()
+    return DEMO_HTML_PATH.read_text(encoding="utf-8")
 
 
 @app.get("/solvers")

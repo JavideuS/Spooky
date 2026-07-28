@@ -96,7 +96,7 @@ def validate_benchmark(benchmark):
 def load_config(config_path="config.yaml", sections=None):
     # If it's a string or Path, open it
     if isinstance(config_path, (str, Path)):
-        with open(config_path, "r") as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             raw_data = yaml.safe_load(f)
     else:
         # Assume it's a file-like object (has .read())
