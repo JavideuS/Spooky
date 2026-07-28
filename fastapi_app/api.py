@@ -34,6 +34,11 @@ from typing import Dict, Optional
 import datetime
 import time
 
+# This app's own assets (config/, web/), addressed relative to this file so
+# uvicorn can be launched from any directory. Library-owned data (penalty sets,
+# maps) lives under registry.QUANTUM_ROOT instead.
+APP_ROOT = Path(__file__).resolve().parent
+
 # Global registry: robot_id → Robot instance
 robots: Dict[str, Robot] = {}
 
@@ -78,7 +83,7 @@ async def lifespan(app: FastAPI):
     """
     try:
         solvers_config = config_parser.load_config(
-            "config/solvers.yaml", sections=["solvers"]
+            APP_ROOT / "config/solvers.yaml", sections=["solvers"]
         )
         solvers = solvers_config.get("solvers", {})
 
@@ -87,11 +92,13 @@ async def lifespan(app: FastAPI):
         _warm_start_gpu_devices()
 
         penalties_conf = config_parser.load_config(
-            "../quantum/config/config.yaml", sections=["penalty_sets"]
+            registry.QUANTUM_ROOT / "config/config.yaml", sections=["penalty_sets"]
         )
         global_penalties_params.update(penalties_conf["penalty_sets"])
 
-        maps_conf = config_parser.load_config("config/maps.yaml", sections=["maps"])
+        maps_conf = config_parser.load_config(
+            APP_ROOT / "config/maps.yaml", sections=["maps"]
+        )
         registry.load_map_registry(maps_conf.get("maps") or {})
         print(
             f"Map registry loaded ({len(maps_conf.get('maps') or {})} entries, lazy-loaded on first use)."
@@ -106,7 +113,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-DEMO_HTML_PATH = Path(__file__).parent / "static" / "demo.html"
+DEMO_HTML_PATH = APP_ROOT / "web" / "demo.html"
 
 
 @app.get("/demo", response_class=HTMLResponse)

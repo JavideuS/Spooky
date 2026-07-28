@@ -1,5 +1,4 @@
 # Solver (Quantum annealing)
-from tracemalloc import start
 from dimod import BinaryQuadraticModel, SimulatedAnnealingSampler
 from .base_solver import BaseSolver
 
@@ -70,7 +69,9 @@ class DWaveSolver(BaseSolver):
                 break
 
             window_start = timing.time()
-            fixed_vars, window_stat, is_preprocessed, window_forced_collisions = self._prepare_window(builder)
+            fixed_vars, window_stat, is_preprocessed, window_forced_collisions = (
+                self._prepare_window(builder)
+            )
             window_stats.append(window_stat)
             forced_collisions.extend(window_forced_collisions)
 

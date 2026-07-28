@@ -14,18 +14,31 @@ Both registries are module-level dicts, mutated in place by design (mirrors
 config_api.py's pattern) so other modules can `from registry import ...` and
 see live state without re-importing.
 """
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import quantum
 from quantum.config.hdf5parser import load_both_from_hdf5
 from quantum.map import Grid, Graph
+from quantum.maps.yaml2HDF5 import generate_map_from_yaml
 from quantum.solvers.solver_factory import SolverFactory
 
 from config_api import global_solver_configs
 
-# fastapi_app/ is the cwd the app is run from; map paths in maps.yaml are
-# relative to quantum/, same convention as config_api's "../quantum/..." loads.
-QUANTUM_ROOT = Path("../quantum")
+# Map paths in maps.yaml are relative to the quantum package. Anchor on the
+# package itself rather than on the cwd ("../quantum" only resolves when the
+# app is launched from fastapi_app/): this points at the repo checkout under an
+# editable install and at site-packages otherwise, so the app runs from any
+# directory and against an installed copy of the library.
+QUANTUM_ROOT = Path(quantum.__file__).resolve().parent
+
+# .h5 map files aren't bundled in the installed package (they're generated
+# from the .yaml sources, which are — see pyproject.toml's package-data
+# comment). When QUANTUM_ROOT has no .h5 for a map, one is generated here
+# instead of in QUANTUM_ROOT: an installed package dir may be read-only, and
+# even when it isn't, anything written there is wiped on the next reinstall.
+MAP_CACHE_ROOT = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "spooky" / "maps"
 
 
 class MapEntry:
@@ -58,11 +71,32 @@ def register_uploaded_map(map_id: str, grid: Optional[Grid] = None, graph: Optio
     _map_registry[map_id] = MapEntry(path=None, description=description, grid=grid, graph=graph)
 
 
+def _resolve_h5_path(relative_path: str) -> Path:
+    """
+    Locate the .h5 for a map, generating it into MAP_CACHE_ROOT from the
+    bundled .yaml if no .h5 exists yet (installed copy or previously cached).
+    """
+    installed = QUANTUM_ROOT / f"{relative_path}.h5"
+    if installed.exists():
+        return installed
+
+    cached = MAP_CACHE_ROOT / f"{relative_path}.h5"
+    if not cached.exists():
+        yaml_path = QUANTUM_ROOT / f"{relative_path}.yaml"
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        generate_map_from_yaml(
+            str(yaml_path),
+            output_dir=str(cached.parent),
+            materials_path=str(QUANTUM_ROOT / "config" / "materials.yaml"),
+        )
+    return cached
+
+
 def _ensure_loaded(entry: MapEntry) -> None:
     """Parse both representations from HDF5 in one read, if a registry entry hasn't been loaded yet."""
     if entry.loaded or entry.path is None:
         return
-    h5_path = QUANTUM_ROOT / f"{entry.path}.h5"
+    h5_path = _resolve_h5_path(entry.path)
     data = load_both_from_hdf5(str(h5_path))
     if data["has_map"] and data["map_data"]:
         entry.grid = Grid.from_hdf5_data(data["map_data"])

@@ -98,3 +98,18 @@ spooky-solve = "quantum.qubo_cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["quantum*"]
+exclude = ["quantum.prueba*", "quantum.tfg_proves*", "quantum.paper*"]
+
+# Data the library loads at runtime relative to its own __file__, so it has to
+# travel with the package. Without this a non-editable `pip install .` copies
+# only the .py files. Map .h5 files are deliberately NOT listed here — they're
+# generated artifacts (see maps/yaml2HDF5.py); the 1000x1000 map alone is 11MB,
+# so bundling every .h5 would balloon the wheel. registry.py generates missing
+# .h5 files on demand from the bundled .yaml sources instead, cached outside
+# the install so it survives on a read-only or reinstalled package dir.
+# "images/*.png" is the only extension the visualizer's default "auto" theme
+# actually loads (quantum/images/*.jpg and *.svg are unused leftovers).
+[tool.setuptools.package-data]
+"quantum" = ["images/*.png"]
+"quantum.config" = ["*.yaml"]
+"quantum.maps" = ["*.yaml"]
