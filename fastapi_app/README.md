@@ -32,8 +32,9 @@ uvicorn api:app --reload
 - **http://127.0.0.1:8000/docs** — Swagger UI for the raw `/v1/*` and
   `/robots/*` endpoints, for programmatic callers.
 
-`/` itself has no route and 404s by design (this app is a backend/demo
-service, not a website with a landing page).
+`/` redirects to `/demo` (needed for HF Spaces' Docker SDK, which iframes
+whatever the container serves at `/`) — this app is a backend/demo service
+without its own landing page, so `/demo` is the closest thing to one.
 
 Must be run from `fastapi_app/` — config paths (`config/solvers.yaml`,
 `config/maps.yaml`, `../quantum/config/config.yaml`) are resolved relative to

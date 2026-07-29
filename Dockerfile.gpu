@@ -1,0 +1,40 @@
+# Spooky FastAPI service — GPU-enabled image (adds pennylane-lightning-gpu /
+# custatevec-cu12 for the qaoa_GPU_* solver profiles in
+# fastapi_app/config/solvers.yaml).
+#
+# The nvidia-*-cu12 / custatevec-cu12 wheels bundle their own CUDA runtime
+# libs, so no CUDA toolkit base image is needed — a plain python:3.12-slim
+# plus the host's NVIDIA driver (surfaced via nvidia-container-toolkit) is
+# enough. Run with `docker run --gpus all ...`; on a host without a GPU or
+# without nvidia-container-toolkit configured, this image still runs and
+# serves the CPU/D-Wave profiles fine — only the lightning.gpu profiles fail
+# at solve time (same behavior as the CPU-only Dockerfile).
+FROM python:3.12-slim
+
+ARG GIT_SHA=unknown
+LABEL org.opencontainers.image.revision=$GIT_SHA
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# Copy only what the package build and the API need (see .dockerignore)
+COPY pyproject.toml README.md ./
+COPY quantum/ ./quantum/
+COPY fastapi_app/ ./fastapi_app/
+
+RUN pip install -e ".[fastapi, dwave, visualizer, gpu]"
+
+# Regenerating maps
+RUN python quantum/maps/generate_all_maps.py
+
+RUN useradd -u 1000 -m spooky && chown -R spooky:spooky /app
+USER spooky
+
+WORKDIR /app/fastapi_app
+
+EXPOSE 7860
+
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "7860"]

@@ -1,0 +1,27 @@
+.git
+.gitignore
+**/__pycache__
+**/*.py[cod]
+*.egg-info
+.venv
+venv
+env
+
+# Not needed by the FastAPI service
+results/
+quantum/paper/
+quantum/tfg_proves/
+quantum/prueba/
+quantum/benchmark/results/
+grove/
+assets/
+ROADMAP.md
+texput.log
+
+# Local dev artifacts
+quantum/output/
+
+# Regenerated at build time from the .yaml sources (see Dockerfile) —
+# excluded so the image never depends on whatever a host happens to have
+# lying around locally.
+**/*.h5

@@ -1,7 +1,6 @@
 import pennylane as qml
 from pennylane import numpy as np
 from .base_solver import BaseSolver
-from qiskit_ibm_runtime import QiskitRuntimeService
 import time
 
 
@@ -29,6 +28,8 @@ class PennylaneSolver(BaseSolver):
         self.p = layers  # Number of QAOA layers
         self.dev = device
         if device == "qiskit.remote":
+            from qiskit_ibm_runtime import QiskitRuntimeService
+
             self.service = QiskitRuntimeService()
         # Backend for qiskit.remote — avoids a least_busy() network call every window
         self.backend = None

@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -114,6 +114,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 DEMO_HTML_PATH = APP_ROOT / "web" / "demo.html"
+
+
+@app.get("/", include_in_schema=False)
+def root():
+    """Redirect to /demo — matters for HF Spaces' Docker SDK, which iframes '/'."""
+    return RedirectResponse(url="/demo")
 
 
 @app.get("/demo", response_class=HTMLResponse)

@@ -63,6 +63,28 @@ solvers:
         layers: 3
         tags: ["pennylane", "hard", "20+ qubits", "Slow"]
         description: "With more than 25+ qubits the memory starts to become troublesome"
+
+      qaoa_CPU_fast:
+        <<: *pennylane_cpu_defaults
+        normalization_scale: 2.0
+        num_reads: 500
+        layers: 2
+        tags: ["pennylane", "fast", "small maps", "<10 qubits", "CPU"]
+        description: "lightning.qubit equivalent of qaoa_GPU_fast, for Windows/CPU only devices"
+      qaoa_CPU_general:
+        <<: *pennylane_cpu_defaults
+        normalization_scale: 2.0
+        num_reads: 5000
+        layers: 2
+        tags: ["pennylane", "general", "15+ qubits", "Safe", "CPU"]
+        description: "lightning.qubit equivalent of qaoa_GPU_general, for Windows/CPU only devices"
+      qaoa_CPU_hard:
+        <<: *pennylane_cpu_defaults
+        normalization_scale: 2.0
+        num_reads: 10000
+        layers: 3
+        tags: ["pennylane", "hard", "20+ qubits", "Slow", "CPU"]
+        description: "lightning.qubit equivalent of qaoa_GPU_hard, for Windows/CPU only devices"
     train:
       # To find optimal parameters/ Initial angles. Result: initial_angles.json
       qaoa_QNG:

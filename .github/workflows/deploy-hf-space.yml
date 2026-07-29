@@ -1,0 +1,75 @@
+# Manually-triggered deploy to a Hugging Face Space (Docker SDK).
+# Deliberately NOT triggered on push/PR — not every commit here is meant to
+# go live, so a deploy only happens when someone runs this from the Actions
+# tab (or `gh workflow run deploy-hf-space.yml`).
+#
+# Uses `hf upload` (HF's HTTP upload API) rather than `git push`: it handles
+# binary files via HF's Xet storage automatically, so it doesn't need
+# git-lfs/git-xet configured on the runner, and it isn't sensitive to shallow
+# clones the way a raw git push to HF's git server is.
+#
+# One-time setup:
+#   1. Create the Space at https://huggingface.co/new-space (SDK: Docker).
+#   2. Create a write-scoped token at https://huggingface.co/settings/tokens.
+#   3. In this GitHub repo: Settings -> Secrets and variables -> Actions:
+#      - Secret   HF_TOKEN  = the token from step 2
+#      - Variable HF_SPACE  = "<hf-username>/<space-name>"
+#   4. The Space's YAML frontmatter (sdk: docker, app_port: 7860, ...) lives
+#      in HF_SPACE_README.md, not the root README.md — GitHub renders that
+#      frontmatter as an ugly metadata table on the repo's own README, so it
+#      stays in a separate file uploaded to a different path in the Space.
+#
+# Note: HF's Docker SDK always builds the file literally named `Dockerfile`
+# at the Space root — this uploads the CPU-only Dockerfile as-is. To deploy
+# the GPU variant instead, rename Dockerfile.gpu to Dockerfile before running
+# this (or maintain that as a separate Space with its own workflow).
+name: Deploy to HF Space
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Regenerate map .h5 files
+        run: |
+          pip install pyyaml numpy h5py
+          # Module invocation (not `python quantum/maps/generate_all_maps.py`)
+          # so the repo root, not the script's own dir, lands on sys.path —
+          # the script does `from quantum.maps.yaml2HDF5 import ...`, which
+          # needs `quantum` importable without a full `pip install -e .`.
+          python -m quantum.maps.generate_all_maps
+
+      - name: Upload to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: ${{ vars.HF_SPACE }}
+        run: |
+          if [ -z "$HF_TOKEN" ] || [ -z "$HF_SPACE" ]; then
+            echo "Missing HF_TOKEN secret or HF_SPACE variable — see setup comments in this workflow file." >&2
+            exit 1
+          fi
+          pip install -U huggingface_hub
+          hf upload "$HF_SPACE" . . \
+            --repo-type space \
+            --token "$HF_TOKEN" \
+            --exclude ".git/*" \
+            --exclude ".github/*" \
+            --exclude "quantum/paper/*" \
+            --exclude "results/*" \
+            --exclude "README.md" \
+            --exclude "HF_SPACE_README.md" \
+            --commit-message "Deploy $(git rev-parse --short HEAD)"
+          hf upload "$HF_SPACE" HF_SPACE_README.md README.md \
+            --repo-type space \
+            --token "$HF_TOKEN" \
+            --commit-message "Update Space README"
