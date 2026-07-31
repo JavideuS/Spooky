@@ -36,6 +36,15 @@ uvicorn api:app --reload
 whatever the container serves at `/`) — this app is a backend/demo service
 without its own landing page, so `/demo` is the closest thing to one.
 
+### Docker
+
+```bash
+docker build -t spooky-fastapi .        # or -f Dockerfile.gpu for CUDA
+docker run -p 7860:7860 spooky-fastapi  # http://localhost:7860/demo
+```
+
+Live demo: [huggingface.co/spaces/JavideuS/Spooky](https://huggingface.co/spaces/JavideuS/Spooky).
+
 Must be run from `fastapi_app/` — config paths (`config/solvers.yaml`,
 `config/maps.yaml`, `../quantum/config/config.yaml`) are resolved relative to
 the working directory at startup.
@@ -105,18 +114,43 @@ already maps graph node ids back to their stored position.
 
 ## Coordinate convention
 
-Spooky is **Y-down (matrix/image convention)** throughout: positions are
-`(row, col)`, row 0 is the top row, row increases downward. There is no
-separate x/y-with-up-axis concept anywhere in the core library — confirmed by
-`quantum/visualizer.py`, which explicitly inverts its plotly y-axis to
-compensate for this when rendering.
+Spooky's core is **always matrix (row, col)** internally — row 0 is the top
+row, row increases downward — regardless of what convention a caller uses.
+That never changes; every builder, solver, and QUBO index encoding/decoding
+works exclusively in matrix indices.
 
-`/v1/plan` and `/robots/{id}/plan` both return paths in this native
-`(row, col)` convention — no conversion happens at the API boundary. If a
-caller needs robotics/Cartesian (Y-up) coordinates instead, convert
-explicitly using `quantum/utils/coordinates.py`
-(`to_robotics_xy` / `to_matrix_rc` / `path_to_robotics_xy` /
-`path_to_matrix_rc`), which needs the grid's row count to flip the axis.
+At the API boundary, though, `coordinate_format` is a per-robot, request-time
+choice: `"matrix"` (default) or `"cartesian"` (robotics/Y-up: origin
+bottom-left, y increasing upward). Set it per entry in `/v1/plan`'s `robots`
+list (`RobotSpec.coordinate_format`), or once on `/robots/{id}/plan`
+(`PlanRequest.coordinate_format`):
+
+- **Input**: that robot's `start`/`goal` are read in the declared convention
+  and converted to matrix once, before solving
+  (`RobotConfig.resolve_coordinates`).
+- **Output**: that robot's returned `path` is converted back to the same
+  convention (`RobotConfig.format_position` / `BaseSolver.format_output_path`)
+  — each `RobotPathResult`/`PlanResponse` echoes the `coordinate_format` it
+  used, so a caller never has to guess which frame a path is in.
+- **Graph mode** doesn't support `"cartesian"` — positions there resolve
+  directly to node ids server-side, which have no coordinate frame of their
+  own to convert; a cartesian request against `format: "graph"` returns 400.
+- `GET /v1/maps/{map_id}/preview` and `/v1/plan`'s `render: true` figure both
+  take/reflect the same `coordinate_format` too, but purely as a **display**
+  choice passed to `quantum/visualizer.py`'s `convention` param — it changes
+  axis labels/origin/direction, not the underlying grid data. Both obstacles
+  and paths go through the same conversion, so the rendered picture is
+  self-consistent in either mode (a wall doesn't visually move when you
+  relabel the axes describing it).
+
+This is different from a **map's** own convention, which is fixed at the file
+level, not a per-request choice — see `../quantum/maps/README.md`.
+
+For anything outside this path (e.g. converting a plain path list before
+handing it to an external robotics stack), use
+`quantum/utils/coordinates.py` directly (`to_robotics_xy` / `to_matrix_rc` /
+`path_to_robotics_xy` / `path_to_matrix_rc`), which needs the grid's row
+count to flip the axis.
 
 ## Endpoints
 
@@ -126,9 +160,9 @@ explicitly using `quantum/utils/coordinates.py`
 | `GET /solvers` | List configured solver profiles. |
 | `GET /v1/penalty-sets` | List penalty_set names available to `/v1/plan`. |
 | `GET /v1/maps` | List the map registry (curated + uploaded). |
-| `GET /v1/maps/{map_id}/preview` | Render the map's grid (obstacles/terrain) via Plotly. `?embed=html\|json`. |
+| `GET /v1/maps/{map_id}/preview` | Render the map's grid (obstacles/terrain) via Plotly. `?embed=html\|json&coordinate_format=matrix\|cartesian`. |
 | `POST /v1/maps/{map_id}` | Upload/register a map at runtime. |
-| `POST /v1/plan` | Stateless plan: `robots: [{id?, start, goal, ...}, ...]` (one entry for single-robot, more for multi-robot), `format: "grid"\|"graph"`, `render: bool`. Returns `{paths: [{robot_id, path}], cost, ..., figure?}`. |
+| `POST /v1/plan` | Stateless plan: `robots: [{id?, start, goal, coordinate_format?, ...}, ...]` (one entry for single-robot, more for multi-robot), `format: "grid"\|"graph"`, `render: bool`. Returns `{paths: [{robot_id, path, coordinate_format}], cost, ..., figure?}`. |
 | `POST /robots` | Register a robot session. |
 | `GET /robots` / `GET /robots/{id}` | List / inspect robot sessions. |
 | `POST /robots/{id}/maps/{map_id}` | Upload a map into a robot's own namespace. |
@@ -147,16 +181,24 @@ new code path.
 
 1. Open `http://127.0.0.1:8000/demo`.
 2. Pick a **map** (upper-left, above the preview) — it loads immediately.
-3. Pick a **solver** in the sidebar; profiles tagged `"general"` are
+3. Pick the **coordinate format** just below it — `matrix` (native, row/col)
+   or `cartesian` (robotics Y-up, x/y). This drives three things at once: the
+   preview/solved-plot axes, how the robot form's start/goal fields are
+   labeled, and the `coordinate_format` sent with every robot in the request.
+   Switching **Format** (below) to `graph` locks this back to `matrix`, since
+   graph mode has no coordinate frame to convert (positions resolve straight
+   to node ids).
+4. Pick a **solver** in the sidebar; profiles tagged `"general"` are
    preselected as the recommended default. Tags and description show below
    the picker.
-4. Add one or more **robots** (start/goal row/col) via the form rows, or
-   switch to the "Raw JSON" tab to hand-edit the exact `/v1/plan` request
-   body (start_time, priority, safety_radius, or anything the form doesn't
-   expose) — whichever tab is active when you click "Plan path" is what gets
-   sent.
-5. Click **Plan path**. The result strip shows cost / planning time / solver,
-   and the visualization animates the solved paths with play/pause and a
+5. Add one or more **robots** (start/goal, labeled row/col or x/y depending on
+   step 3) via the form rows, or switch to the "Raw JSON" tab to hand-edit the
+   exact `/v1/plan` request body (start_time, priority, safety_radius, or
+   anything the form doesn't expose) — whichever tab is active when you click
+   "Plan path" is what gets sent.
+6. Click **Plan path**. The result strip shows cost / planning time / solver;
+   each robot's result row also shows the `coordinate_format` its path came
+   back in. The visualization animates the solved paths with play/pause and a
    timestep slider (drag it to scrub forward or back). Single-robot problems
    render as Scooby; 2–4 robots get the ninja pack, matched by robot name
    (name your robot `"kai"`, `"jay"`, `"lloyd"`, `"zane"`, or `"cole"` to pin
@@ -166,10 +208,11 @@ new code path.
 Details on the wiring: map + solver `<select>`s are populated from
 `GET /v1/maps` / `GET /solvers` (solvers grouped by backend — `dwave` /
 `pennylane` / `qiskit`, qiskit split out since it's remote hardware, not a
-local simulator). Picking a map fetches `/v1/maps/{id}/preview?embed=json`
-and renders it with `Plotly.newPlot`. Planning posts to `/v1/plan` with
-`render: true`; the response's `figure` (`data` + `layout` + `frames`) is
-drawn with `Plotly.newPlot(...).then(() => Plotly.addFrames(...))` — a plain
+local simulator). Picking a map (or toggling coordinate format) fetches
+`/v1/maps/{id}/preview?embed=json&coordinate_format=...` and renders it with
+`Plotly.newPlot`. Planning posts to `/v1/plan` with `render: true`; the
+response's `figure` (`data` + `layout` + `frames`) is drawn with
+`Plotly.newPlot(...).then(() => Plotly.addFrames(...))` — a plain
 `Plotly.react` call would silently drop the animation frames, since it only
 takes `data`/`layout`.
 

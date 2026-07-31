@@ -2,21 +2,22 @@
 Conversion between Spooky's native matrix convention and robotics/Cartesian
 convention.
 
-Spooky addresses grid cells purely as (row, col) matrix indices: row 0 is the
-top row, row increases downward, col increases rightward. This is the
-convention used throughout map.py, pathFormulation.py, robotConfiguration.py,
-and every builder/solver — there is no separate x/y-with-up-axis concept
-anywhere in the core library (see visualizer.py, which explicitly inverts its
-plotly y-axis to compensate for this when rendering).
+Spooky's core — map.py, pathFormulation.py, the builders, and every solver's
+QUBO index encoding/decoding — works exclusively in (row, col) matrix indices:
+row 0 is the top row, row increases downward, col increases rightward. That
+internal invariant never changes, regardless of what convention a caller uses.
 
 Robotics/Cartesian convention (Y-up) instead has y increase upward from an
 origin at the bottom-left. Converting between the two requires knowing the
 grid's row count (M) to flip the vertical axis; column and x are equivalent.
 
-These helpers are not wired into any solver, builder, or API endpoint —
-Spooky's public surface stays in (row, col) matrix convention. Call these
-explicitly at whichever boundary needs the other convention (e.g. before
-handing a path to a robotics stack that expects Y-up).
+Callers may still specify/receive positions in cartesian — see
+`RobotConfig.coordinate_format` (quantum/robotConfiguration.py), which calls
+`to_matrix_rc` once on ingest (`resolve_coordinates`) and `to_robotics_xy` on
+every read (`format_position`), and `quantum/visualizer.py`'s `convention`
+param for display. These functions are the primitives those call; use them
+directly for anything outside that path (e.g. converting a plain path list
+before handing it to a robotics stack that expects Y-up).
 """
 from typing import List, Sequence, Tuple
 
@@ -43,3 +44,19 @@ def path_to_robotics_xy(path: Sequence[Sequence[int]], num_rows: int) -> List[Tu
 def path_to_matrix_rc(path: Sequence[Sequence[int]], num_rows: int) -> List[Tuple[int, int]]:
     """Convert a path of [x, y] robotics/Y-up cells back to (row, col) matrix tuples."""
     return [to_matrix_rc(cell[0], cell[1], num_rows) for cell in path]
+
+
+def flip_region_cartesian_to_matrix(
+    start: Sequence[int], end: Sequence[int], num_rows: int
+) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+    """
+    Convert an axis-aligned rectangle's corners from cartesian (x, y) to matrix
+    (row, col). Flipping the vertical axis inverts which corner has the smaller
+    row, so the two converted corners are re-sorted into a valid (start, end)
+    pair with start <= end on both axes — needed for e.g. map YAML `region`
+    blocks (see quantum/maps/yaml2HDF5.py's flip_map_config_to_matrix), which
+    are iterated as an inclusive range from start to end.
+    """
+    r0, c0 = to_matrix_rc(start[0], start[1], num_rows)
+    r1, c1 = to_matrix_rc(end[0], end[1], num_rows)
+    return (min(r0, r1), min(c0, c1)), (max(r0, r1), max(c0, c1))

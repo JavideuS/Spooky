@@ -179,6 +179,23 @@ class BaseSolver(ABC):
 
         return []
 
+    def format_output_path(
+        self, path: List[Tuple[Tuple[int, int, int], int]], problem
+    ) -> List[Tuple[Tuple[int, int, int], int]]:
+        """
+        Convert a decoded ((i, j, t), robot_num) path into each robot's own
+        coordinate_format for display/return. Internal decoding always stays
+        matrix — call this only at the final boundary, after all windowed
+        solving/validation is done (see RobotConfig.format_position).
+        """
+        num_to_id = {num: rid for rid, num in problem.get_robot_nums().items()}
+        formatted = []
+        for (i, j, t), robot_num in path:
+            robot = problem.robots[num_to_id[robot_num]]
+            x, y = robot.format_position((i, j))
+            formatted.append(((x, y, t), robot_num))
+        return formatted
+
     def get_combined_path(
         self, path: List[Tuple[Tuple[int, int, int], int]]
     ) -> List[Tuple[int, int, int]]:

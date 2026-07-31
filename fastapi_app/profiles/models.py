@@ -46,6 +46,8 @@ class RobotSpec(BaseModel):
     start_time: int = 0
     priority: float = 1.0
     safety_radius: float = 0.5
+    coordinate_format: str = "matrix"  # "matrix" (row, col) or "cartesian" (x, y robotics/Y-up);
+    # applies to this robot's start/goal, and its returned path is formatted the same way
 
 
 class StatelessPlanRequest(BaseModel):
@@ -78,7 +80,8 @@ class StatelessPlanRequest(BaseModel):
 
 class RobotPathResult(BaseModel):
     robot_id: str
-    path: List[List[int]]           # [[row, col], ...] ordered by timestep
+    path: List[List[int]]           # ordered by timestep, in coordinate_format below
+    coordinate_format: str = "matrix"  # convention this robot's start/goal/path used
 
 
 class StatelessPlanResponse(BaseModel):
@@ -98,10 +101,12 @@ class PlanRequest(BaseModel):
     goal:  list[int]
     solver: Optional[str] = None  # if None → use robot's active_solver
     details: bool = False
+    coordinate_format: str = "matrix"  # "matrix" (row, col) or "cartesian" (x, y robotics/Y-up)
 
 class PlanResponse(BaseModel):
     # ✅ Always present
-    path: List[List[int]]           # decoded path in grid coordinates
+    path: List[List[int]]           # decoded path, in coordinate_format below
+    coordinate_format: str = "matrix"
     cost: float                     # best energy/cost
     # success: bool                   # did the solver succeed?
     map_id: str                     # which map was used

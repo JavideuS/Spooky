@@ -113,6 +113,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Variable limit passed to QUBO builders. (default: Grid=1650, Graph=1201)",
     )
     prob.add_argument(
+        "--coordinate-format",
+        choices=["matrix", "cartesian"],
+        default="matrix",
+        help=(
+            "Coordinate convention for start/goal in the problem config and for "
+            "printed/visualized output paths: 'matrix' (row, col), Spooky's native "
+            "convention (default), or 'cartesian' (x, y) robotics/Y-up. Per-robot "
+            "'coordinate_format' entries in the map YAML take precedence over this."
+        ),
+    )
+    prob.add_argument(
         "--no-reduction-log",
         action="store_true",
         default=False,
@@ -210,7 +221,7 @@ def build_parser() -> argparse.ArgumentParser:
     sol.add_argument(
         "--solver",
         "-s",
-        choices=["dwave", "pennylane", "qiskit_remote"],
+        choices=["dwave", "pennylane", "qiskit_remote", "qiskit_iqm"],
         default="dwave",
         help="Solver backend (default: dwave)",
     )
@@ -473,7 +484,9 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
     elif args.solver == "pennylane":
         norm_scale = args.normalize_scale if args.normalize_scale is not None else 1.0
         num_reads = (
-            int(args.num_reads) if args.num_reads and args.num_reads != "auto" else "auto"
+            int(args.num_reads)
+            if args.num_reads and args.num_reads != "auto"
+            else "auto"
         )
 
         # Initial QAOA params — load from file or use the defaults from qubo.py
@@ -511,7 +524,9 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
         # normalize_scale defaults to 4.0 (same as qubo.py's qiskit_hardware).
         norm_scale = args.normalize_scale if args.normalize_scale is not None else 4.0
         num_reads = (
-            int(args.num_reads) if args.num_reads and args.num_reads != "auto" else "auto"
+            int(args.num_reads)
+            if args.num_reads and args.num_reads != "auto"
+            else "auto"
         )
         device = args.device if args.device != "lightning.gpu" else "qiskit.remote"
 
@@ -527,6 +542,42 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
 
         logger.minimal(
             f"Creating Qiskit-remote solver via PennyLane "
+            f"(device={device}, layers={args.layers}, "
+            f"optimizer={args.optimizer}, steps={args.opt_steps}, scale={norm_scale})"
+        )
+        return SolverFactory.create_solver(
+            solver="pennylane",
+            normalize_scale=norm_scale,
+            num_reads=num_reads,
+            layers=args.layers,
+            optimizer=args.optimizer,
+            opt_steps=args.opt_steps,
+            device=device,
+            params=init_params,
+            verbose_level=verbose_level,
+        )
+
+    elif args.solver == "qiskit_iqm":
+        norm_scale = args.normalize_scale if args.normalize_scale is not None else 4.0
+        num_reads = (
+            int(args.num_reads)
+            if args.num_reads and args.num_reads != "auto"
+            else "auto"
+        )
+        device = args.device if args.device != "lightning.gpu" else "qiskit.iqm"
+
+        if args.init_params:
+            init_params = np.load(args.init_params, allow_pickle=False)
+            init_params = np.array(init_params, requires_grad=True)
+            logger.minimal(f"Loaded init_params from {args.init_params}")
+        else:
+            init_params = np.array(
+                [[1.70579, 0.70321062], [0.49879231, 0.49412656]],
+                requires_grad=True,
+            )
+
+        logger.minimal(
+            f"Creating IQM solver via PennyLane "
             f"(device={device}, layers={args.layers}, "
             f"optimizer={args.optimizer}, steps={args.opt_steps}, scale={norm_scale})"
         )
@@ -563,7 +614,9 @@ def run_visualization(args: argparse.Namespace, problem, robot_paths: dict) -> N
     mode = args.visualize
     out = args.output
     if out and out.lower().endswith(".gif") and mode != "animated":
-        logger.minimal(f"[viz] GIF export requires the animated mode — switching from '{mode}'.")
+        logger.minimal(
+            f"[viz] GIF export requires the animated mode — switching from '{mode}'."
+        )
         mode = "animated"
 
     viz = QuantumRoboticsVisualizer(
@@ -573,9 +626,13 @@ def run_visualization(args: argparse.Namespace, problem, robot_paths: dict) -> N
     obstacles = problem.grid.obstacles
 
     if mode == "static":
-        fig = viz.create_static_plot(obstacles=obstacles, robot_paths=robot_paths, problem=problem)
+        fig = viz.create_static_plot(
+            obstacles=obstacles, robot_paths=robot_paths, problem=problem
+        )
     elif mode == "steps":
-        fig = viz.create_step_by_step_plot(obstacles, robot_paths=robot_paths, problem=problem)
+        fig = viz.create_step_by_step_plot(
+            obstacles, robot_paths=robot_paths, problem=problem
+        )
     else:  # animated
         fig = viz.create_animated_plot(
             obstacles=obstacles,
@@ -625,6 +682,7 @@ def main():
         args.map,
         problem_name=args.problem,
         materials_data=materials_data,
+        coordinate_format=args.coordinate_format,
     )
 
     # -- Penalties -----------------------------------------------------------
@@ -701,9 +759,12 @@ def main():
         logger.minimal(f"Time:      {time.time() - timer:.4f}")
 
         for robot_id, robot in problem.robots.items():
-            logger.minimal(f"  [{robot_id}] {robot.path}")
+            formatted_path = [(*robot.format_position((i, j)), t) for i, j, t in robot.path]
+            logger.minimal(f"  [{robot_id}] {formatted_path}")
 
         if args.visualize:
+            # visualizer.py expects native matrix (row, col) input regardless of
+            # --coordinate-format, so pass the raw decoded path, not a formatted one.
             run_visualization(args, problem, solver.get_robot_paths(path))
 
 

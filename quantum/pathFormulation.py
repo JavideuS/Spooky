@@ -26,6 +26,19 @@ class PathfindingProblem:
                 self.robots[robot.robot_id] = robot
         self.num_robots = len(self.robots)
 
+        # Resolve each robot's own coordinate_format into native matrix (row, col)
+        # now that the grid (if any) is known. Internally, everything downstream
+        # (builders, solvers, adjacency checks) only ever sees matrix coordinates.
+        num_rows = self.grid.M if self.grid is not None else None
+        for robot in self.robots.values():
+            if robot.coordinate_format == "cartesian" and num_rows is None:
+                raise ValueError(
+                    f"Robot '{robot.robot_id}' uses coordinate_format='cartesian' but "
+                    f"this problem has no grid to derive a row count from — cartesian "
+                    f"conversion requires a grid."
+                )
+            robot.resolve_coordinates(num_rows)
+
         if T is None:
             T = self.calculate_timeline()
         else:
@@ -38,10 +51,10 @@ class PathfindingProblem:
         self.name = name
         
     @classmethod
-    def general_init(cls, start, end, grid=None, graph=None, T=None, name="unnamed"):
+    def general_init(cls, start, end, grid=None, graph=None, T=None, name="unnamed", coordinate_format="matrix"):
         # In this case we simply create a default robot configuration for single robot
-        robot = RobotConfig("Lucia", start, end)
-        
+        robot = RobotConfig("Lucia", start, end, coordinate_format=coordinate_format)
+
         return cls(robot, grid, graph, T, name)
 
     @classmethod
@@ -55,7 +68,8 @@ class PathfindingProblem:
         start = tuple(problem_dict["start"])
         end = tuple(problem_dict["goal"])
         T = problem_dict.get("T", None)
-        return cls.general_init(start, end, grid=grid, T=T)
+        coordinate_format = problem_dict.get("coordinate_format", "matrix")
+        return cls.general_init(start, end, grid=grid, T=T, coordinate_format=coordinate_format)
     
     @classmethod
     def from_graph_data(cls, graph_data, start_node, end_node, T=None, name="graph_problem"):
@@ -83,7 +97,7 @@ class PathfindingProblem:
         return cls.general_init(start_node, end_node, graph=graph, T=T, name=name)
 
     @classmethod
-    def from_unified_data(cls, h5_source, start, end, materials_data=None, T=None, name=None):
+    def from_unified_data(cls, h5_source, start, end, materials_data=None, T=None, name=None, coordinate_format="matrix"):
         """
         Create a unified PathfindingProblem instance with both grid and graph data.
         This is the main function for loading synthetic maps that support both approaches.
@@ -131,13 +145,14 @@ class PathfindingProblem:
             grid=grid,
             graph=graph,
             T=T,
-            name=problem_name
+            name=problem_name,
+            coordinate_format=coordinate_format
         )
         
         return problem
     
     @classmethod
-    def from_map_config(cls, map_path, problem_name="baseline", materials_data=None):
+    def from_map_config(cls, map_path, problem_name="baseline", materials_data=None, coordinate_format="matrix"):
         """
         Fast initialization from map path and problem configuration.
         This is a convenience method that combines H5 loading and YAML config parsing.
@@ -204,7 +219,8 @@ class PathfindingProblem:
                     start_time=robot_data.get("start_time", 0),
                     priority=robot_data.get("priority", 1.0),
                     safety_radius=robot_data.get("safety_radius", 0.5),
-                    expected_duration=robot_data.get("expected_duration", None)
+                    expected_duration=robot_data.get("expected_duration", None),
+                    coordinate_format=robot_data.get("coordinate_format", coordinate_format)
                 )
                 robots.append(robot)
             
@@ -250,7 +266,8 @@ class PathfindingProblem:
                 end=goal,
                 materials_data=materials_data,
                 T=time_limit,
-                name=f"{Path(base_path).stem}_{problem_name}"
+                name=f"{Path(base_path).stem}_{problem_name}",
+                coordinate_format=problem_config.get("coordinate_format", coordinate_format)
             )
     
     def add_robot(self, robot: RobotConfig, keep_time=False):

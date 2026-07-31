@@ -323,6 +323,14 @@
       <select id="mapSelect"></select>
       <span class="info-line" id="mapInfo"></span>
     </div>
+    <div class="viz-toolbar">
+      <span class="eyebrow">Coordinates</span>
+      <select id="coordFormatSelect">
+        <option value="matrix">matrix — (row, col), native</option>
+        <option value="cartesian">cartesian — (x, y), robotics Y-up</option>
+      </select>
+      <span class="info-line">Affects the preview/solved plot axes and all robots' start/goal below.</span>
+    </div>
 
     <div class="viz-caption">Map preview</div>
     <div id="viz"></div>
@@ -490,7 +498,10 @@
       // still try — has_grid may just be unresolved pre-load
     }
     try {
-      const res = await fetch(`/v1/maps/${encodeURIComponent(mapId)}/preview?embed=json`);
+      const coordinateFormat = el("coordFormatSelect").value;
+      const res = await fetch(
+        `/v1/maps/${encodeURIComponent(mapId)}/preview?embed=json&coordinate_format=${coordinateFormat}`
+      );
       if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
       const fig = await res.json();
       Plotly.newPlot(vizEl, fig.data, fig.layout, { responsive: true });
@@ -513,9 +524,16 @@
 
   // ---- Robot rows ----
 
+  function coordLabels() {
+    return el("coordFormatSelect").value === "cartesian"
+      ? { a: "Start x", b: "Start y", c: "Goal x", d: "Goal y" }
+      : { a: "Start row", b: "Start col", c: "Goal row", d: "Goal col" };
+  }
+
   function renderRobotRows() {
     const container = el("robotRows");
     container.innerHTML = "";
+    const labels = coordLabels();
     state.robots.forEach((r, idx) => {
       const row = document.createElement("div");
       row.className = "robot-row";
@@ -525,10 +543,10 @@
           <button type="button" class="remove-btn" title="Remove robot">×</button>
         </div>
         <div class="grid-inputs full">
-          <div><label>Start row</label><input type="number" data-field="start0" value="${r.start[0]}" /></div>
-          <div><label>Start col</label><input type="number" data-field="start1" value="${r.start[1]}" /></div>
-          <div><label>Goal row</label><input type="number" data-field="goal0" value="${r.goal[0]}" /></div>
-          <div><label>Goal col</label><input type="number" data-field="goal1" value="${r.goal[1]}" /></div>
+          <div><label>${labels.a}</label><input type="number" data-field="start0" value="${r.start[0]}" /></div>
+          <div><label>${labels.b}</label><input type="number" data-field="start1" value="${r.start[1]}" /></div>
+          <div><label>${labels.c}</label><input type="number" data-field="goal0" value="${r.goal[0]}" /></div>
+          <div><label>${labels.d}</label><input type="number" data-field="goal1" value="${r.goal[1]}" /></div>
         </div>
       `;
       row.querySelectorAll("input").forEach((input) => {
@@ -563,6 +581,7 @@
 
   function buildRequestBody() {
     const tVal = el("tInput").value.trim();
+    const coordinateFormat = el("coordFormatSelect").value;
     return {
       map_id: el("mapSelect").value,
       solver: el("solverSelect").value,
@@ -574,6 +593,7 @@
         start_time: r.start_time,
         priority: r.priority,
         safety_radius: r.safety_radius,
+        coordinate_format: coordinateFormat,
       })),
       penalty_set: el("penaltySelect").value,
       T: tVal ? parseInt(tVal, 10) : null,
@@ -603,11 +623,29 @@
     el("jsonEditor").style.display = "block";
   });
 
-  ["mapSelect", "solverSelect", "formatSelect", "penaltySelect", "tInput"].forEach((id) => {
+  ["mapSelect", "solverSelect", "formatSelect", "penaltySelect", "tInput", "coordFormatSelect"].forEach((id) => {
     el(id).addEventListener("change", syncJsonFromForm);
   });
   el("mapSelect").addEventListener("change", onMapChange);
   el("solverSelect").addEventListener("change", onSolverChange);
+  el("coordFormatSelect").addEventListener("change", () => {
+    renderRobotRows();
+    onMapChange(); // re-fetch the preview so its axes match the new convention
+  });
+  el("formatSelect").addEventListener("change", onFormatChange);
+
+  function onFormatChange() {
+    // Graph mode resolves positions straight to node ids server-side — there's
+    // no coordinate frame to flip, so cartesian isn't accepted there (api.py
+    // rejects it with a 400). Lock the toggle to matrix while graph is active.
+    const isGraph = el("formatSelect").value === "graph";
+    const coordSelect = el("coordFormatSelect");
+    const wasCartesian = coordSelect.value === "cartesian";
+    coordSelect.disabled = isGraph;
+    if (isGraph) coordSelect.value = "matrix";
+    renderRobotRows();
+    if (isGraph && wasCartesian) onMapChange(); // refresh preview back to matrix axes
+  }
 
   // ---- Plan ----
 
@@ -641,6 +679,7 @@
       row.innerHTML = `
         <div class="swatch" style="background:${color};"></div>
         <div class="rid">${escapeHtml(p.robot_id)}</div>
+        <span class="tag" title="Coordinate format">${escapeHtml(p.coordinate_format || "matrix")}</span>
         <div class="path">${p.path.map((c) => `(${c[0]},${c[1]})`).join(" → ")}</div>
       `;
       resultsEl.appendChild(row);

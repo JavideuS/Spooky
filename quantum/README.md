@@ -84,3 +84,4 @@ Inside `qubo.py`, you can switch between different problem configurations (e.g.,
 
 - **Windowing**: To overcome the qubit limitations of current quantum hardware, paths are solved in "sliding windows" (e.g., 5 steps at a time) rather than all at once.
 - **Hybrid Solving**: The system can dynamically switch between quantum annealers (DWave), gate-based QAOA (PennyLane), and classical heuristics depending on problem complexity and resource availability.
+- **Coordinate conventions**: The core always works in matrix `(row, col)` — that never changes. Callers can opt into cartesian/robotics `(x, y)` per-robot at request time (`RobotConfig.coordinate_format`, `qubo_cli.py --coordinate-format`) without touching the solver internals; see `utils/README.md` for the mechanism and `maps/README.md` for why maps themselves don't have this same runtime choice.

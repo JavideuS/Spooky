@@ -4,6 +4,8 @@ import h5py
 import numpy as np
 from pathlib import Path
 
+from quantum.utils.coordinates import path_to_matrix_rc, flip_region_cartesian_to_matrix
+
 # Load materials mapping
 def load_materials(config_path="config/materials.yaml"):
     with open(config_path, 'r', encoding='utf-8') as f:
@@ -93,6 +95,39 @@ def grid_to_graph_edges(occupancy, connectivity=4):
     edges = np.array(edges, dtype=dtype)
     return nodes, edges
 
+def flip_map_config_to_matrix(map_config, num_rows):
+    """
+    Re-index a map_config dict authored in cartesian (x, y) convention into
+    Spooky's native matrix (row, col) convention, in place.
+
+    Unlike RobotConfig.coordinate_format (a live, reversible relabeling checked
+    at read time), a generated map has no such runtime attribute — a .h5 file
+    is just a baked array. So this is a one-time, one-directional re-indexing
+    applied once at generation time; from then on the map is matrix-native,
+    same as every other map in the repo.
+
+    Converts every position-shaped field: grid.obstacles, and each terrain/
+    elevation modification's `positions` list or `region` (start, end) corners.
+    """
+    grid = map_config['grid']
+    if grid.get('obstacles'):
+        grid['obstacles'] = [list(p) for p in path_to_matrix_rc(grid['obstacles'], num_rows)]
+
+    for section in ('terrain', 'elevation'):
+        if section not in map_config:
+            continue
+        for mod in map_config[section].get('modifications', []):
+            if 'positions' in mod:
+                mod['positions'] = [list(p) for p in path_to_matrix_rc(mod['positions'], num_rows)]
+            if 'region' in mod:
+                start, end = flip_region_cartesian_to_matrix(
+                    mod['region']['start'], mod['region']['end'], num_rows
+                )
+                mod['region']['start'], mod['region']['end'] = list(start), list(end)
+
+    return map_config
+
+
 # Main function
 def generate_map_from_yaml(yaml_path, output_dir="maps", materials_path="config/materials.yaml"):
     with open(yaml_path, 'r', encoding='utf-8') as f:
@@ -102,6 +137,10 @@ def generate_map_from_yaml(yaml_path, output_dir="maps", materials_path="config/
     map_name = map_config['name']
     M = map_config['grid']['M']
     N = map_config['grid']['N']
+
+    if map_config.get('coordinate_format', 'matrix') == 'cartesian':
+        map_config = flip_map_config_to_matrix(map_config, M)
+
     obstacles = map_config['grid'].get('obstacles', [])
 
     os.makedirs(output_dir, exist_ok=True)

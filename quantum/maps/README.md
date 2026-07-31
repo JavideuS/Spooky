@@ -69,6 +69,26 @@ generate_map_from_yaml(
 )
 ```
 
+## Coordinate convention
+
+Maps are always **static and matrix-native**: `(row, col)`, row 0 = top row,
+row increases downward, `map_structure` is `0`=free/`1`=obstacle. This is
+fixed at the file level — unlike a robot's `start`/`goal` (see
+`RobotConfig.coordinate_format` in `../robotConfiguration.py`), a `.h5`/`.yaml`
+map has no runtime "which convention is this in" flag, since it's a baked
+array, not something read live through a formatter.
+
+If you find it more natural to author a map's `obstacles` / terrain /
+elevation positions in cartesian `(x, y)` (y increasing upward) instead, set
+`coordinate_format: cartesian` under `map:` in the source YAML (see
+`template.yaml`). `generate_map_from_yaml()` re-indexes every position field
+(`grid.obstacles`, each modification's `positions` list, each `region`'s
+`start`/`end` corners) into matrix convention once, at generation time, via
+`yaml2HDF5.flip_map_config_to_matrix()` — the resulting `.h5` is matrix-native
+either way. This is a one-time, one-directional migration, not a display
+toggle: omit the field (or leave it `matrix`) unless you're specifically
+authoring in cartesian.
+
 ## Version Control
 
 Both YAML and HDF5 files are tracked in git:

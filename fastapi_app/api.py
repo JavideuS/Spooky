@@ -335,7 +335,8 @@ def plan_path(robot_id: str, request: PlanRequest):
     # --- 3. Run planning ---
     try:
         robot_config = RobotConfig(
-            robot_id=robot_id, start=tuple(request.start), goal=tuple(request.goal)
+            robot_id=robot_id, start=tuple(request.start), goal=tuple(request.goal),
+            coordinate_format=request.coordinate_format,
         )
         problem = pathfinding.PathfindingProblem(robot_config, grid=map_obj)
         builder = QUBOBuilder(
@@ -345,13 +346,14 @@ def plan_path(robot_id: str, request: PlanRequest):
         builder.build()
         solution = solver.solve_qubo(builder)
         planning_time = time.time() - start_time
-        decoded_path = [
-            [i, j] for (i, j, t), _ in solver.decode_path(solution["solution"], problem)
-        ]
+        raw_path = solver.decode_path(solution["solution"], problem)
+        formatted_path = solver.format_output_path(raw_path, problem)
+        decoded_path = [[i, j] for (i, j, t), _ in formatted_path]
         energy = float(solver.total_energy(solution))
         print("Energy", energy)
         response = PlanResponse(
             path=decoded_path,
+            coordinate_format=request.coordinate_format,
             cost=energy,
             # success=path["success"],
             map_id=request.map_id,
@@ -383,7 +385,7 @@ def list_registered_maps():
 
 
 @app.get("/v1/maps/{map_id}/preview")
-def preview_map(map_id: str, embed: str = "html"):
+def preview_map(map_id: str, embed: str = "html", coordinate_format: str = "matrix"):
     """
     Render map_id's grid (obstacles + terrain, no robots/paths).
     embed="html" (default): a standalone-ish Plotly HTML fragment, plotly.js via
@@ -393,10 +395,16 @@ def preview_map(map_id: str, embed: str = "html"):
     embed="json": {"data": [...], "layout": {...}} — for pages that already load
     plotly.js themselves and want to call Plotly.newPlot/react directly (this is
     what /demo uses, so it can later update the same figure with a solved path).
+    coordinate_format="matrix" (default) or "cartesian" — purely a display choice
+    (axis labels/origin/direction); the underlying grid data is unaffected.
     Grid-only: graph-only maps have no visualizer support and return 400.
     """
     if embed not in ("html", "json"):
         raise HTTPException(400, f"Unknown embed: {embed}. Must be 'html' or 'json'.")
+    if coordinate_format not in ("matrix", "cartesian"):
+        raise HTTPException(
+            400, f"Unknown coordinate_format: {coordinate_format}. Must be 'matrix' or 'cartesian'."
+        )
 
     try:
         grid = registry.get_map(map_id, format="grid")
@@ -408,7 +416,8 @@ def preview_map(map_id: str, embed: str = "html"):
         raise HTTPException(400, f"Failed to load map '{map_id}': {e}")
 
     visualizer = QuantumRoboticsVisualizer(
-        grid_size=(grid.M, grid.N), title=f"Map preview: {map_id}"
+        grid_size=(grid.M, grid.N), title=f"Map preview: {map_id}",
+        convention="robotics" if coordinate_format == "cartesian" else "matrix",
     )
     problem_stub = SimpleNamespace(grid=grid)
     fig = visualizer.create_static_plot(obstacles=grid.obstacles, problem=problem_stub)
@@ -509,9 +518,18 @@ def plan_stateless(request: StatelessPlanRequest):
     penalties = global_penalties_params[request.penalty_set]
 
     # --- 4. Build robot configs (single or multi) ---
-    def resolve_position(pos: list[int]):
+    def resolve_position(pos: list[int], coordinate_format: str):
         # Graph builders index robots by node id, not (row, col) — RobotConfig
         # must hold the node id directly (see PathfindingProblem.from_graph_data).
+        # Node ids have no coordinate frame of their own, so cartesian input isn't
+        # supported in graph mode — convert to matrix before the position lookup
+        # would be needed elsewhere, but here we just reject it outright.
+        if coordinate_format == "cartesian" and request.format == "graph":
+            raise HTTPException(
+                400,
+                "coordinate_format='cartesian' is not supported in graph mode — "
+                "positions there resolve directly to node ids.",
+            )
         if request.format != "graph":
             return tuple(pos)
         node_id = env.get_node_from_position(tuple(pos))
@@ -524,11 +542,12 @@ def plan_stateless(request: StatelessPlanRequest):
     robot_configs = [
         RobotConfig(
             robot_id=r.id or f"robot_{i}",
-            start=resolve_position(r.start),
-            goal=resolve_position(r.goal),
+            start=resolve_position(r.start, r.coordinate_format),
+            goal=resolve_position(r.goal, r.coordinate_format),
             start_time=r.start_time,
             priority=r.priority,
             safety_radius=r.safety_radius,
+            coordinate_format=r.coordinate_format,
         )
         for i, r in enumerate(request.robots)
     ]
@@ -553,15 +572,19 @@ def plan_stateless(request: StatelessPlanRequest):
         decoded = solver.decode_path(solution["solution"], problem)
         robot_paths = solver.get_robot_paths(
             decoded
-        )  # {robot_num: [(i, j, t), ...] sorted by t}
+        )  # {robot_num: [(i, j, t), ...] sorted by t} — matrix, for the visualizer below
+        formatted_robot_paths = solver.get_robot_paths(
+            solver.format_output_path(decoded, problem)
+        )  # same, but each robot's path in its own coordinate_format — for the response
         num_to_id = {num: rid for rid, num in problem.get_robot_nums().items()}
 
         paths = [
             RobotPathResult(
                 robot_id=num_to_id.get(robot_num, str(robot_num)),
                 path=[[i, j] for (i, j, t) in coords],
+                coordinate_format=problem.robots[num_to_id[robot_num]].coordinate_format,
             )
-            for robot_num, coords in robot_paths.items()
+            for robot_num, coords in formatted_robot_paths.items()
         ]
 
         response = StatelessPlanResponse(
@@ -578,8 +601,13 @@ def plan_stateless(request: StatelessPlanRequest):
             response.solver_details = solver.to_dict()
 
         if request.render and request.format == "grid":
+            # The figure is one shared plot for all robots, so a single display
+            # convention is used — the first robot's coordinate_format (the demo
+            # UI sets the same value for every robot via one toggle).
+            render_format = request.robots[0].coordinate_format if request.robots else "matrix"
             visualizer = QuantumRoboticsVisualizer(
-                grid_size=(env.M, env.N), title=f"{request.map_id} — solved"
+                grid_size=(env.M, env.N), title=f"{request.map_id} — solved",
+                convention="robotics" if render_format == "cartesian" else "matrix",
             )
             fig = visualizer.create_animated_plot(
                 obstacles=env.obstacles,
