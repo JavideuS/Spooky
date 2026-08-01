@@ -124,8 +124,16 @@ def root():
 
 @app.get("/demo", response_class=HTMLResponse)
 def demo_page():
-    """Self-contained demo UI: map/solver pickers, a robot form, and a live Plotly view."""
-    return DEMO_HTML_PATH.read_text(encoding="utf-8")
+    """
+    Self-contained demo UI: map/solver pickers, a robot form, and a live Plotly view.
+    No-store: this file changes often during development and carries no ETag/
+    Last-Modified, so without an explicit directive some browsers will serve a
+    stale cached copy on a plain reload instead of refetching.
+    """
+    return HTMLResponse(
+        content=DEMO_HTML_PATH.read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/solvers")

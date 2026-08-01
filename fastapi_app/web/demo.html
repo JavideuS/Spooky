@@ -269,6 +269,16 @@
   }
   .robot-row .remove-btn:hover { color: var(--error); border-color: var(--error); }
 
+  .pick-row { display: flex; gap: 6px; }
+  .pick-row .pick-btn { flex: 1; text-align: center; }
+  .pick-btn.active {
+    border-color: var(--accent);
+    border-style: solid;
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+  #viz.picking { cursor: crosshair; }
+
   button.secondary {
     background: none;
     border: 1px dashed var(--border);
@@ -335,6 +345,8 @@
       <span class="eyebrow">Map</span>
       <select id="mapSelect"></select>
       <span class="info-line" id="mapInfo"></span>
+      <button type="button" class="secondary" id="uploadMapBtn">+ upload .h5</button>
+      <input type="file" id="uploadMapInput" accept=".h5,.hdf5" style="display:none;" />
     </div>
     <div class="viz-toolbar">
       <span class="eyebrow">Coordinates</span>
@@ -371,6 +383,7 @@
       <div class="eyebrow">Robots</div>
       <div id="robotRows" style="display:flex; flex-direction:column; gap:8px;"></div>
       <button class="secondary" id="addRobotBtn" type="button">+ add robot</button>
+      <div class="info-line" id="pickHint" style="min-height:14px;"></div>
     </div>
 
     <div class="field-group">
@@ -425,6 +438,8 @@
       { id: "", start: [0, 0], goal: [0, 0], start_time: 0, priority: 1.0, safety_radius: 0.5 },
     ],
     activeTab: "form",
+    picking: null, // { idx, field: "start"|"goal" } while waiting for a map click
+    previewFigure: null, // last-fetched map preview {data, layout}, re-used to overlay start/goal markers
   };
 
   const el = (id) => document.getElementById(id);
@@ -522,9 +537,108 @@
       );
       if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
       const fig = await res.json();
-      Plotly.newPlot(vizEl, fig.data, fig.layout, { responsive: true });
+      state.previewFigure = fig;
+      refreshPreviewWithRobots();
     } catch (err) {
+      state.previewFigure = null;
       vizEl.innerHTML = `<div class="placeholder">Couldn't preview this map: ${escapeHtml(String(err.message || err))}</div>`;
+    }
+  }
+
+  // Overlays each robot's current start/goal on top of the last-fetched map
+  // preview, so picking (or typing) a coordinate is visible immediately
+  // instead of only updating the sidebar's number inputs. Only touches the
+  // plain preview — a solved plan's figure (drawn by renderResults) already
+  // carries its own start/goal markers from the backend and isn't affected.
+  const GOAL_COLOR = "#4fd1a5"; // fixed, matches --success — goals read as "target", not per-robot
+
+  function robotMarkerTraces() {
+    const isCartesian = el("coordFormatSelect").value === "cartesian";
+    const toXY = (pos) => (isCartesian ? [pos[0], pos[1]] : [pos[1], pos[0]]);
+    const starts = { x: [], y: [], hovertext: [], color: [] };
+    const goals = { x: [], y: [], hovertext: [] };
+    state.robots.forEach((r, idx) => {
+      const color = ROBOT_COLORS[idx % ROBOT_COLORS.length];
+      const label = r.id || `robot_${idx}`;
+      const [sx, sy] = toXY(r.start);
+      const [gx, gy] = toXY(r.goal);
+      starts.x.push(sx); starts.y.push(sy); starts.hovertext.push(`${label} start`); starts.color.push(color);
+      goals.x.push(gx); goals.y.push(gy); goals.hovertext.push(`${label} goal`);
+    });
+    if (!starts.x.length) return [];
+    return [
+      {
+        x: starts.x, y: starts.y, mode: "markers+text", type: "scatter",
+        marker: { size: 15, color: starts.color, symbol: "circle", line: { color: "#fff", width: 1.5 } },
+        text: state.robots.map(() => "S"), textfont: { size: 8, color: "#fff" },
+        hovertext: starts.hovertext, hoverinfo: "text", showlegend: false, name: "start",
+      },
+      {
+        x: goals.x, y: goals.y, mode: "markers+text", type: "scatter",
+        marker: { size: 15, color: GOAL_COLOR, symbol: "diamond", line: { color: "#fff", width: 1.5 } },
+        text: state.robots.map(() => "G"), textfont: { size: 8, color: "#fff" },
+        hovertext: goals.hovertext, hoverinfo: "text", showlegend: false, name: "goal",
+      },
+    ];
+  }
+
+  function refreshPreviewWithRobots() {
+    if (!state.previewFigure) return;
+    const combinedData = [...state.previewFigure.data, ...robotMarkerTraces()];
+    Plotly.react(vizEl, combinedData, state.previewFigure.layout, { responsive: true });
+  }
+
+  el("uploadMapBtn").addEventListener("click", () => el("uploadMapInput").click());
+  el("uploadMapInput").addEventListener("change", handleMapUpload);
+
+  async function handleMapUpload(evt) {
+    const file = evt.target.files[0];
+    if (!file) return;
+    clearError();
+    const btn = el("uploadMapBtn");
+    const prevText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Uploading…";
+
+    let mapId = file.name.replace(/\.(h5|hdf5)$/i, "");
+    if (state.maps[mapId]) mapId = `${mapId}_${Date.now().toString(36)}`;
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`/v1/maps/${encodeURIComponent(mapId)}`, {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const detail = Array.isArray(data.detail)
+          ? data.detail.map((d) => d.msg).join("; ")
+          : data.detail || res.statusText;
+        throw new Error(detail);
+      }
+
+      state.maps[mapId] = {
+        description: "uploaded",
+        loaded: true,
+        grid_size: data.grid_size,
+        has_grid: !!data.grid_size,
+        has_graph: data.has_graph,
+        source: "uploaded",
+      };
+      const opt = document.createElement("option");
+      opt.value = mapId;
+      opt.textContent = mapId;
+      el("mapSelect").appendChild(opt);
+      el("mapSelect").value = mapId;
+      onMapChange();
+      syncJsonFromForm();
+    } catch (err) {
+      showError(`Map upload failed: ${String(err.message || err)}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = prevText;
+      evt.target.value = "";
     }
   }
 
@@ -555,6 +669,7 @@
     state.robots.forEach((r, idx) => {
       const row = document.createElement("div");
       row.className = "robot-row";
+      row.dataset.idx = String(idx);
       row.innerHTML = `
         <div class="robot-row-header">
           <input type="text" data-field="id" placeholder="robot_${idx} (auto)" value="${r.id}" />
@@ -566,34 +681,169 @@
           <div><label>${labels.c}</label><input type="number" data-field="goal0" value="${r.goal[0]}" /></div>
           <div><label>${labels.d}</label><input type="number" data-field="goal1" value="${r.goal[1]}" /></div>
         </div>
+        <div class="pick-row">
+          <button type="button" class="secondary pick-btn" data-pick="start">pick start on map</button>
+          <button type="button" class="secondary pick-btn" data-pick="goal">pick goal on map</button>
+        </div>
       `;
       row.querySelectorAll("input").forEach((input) => {
         input.addEventListener("input", () => {
           const field = input.dataset.field;
-          if (field === "id") { r.id = input.value; syncJsonFromForm(); return; }
+          if (field === "id") { r.id = input.value; syncJsonFromForm(); refreshPreviewWithRobots(); return; }
           const val = parseInt(input.value, 10) || 0;
           if (field === "start0") r.start[0] = val;
           if (field === "start1") r.start[1] = val;
           if (field === "goal0") r.goal[0] = val;
           if (field === "goal1") r.goal[1] = val;
           syncJsonFromForm();
+          refreshPreviewWithRobots();
         });
       });
       row.querySelector(".remove-btn").addEventListener("click", () => {
         if (state.robots.length <= 1) return;
         state.robots.splice(idx, 1);
+        if (state.picking) {
+          if (state.picking.idx === idx) state.picking = null;
+          else if (state.picking.idx > idx) state.picking.idx -= 1;
+        }
         renderRobotRows();
         syncJsonFromForm();
+        refreshPreviewWithRobots();
+      });
+      row.querySelectorAll(".pick-btn").forEach((btn) => {
+        btn.addEventListener("click", () => setPicking(idx, btn.dataset.pick));
       });
       container.appendChild(row);
     });
+    updatePickingUI();
   }
 
   el("addRobotBtn").addEventListener("click", () => {
     state.robots.push({ id: "", start: [0, 0], goal: [0, 0], start_time: 0, priority: 1.0, safety_radius: 0.5 });
     renderRobotRows();
     syncJsonFromForm();
+    refreshPreviewWithRobots();
   });
+
+  // ---- Click-to-place start/goal ----
+
+  let previousDragmode = "zoom";
+
+  function setPicking(idx, field) {
+    if (state.picking && state.picking.idx === idx && state.picking.field === field) {
+      exitPicking();
+      return;
+    }
+    state.picking = { idx, field };
+    updatePickingUI();
+    // A plain click in Plotly's default zoom dragmode can still be read as
+    // (the start of) a zoom-box drag, and its drag layer swallows the click
+    // before it reaches our handler either way — disable dragging entirely
+    // for the duration of the pick so the click is free to reach us and
+    // can't be mistaken for a zoom/pan gesture.
+    if (vizEl._fullLayout) {
+      previousDragmode = vizEl._fullLayout.dragmode || "zoom";
+      Plotly.relayout(vizEl, { dragmode: false });
+    }
+  }
+
+  function exitPicking() {
+    state.picking = null;
+    updatePickingUI();
+    if (vizEl._fullLayout) Plotly.relayout(vizEl, { dragmode: previousDragmode });
+  }
+
+  function updatePickingUI() {
+    document.querySelectorAll(".pick-btn").forEach((btn) => btn.classList.remove("active"));
+    const hintEl = el("pickHint");
+    if (state.picking) {
+      const { idx, field } = state.picking;
+      const robot = state.robots[idx];
+      const label = robot ? (robot.id || `robot_${idx}`) : "";
+      const activeBtn = document.querySelector(`.robot-row[data-idx="${idx}"] .pick-btn[data-pick="${field}"]`);
+      if (activeBtn) activeBtn.classList.add("active");
+      vizEl.classList.add("picking");
+      hintEl.textContent = `Click the map to set ${label}'s ${field}.`;
+    } else {
+      vizEl.classList.remove("picking");
+      hintEl.textContent = "";
+    }
+  }
+
+  function handleVizClick(evt) {
+    if (!state.picking) return;
+    const gd = vizEl;
+    const fullLayout = gd._fullLayout;
+    if (!fullLayout || !fullLayout.xaxis || !fullLayout.yaxis || !fullLayout._size) return;
+
+    const rect = gd.getBoundingClientRect();
+    const size = fullLayout._size;
+    const pxX = evt.clientX - rect.left - size.l;
+    const pxY = evt.clientY - rect.top - size.t;
+    let dataX, dataY;
+    try {
+      dataX = fullLayout.xaxis.p2c(pxX);
+      dataY = fullLayout.yaxis.p2c(pxY);
+    } catch (err) {
+      return; // clicked outside the plotting area, or an incompatible plotly build
+    }
+    if (typeof dataX !== "number" || typeof dataY !== "number" || Number.isNaN(dataX) || Number.isNaN(dataY)) return;
+
+    // Bounds come from the already-rendered axis range, not state.maps[mapId]
+    // — that registry snapshot is taken once at page load, before any map has
+    // actually been loaded server-side, so its grid_size is null until some
+    // other request (e.g. this very preview) triggers the lazy load. The
+    // range on the live figure is always correct for what's on screen right now.
+    let rows = null, cols = null;
+    const xr = fullLayout.xaxis.range, yr = fullLayout.yaxis.range;
+    if (Array.isArray(xr) && Array.isArray(yr)) {
+      cols = Math.round(Math.max(xr[0], xr[1]) + 0.5);
+      rows = Math.round(Math.max(yr[0], yr[1]) + 0.5);
+    }
+
+    const isCartesian = el("coordFormatSelect").value === "cartesian";
+    let a = Math.round(isCartesian ? dataX : dataY);
+    let b = Math.round(isCartesian ? dataY : dataX);
+    // a/b bounds: matrix -> a is row (bounded by rows), b is col (bounded by cols);
+    // cartesian -> a is x (bounded by cols), b is y (bounded by rows).
+    if (rows != null && cols != null) {
+      const aMax = isCartesian ? cols - 1 : rows - 1;
+      const bMax = isCartesian ? rows - 1 : cols - 1;
+      a = Math.min(Math.max(a, 0), aMax);
+      b = Math.min(Math.max(b, 0), bMax);
+    }
+
+    const { idx, field } = state.picking;
+    if (!state.robots[idx]) { exitPicking(); return; }
+
+    // Plot-space (x, y) for this pick — same mapping robotMarkerTraces()/toXY()
+    // uses, so it lines up with how the Obstacles trace itself was drawn.
+    const [plotX, plotY] = isCartesian ? [a, b] : [b, a];
+    if (isObstacleAt(plotX, plotY)) {
+      const label = state.robots[idx].id || `robot_${idx}`;
+      el("pickHint").textContent = `That cell is an obstacle — pick a different cell for ${label}'s ${field}.`;
+      return; // stay in picking mode so the user can try again
+    }
+
+    state.robots[idx][field] = [a, b];
+    exitPicking();
+    renderRobotRows();
+    syncJsonFromForm();
+    refreshPreviewWithRobots();
+  }
+
+  function isObstacleAt(x, y) {
+    if (!state.previewFigure) return false;
+    const trace = state.previewFigure.data.find((t) => t.name === "Obstacles");
+    if (!trace || !trace.x) return false;
+    return trace.x.some((ox, i) => ox === x && trace.y[i] === y);
+  }
+
+  // Capture phase, not bubble: Plotly's own drag/zoom layer sits between us
+  // and the click target and can swallow the event on its way back up before
+  // a bubble-phase listener here would ever see it. Capture fires top-down,
+  // so this runs before Plotly's (bubble-phase) internal handlers do.
+  vizEl.addEventListener("click", handleVizClick, { capture: true });
 
   // ---- Form <-> JSON ----
 
