@@ -59,6 +59,7 @@ class StatelessPlanRequest(BaseModel):
     T: Optional[int] = None         # omit/null to auto-compute; a window of 0 steps is never valid
     details: bool = False
     render: bool = False            # also return an animated Plotly figure (data+layout+frames) of the solved paths; grid only
+    clip_at_goal: bool = False      # trim each robot's returned path once parked at goal, keeping only the first arrival
 
     @field_validator("robots")
     @classmethod
@@ -102,6 +103,7 @@ class PlanRequest(BaseModel):
     solver: Optional[str] = None  # if None → use robot's active_solver
     details: bool = False
     coordinate_format: str = "matrix"  # "matrix" (row, col) or "cartesian" (x, y robotics/Y-up)
+    clip_at_goal: bool = False  # trim the returned path once parked at goal, keeping only the first arrival
 
 class PlanResponse(BaseModel):
     # ✅ Always present

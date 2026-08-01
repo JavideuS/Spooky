@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 import numpy as np
 from typing import Dict, Any, List, Tuple
-from quantum.utils.paths import decode_position
+from quantum.utils.paths import decode_position, clip_path_at_goal
 from quantum.utils.validation import is_valid_move
 from quantum.utils.logger import get_logger
 
@@ -195,6 +195,25 @@ class BaseSolver(ABC):
             x, y = robot.format_position((i, j))
             formatted.append(((x, y, t), robot_num))
         return formatted
+
+    def clip_paths_at_goal(
+        self, robot_paths: Dict[int, List[Tuple[int, int, int]]], problem
+    ) -> Dict[int, List[Tuple[int, int, int]]]:
+        """
+        Output-only trim: for each robot, drop the trailing steps where it's
+        already parked at goal (kept internally so windowing/collision checks
+        stay correct for other robots), keeping just the first arrival. Does
+        not touch problem/robot state — call this on a copy of the final,
+        fully merged robot_paths, at the same output boundary as
+        format_output_path, only for callers that want a "stops at goal"
+        path (e.g. an external planner).
+        """
+        num_to_id = {num: rid for rid, num in problem.get_robot_nums().items()}
+        clipped = {}
+        for robot_num, coords in robot_paths.items():
+            goal = tuple(problem.robots[num_to_id[robot_num]].goal)
+            clipped[robot_num] = clip_path_at_goal(coords, goal)
+        return clipped
 
     def get_combined_path(
         self, path: List[Tuple[Tuple[int, int, int], int]]

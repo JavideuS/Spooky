@@ -347,6 +347,18 @@ def plan_path(robot_id: str, request: PlanRequest):
         solution = solver.solve_qubo(builder)
         planning_time = time.time() - start_time
         raw_path = solver.decode_path(solution["solution"], problem)
+        if request.clip_at_goal:
+            # Clip on matrix-native coords (against robot.goal) before
+            # formatting, so the response stops at goal instead of showing
+            # it parked there.
+            clipped_robot_paths = solver.clip_paths_at_goal(
+                solver.get_robot_paths(raw_path), problem
+            )
+            raw_path = [
+                ((i, j, t), robot_num)
+                for robot_num, coords in clipped_robot_paths.items()
+                for (i, j, t) in coords
+            ]
         formatted_path = solver.format_output_path(raw_path, problem)
         decoded_path = [[i, j] for (i, j, t), _ in formatted_path]
         energy = float(solver.total_energy(solution))
@@ -573,8 +585,19 @@ def plan_stateless(request: StatelessPlanRequest):
         robot_paths = solver.get_robot_paths(
             decoded
         )  # {robot_num: [(i, j, t), ...] sorted by t} — matrix, for the visualizer below
+        response_path = decoded
+        if request.clip_at_goal:
+            # Clip on matrix-native coords (against robot.goal) before
+            # formatting, so the response stops at goal instead of showing
+            # it parked there. robot_paths (visualizer, above) stays unclipped.
+            clipped_robot_paths = solver.clip_paths_at_goal(robot_paths, problem)
+            response_path = [
+                ((i, j, t), robot_num)
+                for robot_num, coords in clipped_robot_paths.items()
+                for (i, j, t) in coords
+            ]
         formatted_robot_paths = solver.get_robot_paths(
-            solver.format_output_path(decoded, problem)
+            solver.format_output_path(response_path, problem)
         )  # same, but each robot's path in its own coordinate_format — for the response
         num_to_id = {num: rid for rid, num in problem.get_robot_nums().items()}
 

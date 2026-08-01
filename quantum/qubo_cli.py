@@ -44,6 +44,7 @@ import quantum.config.parser as config_parser
 from quantum.builder import QUBOBuilder, GraphQUBO
 import quantum.benchmark.benchmark as bm_module
 from quantum.utils.logger import set_verbose_level, get_logger
+from quantum.utils.paths import clip_path_at_goal
 import time
 
 _HERE = Path(__file__).parent  # quantum/
@@ -322,6 +323,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=10,
         metavar="N",
         help="Number of benchmark runs (only used with --benchmark, default: 10)",
+    )
+    run.add_argument(
+        "--clip-at-goal",
+        action="store_true",
+        help=(
+            "Trim each robot's printed path once it's parked at goal, keeping "
+            "only the first arrival (output-only; doesn't affect solving/windowing). "
+            "Useful for feeding paths to an external planner."
+        ),
     )
     run.add_argument(
         "--benchmark-level",
@@ -759,7 +769,10 @@ def main():
         logger.minimal(f"Time:      {time.time() - timer:.4f}")
 
         for robot_id, robot in problem.robots.items():
-            formatted_path = [(*robot.format_position((i, j)), t) for i, j, t in robot.path]
+            robot_path = robot.path
+            if args.clip_at_goal:
+                robot_path = clip_path_at_goal(robot_path, tuple(robot.goal))
+            formatted_path = [(*robot.format_position((i, j)), t) for i, j, t in robot_path]
             logger.minimal(f"  [{robot_id}] {formatted_path}")
 
         if args.visualize:

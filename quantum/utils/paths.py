@@ -33,6 +33,29 @@ def merge_paths(old_path: List[Tuple[int, int, int]], new_path: List[Tuple[int, 
         
         return merged
 
+def clip_path_at_goal(coords: List[Tuple[int, int, int]], goal: Tuple[int, int]) -> List[Tuple[int, int, int]]:
+        """
+        Trim the trailing steps where a single-robot path is already parked at
+        goal, keeping only the first arrival. Pure/output-only: does not touch
+        any solver or windowing state — callers decide whether/where to use it.
+
+        Args:
+            coords: Single robot's path [(i, j, t), ...], sorted by t
+            goal: Robot's goal position (i, j)
+
+        Returns:
+            Path truncated right after the first timestep the robot reaches
+            goal and never leaves again. Unchanged if the robot never parks
+            at goal for the remainder of the path.
+        """
+        cut = len(coords)
+        for idx in range(len(coords) - 1, -1, -1):
+            i, j, _ = coords[idx]
+            if (i, j) != goal:
+                break
+            cut = idx
+        return coords[:cut + 1]
+
 def decode_position(idx: int, problem) -> Tuple[int, int, int, int]:
         """
         Decode variable index to position, time, and robot number.

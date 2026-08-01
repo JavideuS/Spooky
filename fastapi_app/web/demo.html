@@ -200,6 +200,19 @@
     color: var(--text-dim);
     line-height: 1.5;
   }
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .toggle-row input[type="checkbox"] {
+    width: 15px;
+    height: 15px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
   .tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 4px; }
   .tag {
     font-size: 10px;
@@ -379,6 +392,11 @@
         <label class="eyebrow" style="margin-bottom:2px; display:block;">T (blank = auto)</label>
         <input id="tInput" type="number" min="1" placeholder="auto" />
       </div>
+      <label class="toggle-row" style="margin-top:6px;">
+        <input id="clipAtGoalToggle" type="checkbox" />
+        <span>Clip paths at goal</span>
+      </label>
+      <div class="info-line">Trim each robot's returned path once it's parked at goal, keeping only the first arrival.</div>
     </div>
 
     <div class="field-group">
@@ -599,6 +617,7 @@
       T: tVal ? parseInt(tVal, 10) : null,
       details: false,
       render: true,
+      clip_at_goal: el("clipAtGoalToggle").checked,
     };
   }
 
@@ -623,7 +642,7 @@
     el("jsonEditor").style.display = "block";
   });
 
-  ["mapSelect", "solverSelect", "formatSelect", "penaltySelect", "tInput", "coordFormatSelect"].forEach((id) => {
+  ["mapSelect", "solverSelect", "formatSelect", "penaltySelect", "tInput", "coordFormatSelect", "clipAtGoalToggle"].forEach((id) => {
     el(id).addEventListener("change", syncJsonFromForm);
   });
   el("mapSelect").addEventListener("change", onMapChange);
