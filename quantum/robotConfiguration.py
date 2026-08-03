@@ -71,6 +71,12 @@ class RobotConfig:
         """Check if robot has reached its goal."""
         return self.current_position == self.goal
 
+    def reset(self) -> None:
+        """Restore dynamic state to the robot's initial start position."""
+        self.path = []
+        self.current_position = self.start
+        self.active = True
+
     def to_dict(self) -> Dict:
         """Convert to dictionary representation, formatted per coordinate_format."""
         return {

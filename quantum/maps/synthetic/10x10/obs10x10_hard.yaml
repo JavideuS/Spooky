@@ -4,7 +4,29 @@ map:
   grid:
     M: 10
     N: 10
-    obstacles: [[1, 4], [1, 5], [2, 3], [2, 6], [3, 2], [3, 4], [3, 5], [3, 7], [4, 1], [4, 8], [5, 1], [5, 8], [6, 2], [6, 4], [6, 5], [6, 7], [7, 3], [7, 6], [8, 4], [8, 5]]
+    obstacles:
+      [
+        [1, 4],
+        [1, 5],
+        [2, 3],
+        [2, 6],
+        [3, 2],
+        [3, 4],
+        [3, 5],
+        [3, 7],
+        [4, 1],
+        [4, 8],
+        [5, 1],
+        [5, 8],
+        [6, 2],
+        [6, 4],
+        [6, 5],
+        [6, 7],
+        [7, 3],
+        [7, 6],
+        [8, 4],
+        [8, 5],
+      ]
 
 # Planning problems (multiple per file)
 problems:
@@ -13,7 +35,7 @@ problems:
     start: [0, 0]
     goal: [9, 9]
     time_limit: null
-  
+
   # Two robots - difficult navigation
   two_robots:
     time_limit: 25
@@ -30,10 +52,10 @@ problems:
         start_time: 0
         priority: 1.0
         safety_radius: 0.5
-  
+
   # Four robots through maze
   four_robots:
-    time_limit: 45
+    time_limit: 30
     robots:
       robot_0:
         start: [0, 0]
@@ -59,7 +81,7 @@ problems:
         start_time: 2
         priority: 1.0
         safety_radius: 0.5
-  
+
   # Six robots - challenging coordination
   six_robots:
     time_limit: 50
@@ -100,7 +122,7 @@ problems:
         start_time: 3
         priority: 0.8
         safety_radius: 0.5
-  
+
   # Ten robots - extreme density
   ten_robots:
     time_limit: 30

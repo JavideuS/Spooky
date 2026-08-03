@@ -10,12 +10,14 @@ Main classes:
 - DynamicSolver: Wrapper for runtime backend switching
 - DWaveSolver: DWave quantum annealing solver
 - PennylaneSolver: Pennylane QAOA solver
+- ILPSolver: Exact ILP solver via Pyomo (classical baseline)
 """
 
 from .base_solver import BaseSolver
 from .solver_factory import SolverFactory, DynamicSolver
 from .DWave_solver import DWaveSolver
 from .Pennylane_solver import PennylaneSolver
+from .ILP_solver import ILPSolver
 
 __all__ = [
     "BaseSolver",
@@ -23,4 +25,5 @@ __all__ = [
     "DynamicSolver",
     "DWaveSolver",
     "PennylaneSolver",
+    "ILPSolver",
 ]

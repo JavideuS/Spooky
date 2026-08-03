@@ -67,7 +67,7 @@ qiskit_hardware = SolverFactory.create_solver(
         device="qiskit.remote", params=init_params, verbose_level=verbose_level)
 
 # Q = builder.build()
-# solution = dwave_solver.solve_qubo(builder, False)
+# solution = dwave_solver.solve(builder, False)
 # print("Solution:", solution["solution"])
 # print("Path:", dwave_solver.decode_path(solution["solution"], problem))
 # print(f"Energy: {dwave_solver.total_energy(solution):.4f}")

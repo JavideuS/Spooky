@@ -132,7 +132,7 @@ def main():
     start_time = time.time()
     
     try:
-        solution = qiskit_solver.solve_qubo(builder)
+        solution = qiskit_solver.solve(builder)
         
         elapsed_time = time.time() - start_time
         

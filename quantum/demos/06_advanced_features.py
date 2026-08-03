@@ -115,7 +115,7 @@ def main():
     
     # Solve with DWave
     print("\n  Solving with DWave...")
-    dwave_solution = solver.solve_qubo(builder)
+    dwave_solution = solver.solve(builder)
     dwave_raw_path = solver.decode_path(dwave_solution["solution"], p_graph)
     dwave_robot_paths = solver.get_robot_paths(dwave_raw_path)
     dwave_energy = solver.total_energy(dwave_solution)
@@ -147,7 +147,7 @@ def main():
     
     # Solve with Pennylane
     print("\n  Solving with Pennylane...")
-    pennylane_solution = solver.solve_qubo(builder)
+    pennylane_solution = solver.solve(builder)
     pennylane_raw_path = solver.decode_path(pennylane_solution["solution"], p_graph)
     pennylane_robot_paths = solver.get_robot_paths(pennylane_raw_path)
     pennylane_energy = solver.total_energy(pennylane_solution)
@@ -208,9 +208,9 @@ def main():
     print("  ✓ Side-by-side result comparison")
     print("\nHow DynamicSolver works:")
     print("  1. Create with initial backend: DynamicSolver('dwave', ...)")
-    print("  2. Solve: solver.solve_qubo(builder)")
+    print("  2. Solve: solver.solve(builder)")
     print("  3. Switch backend: solver.switch_solver('pennylane', ...)")
-    print("  4. Solve again: solver.solve_qubo(builder)")
+    print("  4. Solve again: solver.solve(builder)")
     print("  → Same solver object, different backends!")
     print("\nNext steps:")
     print("  - Combine with demo 03 to visualize both solutions")

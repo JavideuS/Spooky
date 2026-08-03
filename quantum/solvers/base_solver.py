@@ -604,9 +604,9 @@ class BaseSolver(ABC):
         return fixed_vars, window_stat, final_vars == 0, forced_collisions
 
     @abstractmethod
-    def solve_qubo(self, builder, optimization=False, preprocess=True) -> Dict[str, Any]:
+    def solve(self, builder, optimization=False, preprocess=True) -> Dict[str, Any]:
         """
-        Solve the QUBO problem.
+        Solve the problem represented by the given builder.
 
         Args:
             builder: QUBOBuilder instance

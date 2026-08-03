@@ -13,7 +13,7 @@ class DWaveSolver(BaseSolver):
             **kwargs,
         )
 
-    def solve_qubo(self, builder, optimization=False, preprocess=True):
+    def solve(self, builder, optimization=False, preprocess=True):
         """
         Solve QUBO using simulated annealing.
 

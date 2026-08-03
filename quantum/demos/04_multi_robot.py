@@ -114,7 +114,7 @@ def main():
         num_reads=15  # More reads for multi-robot problems
     )
     
-    solution = solver.solve_qubo(builder)
+    solution = solver.solve(builder)
     
     # Results
     print("\n" + "=" * 70)

@@ -67,7 +67,7 @@ def main():
     )
     
     builder.build()
-    solution = solver.solve_qubo(builder)
+    solution = solver.solve(builder)
     
     # Display results
     print("\n" + "=" * 70)

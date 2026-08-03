@@ -263,17 +263,14 @@ class BaseQUBO(ABC):
                 self.logger.standard(f"Window size increased from {self.t_max} to {new_t_max} after robots became inactive")
                 self.t_max = new_t_max
 
-            # Clear stale BFS data — solve_qubo will repopulate before next build
+            # Clear stale BFS data — solve() will repopulate before next build
             self._active_cells = None
             self.build()
 
     def reset_problem(self):
         """Reset windowing and restore initial start position if available."""
-        for robot_id in self.problem.robots.keys():
-            robot = self.problem.robots[robot_id]
-            robot.path = []
-            robot.current_position = robot.start
-            robot.active = True  # Reset active flag when resetting problem
+        for robot in self.problem.robots.values():
+            robot.reset()
         self.iter = 0
         self.current_T = 0
         self.t_max = self.max_window_size()

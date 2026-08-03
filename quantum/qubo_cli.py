@@ -41,7 +41,7 @@ from pennylane import numpy as np
 from quantum.solvers import SolverFactory
 from quantum.pathFormulation import PathfindingProblem
 import quantum.config.parser as config_parser
-from quantum.builder import QUBOBuilder, GraphQUBO
+from quantum.builder import QUBOBuilder, GraphQUBO, GridILPBuilder, GraphILPBuilder
 import quantum.benchmark.benchmark as bm_module
 from quantum.utils.logger import set_verbose_level, get_logger
 from quantum.utils.paths import clip_path_at_goal
@@ -222,7 +222,7 @@ def build_parser() -> argparse.ArgumentParser:
     sol.add_argument(
         "--solver",
         "-s",
-        choices=["dwave", "pennylane", "qiskit_remote", "qiskit_iqm"],
+        choices=["dwave", "pennylane", "qiskit_remote", "ilp"],
         default="dwave",
         help="Solver backend (default: dwave)",
     )
@@ -254,6 +254,15 @@ def build_parser() -> argparse.ArgumentParser:
             "Disable variable reduction and correction loop (runs the simple "
             "raw-sampler loop). By default, BFS logical-variable reduction and "
             "diagonal pruning are applied before each window."
+        ),
+    )
+    sol.add_argument(
+        "--pyomo-solver",
+        default="appsi_highs",
+        metavar="NAME",
+        help=(
+            "Pyomo solver backend name (only used with --solver ilp), "
+            "e.g. 'appsi_highs' (default), 'cbc', 'glpk'."
         ),
     )
 
@@ -603,6 +612,13 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
             verbose_level=verbose_level,
         )
 
+    elif args.solver == "ilp":
+        logger.minimal(f"Creating ILP solver (pyomo backend={args.pyomo_solver})")
+        return SolverFactory.create_solver(
+            solver="ilp",
+            pyomo_solver_name=args.pyomo_solver,
+        )
+
     else:
         raise ValueError(f"Unknown solver: {args.solver}")
 
@@ -719,7 +735,16 @@ def main():
     if args.var_limit is not None:
         builder_kwargs["var_limit"] = args.var_limit
 
-    if args.builder == "grid":
+    if args.solver == "ilp":
+        # ILP has no penalty weights, var_limit, or windowing — builder_kwargs
+        # (penalties/var_limit/robot_window_limits/log_reductions) don't apply.
+        if args.builder == "grid":
+            p = problem.as_grid_only()
+            builder = GridILPBuilder(p, name=args.problem, verbose_level=verbose_level)
+        else:  # graph
+            p = problem.as_graph_only()
+            builder = GraphILPBuilder(p, name=args.problem, verbose_level=verbose_level)
+    elif args.builder == "grid":
         p = problem.as_grid_only()
         builder_kwargs["distance_scaling"] = args.distance_scaling
         builder = QUBOBuilder(p, **builder_kwargs)
@@ -755,8 +780,10 @@ def main():
         # Single solve
         timer = time.time()
         builder.build()
-        solution = solver.solve_qubo(builder, preprocess=not args.no_preprocess)
-        path = solver.decode_path(solution["solution"], problem)
+        solution = solver.solve(builder, preprocess=not args.no_preprocess)
+        # Use p (the grid-only/graph-only problem actually passed to the
+        # builder), not problem
+        path = solver.decode_path(solution["solution"], p)
 
         energy = solution["energy"]
         if isinstance(energy, list):
@@ -772,7 +799,9 @@ def main():
             robot_path = robot.path
             if args.clip_at_goal:
                 robot_path = clip_path_at_goal(robot_path, tuple(robot.goal))
-            formatted_path = [(*robot.format_position((i, j)), t) for i, j, t in robot_path]
+            formatted_path = [
+                (*robot.format_position((i, j)), t) for i, j, t in robot_path
+            ]
             logger.minimal(f"  [{robot_id}] {formatted_path}")
 
         if args.visualize:

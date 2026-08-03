@@ -2,6 +2,7 @@ from typing import Dict, Any, Type
 from .base_solver import BaseSolver
 from .DWave_solver import DWaveSolver
 from .Pennylane_solver import PennylaneSolver
+from .ILP_solver import ILPSolver
 
 
 class SolverFactory:
@@ -9,11 +10,12 @@ class SolverFactory:
     Factory class for creating quantum solvers.
     Supports dynamic backend switching and configuration-based solver creation.
     """
-    
+
     # Registry of available solvers
     _solvers: Dict[str, Type[BaseSolver]] = {
         "dwave": DWaveSolver,
         "pennylane": PennylaneSolver,
+        "ilp": ILPSolver,
     }
     
     @classmethod
@@ -145,12 +147,12 @@ class DynamicSolver:
         """
         return self.solver.get_solver_info()
     
-    def solve_qubo(self, builder, optimization=False, preprocess=True):
+    def solve(self, builder, optimization=False, preprocess=True):
         """
-        Solve QUBO using the current solver.
+        Solve using the current solver.
 
         Args:
-            builder: QUBOBuilder instance
+            builder: Builder instance holding the problem to solve
             optimization: Whether to run variational optimization before sampling
                 (PennyLane only; ignored by other solvers).
             preprocess: When True (default), applies variable reduction and
@@ -159,7 +161,7 @@ class DynamicSolver:
         Returns:
             Solution dictionary
         """
-        return self.solver.solve_qubo(builder, optimization=optimization, preprocess=preprocess)
+        return self.solver.solve(builder, optimization=optimization, preprocess=preprocess)
     
     def get_robot_paths(self, path):
         """

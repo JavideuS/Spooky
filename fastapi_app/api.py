@@ -352,7 +352,7 @@ def plan_path(robot_id: str, request: PlanRequest):
         )
         start_time = time.time()
         builder.build()
-        solution = solver.solve_qubo(builder)
+        solution = solver.solve(builder)
         planning_time = time.time() - start_time
         raw_path = solver.decode_path(solution["solution"], problem)
         if request.clip_at_goal:
@@ -586,7 +586,7 @@ def plan_stateless(request: StatelessPlanRequest):
             builder = QUBOBuilder(problem, penalties=penalties, name="v1_plan")
         start_time = time.time()
         builder.build()
-        solution = solver.solve_qubo(builder)
+        solution = solver.solve(builder)
         planning_time = time.time() - start_time
 
         decoded = solver.decode_path(solution["solution"], problem)
