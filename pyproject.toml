@@ -52,6 +52,7 @@ ibm = [
     "qiskit-ibm-runtime",
     "pennylane-qiskit",
 ]
+
 jupyter = [
     "ipykernel",
     "nbformat>=4.2.0",
@@ -79,14 +80,19 @@ paper = [
     "matplotlib",
 ]
 
+classical = [
+    "pyomo",
+    "highspy",
+]
+
 all = [
-    "spooky[gpu,dwave,ibm,jupyter,dev,visualizer,fastapi,paper]",
+    "spooky[gpu,dwave,ibm,jupyter,dev,visualizer,fastapi,paper,ros,classical]",
 ]
 
 # PennyLane ships no CUDA/lightning-gpu wheels for Windows, so this mirrors
 # "all" minus the gpu extra.
 windows = [
-    "spooky[dwave,ibm,jupyter,dev,visualizer,fastapi,paper]",
+    "spooky[dwave,ibm,jupyter,dev,visualizer,fastapi,paper,ros,classical]",
 ]
 
 [project.urls]

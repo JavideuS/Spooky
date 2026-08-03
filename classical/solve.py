@@ -39,7 +39,9 @@ if __name__ == "__main__":
     from quantum.pathFormulation import PathfindingProblem
 
     problem = PathfindingProblem.from_map_config(
-        "../quantum/maps/synthetic/5x5/obs5x5_medium", problem_name="baseline"
+        # "../quantum/maps/synthetic/5x5/obs5x5_medium", problem_name="baseline"
+        "../quantum/maps/synthetic/10x10/obs10x10_hard",
+        problem_name="four_robots",
     ).as_grid_only()
 
     model, results = solve(problem)

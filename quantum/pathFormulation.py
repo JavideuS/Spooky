@@ -42,10 +42,11 @@ class PathfindingProblem:
         if T is None:
             T = self.calculate_timeline()
         else:
-            # Set individual robot times if not already set (and take the provided T as default)
+            # Set individual robot times if not already set, sized so start_time + T
+            # still fits within the global horizon T for staggered starts.
             for robot in self.robots.values():
                 if robot.T is None:
-                    robot.T = T
+                    robot.T = T - robot.start_time
         self.T = T
         self.T = T
         self.name = name
