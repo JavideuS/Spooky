@@ -8,7 +8,7 @@ import uvicorn
 import quantum.config.hdf5parser as h5parser
 import quantum.config.parser as config_parser
 from quantum import map
-from quantum.builder import QUBOBuilder, GraphQUBO
+from quantum.builder import QUBOBuilder, GraphQUBO, GridILPBuilder, GraphILPBuilder
 from quantum.robotConfiguration import RobotConfig
 from quantum.visualizer import QuantumRoboticsVisualizer
 import quantum.pathFormulation as pathfinding
@@ -46,9 +46,10 @@ robots: Dict[str, Robot] = {}
 # Atlhough I still don't have structure for this, need more data
 TEMPLATES = {
     "default": {},
-    "mobile-robot": {"active_solver": "simulated_annealing"},
+    "mobile-robot": {"active_solver": "classic.ilp"},
     "quantum-agent": {"active_solver": "dwave.general"},
     "research-qaoa": {"active_solver": "pennylane.qaoa_QNG"},
+    "exact-planner": {"active_solver": "classic.ilp"},
 }
 
 
@@ -347,9 +348,12 @@ def plan_path(robot_id: str, request: PlanRequest):
             coordinate_format=request.coordinate_format,
         )
         problem = pathfinding.PathfindingProblem(robot_config, grid=map_obj)
-        builder = QUBOBuilder(
-            problem, penalties=global_penalties_params["crash"], name="standard"
-        )
+        if solver.solver == "ilp":
+            builder = GridILPBuilder(problem, name="standard")
+        else:
+            builder = QUBOBuilder(
+                problem, penalties=global_penalties_params["crash"], name="standard"
+            )
         start_time = time.time()
         builder.build()
         solution = solver.solve(builder)
@@ -574,16 +578,25 @@ def plan_stateless(request: StatelessPlanRequest):
 
     # --- 5. Solve ---
     try:
+        is_ilp = solver.solver == "ilp"
         if request.format == "graph":
             problem = pathfinding.PathfindingProblem(
                 robot_configs, graph=env, T=request.T
             )
-            builder = GraphQUBO(problem, penalties=penalties, name="v1_plan")
+            builder = (
+                GraphILPBuilder(problem, name="v1_plan")
+                if is_ilp
+                else GraphQUBO(problem, penalties=penalties, name="v1_plan")
+            )
         else:
             problem = pathfinding.PathfindingProblem(
                 robot_configs, grid=env, T=request.T
             )
-            builder = QUBOBuilder(problem, penalties=penalties, name="v1_plan")
+            builder = (
+                GridILPBuilder(problem, name="v1_plan")
+                if is_ilp
+                else QUBOBuilder(problem, penalties=penalties, name="v1_plan")
+            )
         start_time = time.time()
         builder.build()
         solution = solver.solve(builder)

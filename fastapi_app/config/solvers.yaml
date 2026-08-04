@@ -14,6 +14,8 @@ _defaults:
   pennylane_iqm: &pennylane_iqm_defaults
     backend: "pennylane"
     device: "qiskit.iqm"
+  ilp: &ilp_defaults
+    backend: "ilp"
 
 # Main solver profiles
 solvers:
@@ -112,3 +114,8 @@ solvers:
         layers: 2
         optimizer: "SPSA"
         opt_steps: 30
+  classic:
+    ilp:
+      <<: *ilp_defaults
+      description: "Exact classical MILP solver (Pyomo/HiGHS) — always finds the optimal solution, no windowing/sampling"
+      tags: ["classical", "ilp", "exact", "no quantum"]
