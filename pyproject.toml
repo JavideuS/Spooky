@@ -52,7 +52,18 @@ ibm = [
     "qiskit-ibm-runtime",
     "pennylane-qiskit",
 ]
-
+ros = [
+    "pillow",
+]
+iqm = [
+    # qrisp[iqm] pulls in iqm-client and provides qrisp.interface.IQMBackend,
+    # the execution path Pennylane_solver.py bridges into for real IQM hardware
+    # (PennyLane -> Qiskit -> Qrisp) — see Pennylane_solver.py's IQM comments
+    # for why qiskit.remote's Sampler can't be used directly against IQM.
+    "qrisp[iqm]",
+    "pennylane-qiskit",
+    "python-dotenv",
+]
 jupyter = [
     "ipykernel",
     "nbformat>=4.2.0",
@@ -86,13 +97,13 @@ classical = [
 ]
 
 all = [
-    "spooky[gpu,dwave,ibm,jupyter,dev,visualizer,fastapi,paper,ros,classical]",
+    "spooky[gpu,dwave,ibm,iqm,jupyter,dev,visualizer,fastapi,paper,ros,classical]",
 ]
 
 # PennyLane ships no CUDA/lightning-gpu wheels for Windows, so this mirrors
 # "all" minus the gpu extra.
 windows = [
-    "spooky[dwave,ibm,jupyter,dev,visualizer,fastapi,paper,ros,classical]",
+    "spooky[dwave,ibm,iqm,jupyter,dev,visualizer,fastapi,paper,ros,classical]",
 ]
 
 [project.urls]

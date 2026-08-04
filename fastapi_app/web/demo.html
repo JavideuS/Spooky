@@ -21,6 +21,7 @@
     --badge-dwave: #e8a33d;
     --badge-pennylane: #4fd1a5;
     --badge-qiskit: #b98cf2;
+    --badge-iqm: #4dabf7;
     --radius: 8px;
   }
   @media (prefers-color-scheme: light) {
@@ -39,6 +40,7 @@
       --badge-dwave: #b9791f;
       --badge-pennylane: #1f9d73;
       --badge-qiskit: #8b5cd6;
+      --badge-iqm: #1c7ed6;
     }
   }
 
@@ -226,6 +228,7 @@
   .tag.backend-dwave { color: var(--badge-dwave); border-color: var(--badge-dwave); }
   .tag.backend-pennylane { color: var(--badge-pennylane); border-color: var(--badge-pennylane); }
   .tag.backend-qiskit { color: var(--badge-qiskit); border-color: var(--badge-qiskit); }
+  .tag.backend-iqm { color: var(--badge-iqm); border-color: var(--badge-iqm); }
 
   .robot-row {
     display: flex;
@@ -448,6 +451,7 @@
   function backendOf(solverKey) {
     if (solverKey.startsWith("dwave")) return "dwave";
     if (solverKey.includes("qiskit")) return "qiskit";
+    if (solverKey.includes("iqm")) return "iqm";
     if (solverKey.startsWith("pennylane")) return "pennylane";
     return "";
   }

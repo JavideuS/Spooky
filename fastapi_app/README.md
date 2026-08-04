@@ -207,8 +207,9 @@ new code path.
 
 Details on the wiring: map + solver `<select>`s are populated from
 `GET /v1/maps` / `GET /solvers` (solvers grouped by backend — `dwave` /
-`pennylane` / `qiskit`, qiskit split out since it's remote hardware, not a
-local simulator). Picking a map (or toggling coordinate format) fetches
+`pennylane` / `qiskit` / `iqm`; qiskit and iqm are split out from `pennylane`
+since they're remote hardware, not a local simulator). Picking a map (or
+toggling coordinate format) fetches
 `/v1/maps/{id}/preview?embed=json&coordinate_format=...` and renders it with
 `Plotly.newPlot`. Planning posts to `/v1/plan` with `render: true`; the
 response's `figure` (`data` + `layout` + `frames`) is drawn with

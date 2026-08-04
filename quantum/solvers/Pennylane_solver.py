@@ -5,6 +5,17 @@ import time
 
 
 class PennylaneSolver(BaseSolver):
+    # (name, num_qubits), ascending — smallest machine that fits wins, to
+    # spend quota on the cheapest device that can run the window.
+    # Sirius is deliberately excluded: it uses resonator-mediated coupling
+    # (component 'COMPR1'), which Qrisp's IQM connector can't yet transpile/
+    # route for (raises ValueError). Pass machine="sirius" explicitly to try
+    # it anyway once Qrisp adds support.
+    IQM_MACHINE_TIERS = [
+        ("garnet", 20),
+        ("emerald", 54),
+    ]
+
     def __init__(
         self,
         normalize_scale=0,
@@ -15,6 +26,7 @@ class PennylaneSolver(BaseSolver):
         device="default.qubit",
         params=None,
         verbose_level=2,
+        machine=None,
         **kwargs,
     ):
         super().__init__(
@@ -31,9 +43,12 @@ class PennylaneSolver(BaseSolver):
             from qiskit_ibm_runtime import QiskitRuntimeService
 
             self.service = QiskitRuntimeService()
+        # Fixed backend/machine name (IBM backend or IQM machine), or None to
+        # auto-pick (IBM: least_busy; IQM: smallest tier that fits)
+        self.machine = machine
         # Backend for qiskit.remote — avoids a least_busy() network call every window
         self.backend = None
-        self.hardware_qubits = 0  # min_num_qubits the current backend satisfies
+        self.hardware_qubits = 0  # actual qubit count of the connected backend
         # Parameters for the QAOA circuit
         self.params = params if params is not None else np.random.rand(layers, 2)
         self.optimizer_steps = opt_steps  # Number of optimization steps
@@ -65,6 +80,7 @@ class PennylaneSolver(BaseSolver):
         device = config.get("device", "default.qubit")
         params = config.get("params", None)
         opt_steps = config.get("optimizer_steps", 10)
+        machine = config.get("machine", None)
         if optimizer not in ["GradientDescent", "Adam", "QNG", "SPSA", "QNSPSA"]:
             raise ValueError(
                 "Optimizer must be either 'GradientDescent', "
@@ -75,10 +91,11 @@ class PennylaneSolver(BaseSolver):
             "lightning.qubit",
             "lightning.gpu",
             "qiskit.remote",
+            "qiskit.iqm",
         ]:
             raise ValueError(
                 "Device must be either 'default.qubit' "
-                "or 'lightning' or 'qiskit.remote'"
+                "or 'lightning' or 'qiskit.remote' or 'qiskit.iqm'"
             )
         return cls(
             normalize_scale=norm_scale,
@@ -88,6 +105,21 @@ class PennylaneSolver(BaseSolver):
             device=device,
             params=params,
             opt_steps=opt_steps,
+            machine=machine,
+        )
+
+    def _select_iqm_machine(self, num_qubits):
+        """
+        Pick the cheapest tiered IQM machine that fits num_qubits, ascending by
+        qubit count so we don't spend Emerald-tier quota on a Sirius-sized window.
+        """
+        for name, qubits in self.IQM_MACHINE_TIERS:
+            if qubits >= num_qubits:
+                return name
+        largest_name, largest_qubits = self.IQM_MACHINE_TIERS[-1]
+        raise ValueError(
+            f"No known IQM machine has >= {num_qubits} qubits "
+            f"(largest tiered is '{largest_name}' with {largest_qubits})"
         )
 
     def _get_backend(self, num_qubits):
@@ -99,23 +131,103 @@ class PennylaneSolver(BaseSolver):
             num_qubits: Minimum number of qubits required.
 
         Returns:
-            A least-busy IBM backend with at least num_qubits qubits.
+            A least-busy IBM backend, or a tiered IQM backend, with at least
+            num_qubits qubits.
         """
+
         if self.backend is None or num_qubits > self.hardware_qubits:
-            self.logger.standard("=" * 60)
-            self.logger.standard("🔍 Searching for available quantum hardware...")
-            backend_start = time.time()
-            self.backend = self.service.least_busy(
-                operational=True, simulator=False, min_num_qubits=num_qubits
-            )
-            self.hardware_qubits = num_qubits
-            backend_time = time.time() - backend_start
-            self.logger.standard(f"✓ Backend selected: {self.backend.name}")
-            self.logger.standard(f"  Backend selection time: {backend_time:.2f}s")
-            self.logger.standard("=" * 60)
+            if self.dev == "qiskit.iqm":
+                from dotenv import load_dotenv
+                from qrisp.interface import IQMBackend
+
+                # IQM_TOKEN is read from the environment automatically by IQMBackend.
+                # Qrisp's native backend, not iqm.qiskit_iqm — PennyLane's sampling
+                # path runs the circuit through Qrisp (see _run_iqm_sampler) to avoid
+                # an upstream Qiskit bug (memory=True unsupported by IQMBackend,
+                # github.com/Qiskit/qiskit/issues/15694) that corrupts BackendSamplerV2
+                # results when going through qiskit.remote for IQM.
+                load_dotenv()
+
+                machine = self.machine or self._select_iqm_machine(num_qubits)
+                self.logger.standard("=" * 60)
+                self.logger.standard(f"🔍 Connecting to IQM machine: {machine}")
+                backend_start = time.time()
+                self.backend = IQMBackend(
+                    server_url="https://resonance.iqm.tech",
+                    device_instance=machine,
+                    use_timeslot=False,
+                )
+                self.hardware_qubits = self.backend.num_qubits
+                backend_time = time.time() - backend_start
+                self.logger.standard(
+                    f"✓ Backend selected: {machine} "
+                    f"({self.hardware_qubits} qubits)"
+                )
+                self.logger.standard(f"  Backend selection time: {backend_time:.2f}s")
+                self.logger.standard("=" * 60)
+            else:  # IBM backend/qiskit.remote
+                self.logger.standard("=" * 60)
+                backend_start = time.time()
+                if self.machine:
+                    self.logger.standard(f"🔍 Connecting to IBM backend: {self.machine}")
+                    self.backend = self.service.backend(self.machine)
+                    if self.backend.num_qubits < num_qubits:
+                        raise ValueError(
+                            f"IBM backend '{self.machine}' has only "
+                            f"{self.backend.num_qubits} qubits, but this window "
+                            f"needs {num_qubits}."
+                        )
+                else:
+                    self.logger.standard(
+                        "🔍 Searching for available quantum hardware..."
+                    )
+                    self.backend = self.service.least_busy(
+                        operational=True, simulator=False, min_num_qubits=num_qubits
+                    )
+                self.hardware_qubits = self.backend.num_qubits
+                backend_time = time.time() - backend_start
+                self.logger.standard(f"✓ Backend selected: {self.backend.name}")
+                self.logger.standard(f"  Backend selection time: {backend_time:.2f}s")
+                self.logger.standard("=" * 60)
         else:
             self.logger.standard(f"♻️  Reusing backend: {self.backend.name}")
         return self.backend
+
+    def _pennylane_tape_to_qrisp(self, ansatz_circuit, params, num_qubits):
+        """
+        Build the ansatz as a PennyLane tape and convert it into a Qrisp circuit,
+        via the same PennyLane -> Qiskit conversion qiskit.remote uses internally
+        (pennylane_qiskit.circuit_to_qiskit), then Qiskit -> Qrisp
+        (qrisp.interface.converter.convert_from_qiskit).
+        """
+        from pennylane_qiskit.qiskit_device import QISKIT_OPERATION_MAP, circuit_to_qiskit
+        from qrisp.interface.converter import convert_from_qiskit
+
+        with qml.queuing.AnnotatedQueue() as q:
+            ansatz_circuit(params)
+            qml.sample()
+        tape = qml.tape.QuantumScript.from_queue(q)
+
+        # Reduce to the gate set circuit_to_qiskit knows how to map — QAOA layers
+        # can produce MultiRZ-style terms that aren't natively in that map.
+        (tape,), _ = qml.transforms.decompose(
+            tape, stopping_condition=lambda op: op.name in QISKIT_OPERATION_MAP
+        )
+
+        qiskit_qc = circuit_to_qiskit(tape, num_qubits, diagonalize=True, measure=True)
+        return convert_from_qiskit(qiskit_qc)
+
+    def _run_iqm_sampler(self, ansatz_circuit, params, num_qubits, shots):
+        """
+        Run the QAOA ansatz on real IQM hardware via the Qrisp bridge, bypassing
+        PennyLane's qiskit.remote Sampler entirely (see _get_backend for why).
+
+        Returns:
+            dict: Qiskit/Qrisp-style bitstring -> shot count.
+        """
+        qrisp_circuit = self._pennylane_tape_to_qrisp(ansatz_circuit, params, num_qubits)
+        backend = self._get_backend(num_qubits)
+        return backend.run(qrisp_circuit, shots=shots)
 
     def create_ansatz(self, wires, qaoa_layer):
         """
@@ -235,12 +347,16 @@ class PennylaneSolver(BaseSolver):
                     energies.append(energy)
 
                 if not samples:
-                    self.logger.minimal("Warning: No samples collected, using random sample")
+                    self.logger.minimal(
+                        "Warning: No samples collected, using random sample"
+                    )
                     random_sample = {i: np.random.randint(2) for i in wires}
                     samples.append(random_sample)
                     energies.append(
                         sum(
-                            builder.Q.get((i, j), 0) * random_sample[i] * random_sample[j]
+                            builder.Q.get((i, j), 0)
+                            * random_sample[i]
+                            * random_sample[j]
                             for i in wires
                             for j in wires
                         )
@@ -296,7 +412,7 @@ class PennylaneSolver(BaseSolver):
             forced_collisions.extend(window_forced_collisions)
 
             # Track iteration time for quantum hardware
-            if self.dev == "qiskit.remote":
+            if self.dev == "qiskit.remote" or self.dev == "qiskit.iqm":
                 iteration_start = time.time()
 
             if is_preprocessed:
@@ -319,7 +435,7 @@ class PennylaneSolver(BaseSolver):
             self.logger.standard(f"Number of qubits: {num_qubits}")
 
             # Determine if we need to remap wires for qiskit.remote
-            if self.dev == "qiskit.remote":
+            if self.dev == "qiskit.remote" or self.dev == "qiskit.iqm":
                 # Note that you need the final wires to be sequential, but that doesnt mean you need to sort the original
                 # (Although it would make more sense there is no real reason to do that)
                 # Diagrams are not even consistent so it doesn't really make a difference
@@ -376,6 +492,12 @@ class PennylaneSolver(BaseSolver):
                 dev_time = time.time() - dev_start
                 self.logger.standard(f"✓ Device initialized in {dev_time:.2f}s")
                 self.logger.standard("=" * 60)
+            elif self.dev == "qiskit.iqm":
+                # No PennyLane device needed here: sampling goes through the Qrisp
+                # bridge (_run_iqm_sampler), not a qiskit.remote qnode. dev is only
+                # used below for cost_function, which optimization=True doesn't
+                # support yet for this device (see the check further down).
+                dev = None
             else:
                 dev_start = time.time()
                 dev = qml.device(self.dev, wires=circuit_wires)
@@ -389,16 +511,25 @@ class PennylaneSolver(BaseSolver):
             shots = self.get_shots(num_qubits)
             self.logger.debug(f"Number of shots: {shots}")
 
-            @qml.set_shots(shots)
-            @qml.qnode(dev)
-            # Note that this one is simply used for the optimization circuit
-            def cost_function(params):
-                ansatz_circuit(params)
-                return qml.expval(Hc)
+            if self.dev != "qiskit.iqm":
+
+                @qml.set_shots(shots)
+                @qml.qnode(dev)
+                # Note that this one is simply used for the optimization circuit
+                def cost_function(params):
+                    ansatz_circuit(params)
+                    return qml.expval(Hc)
 
             # Optimization
             # (optimizer was built once before the loop to preserve internal state)
             if optimization:
+                if self.dev == "qiskit.iqm":
+                    raise NotImplementedError(
+                        "optimization=True isn't supported yet for device="
+                        "'qiskit.iqm' — only the Qrisp-bridge sampling path is "
+                        "implemented. Pre-tune self.params offline, or use "
+                        "optimization=False (the default)."
+                    )
                 # prev_cost = 0
 
                 for step in range(self.optimizer_steps):
@@ -420,40 +551,9 @@ class PennylaneSolver(BaseSolver):
                     #     break
                     # prev_cost = cost
 
-            @qml.set_shots(shots)
-            @qml.qnode(dev)
-            def sample_circuit(params):
-                ansatz_circuit(params)
-                # Return measurements for all qubits
-                return qml.sample()
-
-            # print(f"Collecting {self.shots} samples...")
-
             # Collect samples and calculate energies
             samples = []
             energies = []
-
-            # Get samples from the quantum circuit
-            if self.dev == "qiskit.remote":
-                self.logger.standard("\n" + "=" * 60)
-                self.logger.standard(
-                    f"⏳ Collecting {shots} samples from quantum hardware..."
-                )
-                self.logger.standard("   Waiting for quantum job to complete...")
-                self.logger.standard("=" * 60)
-                sample_start = time.time()
-                raw_samples = sample_circuit(self.params)
-                sample_time = time.time() - sample_start
-                self.logger.standard("=" * 60)
-                self.logger.standard(f"✓ Samples collected in {sample_time:.2f}s")
-                self.logger.standard("=" * 60)
-            else:
-                raw_samples = sample_circuit(self.params)
-
-            # Handle different output formats
-            if raw_samples.ndim == 1:
-                # Single shot case - convert to 2D
-                raw_samples = raw_samples.reshape(1, -1)
 
             # Compute reverse wire mapping once per window (not once per shot)
             reverse_map = (
@@ -462,41 +562,119 @@ class PennylaneSolver(BaseSolver):
                 else None
             )
 
-            # Process each sample
-            for shot_idx in range(min(len(raw_samples), shots)):
-                sample_data = raw_samples[shot_idx]
+            if self.dev == "qiskit.iqm":
+                # Bypasses PennyLane's qiskit.remote Sampler entirely — see
+                # _get_backend / _run_iqm_sampler for why (upstream Qiskit bug).
+                self.logger.standard("\n" + "=" * 60)
+                self.logger.standard(
+                    f"⏳ Collecting {shots} samples from IQM hardware (Qrisp bridge)..."
+                )
+                self.logger.standard("   Waiting for quantum job to complete...")
+                self.logger.standard("=" * 60)
+                sample_start = time.time()
+                counts = self._run_iqm_sampler(
+                    ansatz_circuit, self.params, num_qubits, shots
+                )
+                sample_time = time.time() - sample_start
+                self.logger.standard("=" * 60)
+                self.logger.standard(f"✓ Samples collected in {sample_time:.2f}s")
+                self.logger.standard("=" * 60)
 
-                # Convert from {-1, 1} to {0, 1} format
-                binary_sample = {}
-                for i, wire in enumerate(circuit_wires):
-                    # Handle potential measurement outcomes
-                    measurement = (
-                        sample_data[i]
-                        if hasattr(sample_data, "__getitem__")
-                        else sample_data
-                    )
-                    # Convert Pauli-Z eigenvalues {-1, 1} to binary {0, 1}
-                    binary_sample[wire] = int((measurement + 1) // 2)
-
-                # If using qiskit.remote, map sequential indices back to original wire labels
-                if reverse_map is not None:
+                # One evaluation per unique outcome is enough — best_idx below only
+                # ever needs the best-energy outcome, not every individual shot.
+                for bitstring, _count in counts.items():
+                    # Qiskit/Qrisp bitstrings are little-endian: rightmost char = qubit 0
+                    bits = bitstring[::-1]
                     binary_sample = {
-                        reverse_map[seq_idx]: value
-                        for seq_idx, value in binary_sample.items()
+                        wire: int(bits[i]) for i, wire in enumerate(circuit_wires)
                     }
+                    if reverse_map is not None:
+                        binary_sample = {
+                            reverse_map[seq_idx]: value
+                            for seq_idx, value in binary_sample.items()
+                        }
 
-                samples.append(binary_sample)
+                    samples.append(binary_sample)
 
-                # Calculate QUBO energy for this sample
-                energy = 0
-                for i in wires:
-                    for j in wires:
-                        if (i, j) in builder.Q:
-                            energy += (
-                                builder.Q[(i, j)] * binary_sample[i] * binary_sample[j]
-                            )
+                    energy = 0
+                    for i in wires:
+                        for j in wires:
+                            if (i, j) in builder.Q:
+                                energy += (
+                                    builder.Q[(i, j)]
+                                    * binary_sample[i]
+                                    * binary_sample[j]
+                                )
+                    energies.append(energy)
 
-                energies.append(energy)
+            else:
+
+                @qml.set_shots(shots)
+                @qml.qnode(dev)
+                def sample_circuit(params):
+                    ansatz_circuit(params)
+                    # Return measurements for all qubits
+                    return qml.sample()
+
+                # Get samples from the quantum circuit
+                if self.dev == "qiskit.remote":
+                    self.logger.standard("\n" + "=" * 60)
+                    self.logger.standard(
+                        f"⏳ Collecting {shots} samples from quantum hardware..."
+                    )
+                    self.logger.standard("   Waiting for quantum job to complete...")
+                    self.logger.standard("=" * 60)
+                    sample_start = time.time()
+                    raw_samples = sample_circuit(self.params)
+                    sample_time = time.time() - sample_start
+                    self.logger.standard("=" * 60)
+                    self.logger.standard(f"✓ Samples collected in {sample_time:.2f}s")
+                    self.logger.standard("=" * 60)
+                else:
+                    raw_samples = sample_circuit(self.params)
+
+                # Handle different output formats
+                if raw_samples.ndim == 1:
+                    # Single shot case - convert to 2D
+                    raw_samples = raw_samples.reshape(1, -1)
+
+                # Process each sample
+                for shot_idx in range(min(len(raw_samples), shots)):
+                    sample_data = raw_samples[shot_idx]
+
+                    # Convert from {-1, 1} to {0, 1} format
+                    binary_sample = {}
+                    for i, wire in enumerate(circuit_wires):
+                        # Handle potential measurement outcomes
+                        measurement = (
+                            sample_data[i]
+                            if hasattr(sample_data, "__getitem__")
+                            else sample_data
+                        )
+                        # Convert Pauli-Z eigenvalues {-1, 1} to binary {0, 1}
+                        binary_sample[wire] = int((measurement + 1) // 2)
+
+                    # If using qiskit.remote, map sequential indices back to original wire labels
+                    if reverse_map is not None:
+                        binary_sample = {
+                            reverse_map[seq_idx]: value
+                            for seq_idx, value in binary_sample.items()
+                        }
+
+                    samples.append(binary_sample)
+
+                    # Calculate QUBO energy for this sample
+                    energy = 0
+                    for i in wires:
+                        for j in wires:
+                            if (i, j) in builder.Q:
+                                energy += (
+                                    builder.Q[(i, j)]
+                                    * binary_sample[i]
+                                    * binary_sample[j]
+                                )
+
+                    energies.append(energy)
 
             # print(f"Collected {len(samples)} samples with energies: {energies[:5]}...")
 
@@ -559,7 +737,7 @@ class PennylaneSolver(BaseSolver):
             # print(f"Best sample: {samples[best_idx]}")
 
             # Print iteration summary for quantum hardware
-            if self.dev == "qiskit.remote":
+            if self.dev == "qiskit.remote" or self.dev == "qiskit.iqm":
                 iteration_time = time.time() - iteration_start
                 self.logger.standard("\n" + "=" * 60)
                 self.logger.standard(f"✓ Iteration completed in {iteration_time:.2f}s")

@@ -79,11 +79,14 @@ pip install -e ".[dwave]"
 # For IBM Quantum hardware access
 pip install -e ".[ibm]"
 
+# For IQM Quantum hardware access (via Resonance)
+pip install -e ".[iqm]"
+
 # For Jupyter notebook support
 pip install -e ".[jupyter]"
 
 # Install all optional dependencies
-pip install -e ".[gpu,dwave,ibm,jupyter]"
+pip install -e ".[gpu,dwave,ibm,iqm,jupyter]"
 
 # To install all
 pip install -e ".[all]"
@@ -113,6 +116,12 @@ spooky-solve --map quantum/maps/synthetic/5x5/obs5x5_hard --problem hard --solve
 
 # Qiskit (IBM Quantum hardware)
 spooky-solve --map quantum/maps/synthetic/10x10/no_obs10x10 --problem two_robots --solver qiskit_remote --verbose 3
+
+# IQM Quantum hardware (via Resonance; auto-picks Garnet or Emerald based on qubit count)
+spooky-solve --map quantum/maps/synthetic/10x10/no_obs10x10 --problem two_robots --solver qiskit_iqm --verbose 3
+
+# IQM Quantum hardware, pinned to a specific machine
+spooky-solve --map quantum/maps/synthetic/10x10/no_obs10x10 --problem two_robots --solver qiskit_iqm --machine garnet --verbose 3
 ```
 
 ### Basic Single-Robot Navigation (Python Script)
@@ -254,6 +263,7 @@ This project uses:
 - [PennyLane](https://pennylane.ai/) for quantum circuit simulation and optimization
 - [D-Wave Ocean SDK](https://ocean.dwavesys.com/) for quantum annealing
 - [Qiskit](https://qiskit.org/) for IBM Quantum hardware access
+- [Qrisp](https://qrisp.eu/) and [IQM's iqm-client](https://docs.iqm.tech/) for IQM Quantum hardware access via Resonance
 
 ## 📖 Citation
 

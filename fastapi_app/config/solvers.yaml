@@ -11,6 +11,9 @@ _defaults:
   pennylane_qiskit: &pennylane_qiskit_defaults
     backend: "pennylane"
     device: "qiskit.remote"
+  pennylane_iqm: &pennylane_iqm_defaults
+    backend: "pennylane"
+    device: "qiskit.iqm"
 
 # Main solver profiles
 solvers:
@@ -43,6 +46,14 @@ solvers:
         layers: 2
         tags: ["pennylane", "qiskit", "real hardware"]
         description: "To test circuits and scenarios on real quantum hardware. Note you need to set IBM Quantum first"
+
+      qaoa_iqm:
+        <<: *pennylane_iqm_defaults
+        normalization_scale: 4.0
+        num_reads: 3000
+        layers: 2
+        tags: ["pennylane", "iqm", "real hardware"]
+        description: "To test circuits and scenarios on real IQM hardware via Resonance (auto-picks the smallest machine that fits — Garnet or Emerald; Sirius isn't supported yet). Requires IQM_TOKEN in your environment/.env. Set 'machine' to pin a specific device instead of auto-picking."
 
       qaoa_GPU_fast:
         <<: *pennylane_gpu_defaults

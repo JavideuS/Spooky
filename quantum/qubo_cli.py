@@ -222,7 +222,7 @@ def build_parser() -> argparse.ArgumentParser:
     sol.add_argument(
         "--solver",
         "-s",
-        choices=["dwave", "pennylane", "qiskit_remote", "ilp"],
+        choices=["dwave", "pennylane", "qiskit_remote", "qiskit_iqm", "ilp"],
         default="dwave",
         help="Solver backend (default: dwave)",
     )
@@ -306,6 +306,18 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Path to a .npy file containing initial QAOA parameters. "
             "If omitted, the built-in default params from qubo.py are used."
+        ),
+    )
+    pl.add_argument(
+        "--machine",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Pin a specific hardware backend/machine (only used with "
+            "--device qiskit.remote or qiskit.iqm / --solver qiskit_remote or "
+            "qiskit_iqm). IBM: an exact backend name, e.g. 'ibm_torino' "
+            "(default: least_busy). IQM: 'sirius', 'garnet', or 'emerald' "
+            "(default: auto-picks the smallest that fits the window)."
         ),
     )
 
@@ -535,6 +547,7 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
             device=args.device,
             params=init_params,
             verbose_level=verbose_level,
+            machine=args.machine,
         )
 
     elif args.solver == "qiskit_remote":
@@ -562,7 +575,8 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
         logger.minimal(
             f"Creating Qiskit-remote solver via PennyLane "
             f"(device={device}, layers={args.layers}, "
-            f"optimizer={args.optimizer}, steps={args.opt_steps}, scale={norm_scale})"
+            f"optimizer={args.optimizer}, steps={args.opt_steps}, scale={norm_scale}, "
+            f"machine={args.machine or 'auto (least_busy)'})"
         )
         return SolverFactory.create_solver(
             solver="pennylane",
@@ -574,6 +588,7 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
             device=device,
             params=init_params,
             verbose_level=verbose_level,
+            machine=args.machine,
         )
 
     elif args.solver == "qiskit_iqm":
@@ -598,7 +613,8 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
         logger.minimal(
             f"Creating IQM solver via PennyLane "
             f"(device={device}, layers={args.layers}, "
-            f"optimizer={args.optimizer}, steps={args.opt_steps}, scale={norm_scale})"
+            f"optimizer={args.optimizer}, steps={args.opt_steps}, scale={norm_scale}, "
+            f"machine={args.machine or 'auto (smallest tier that fits)'})"
         )
         return SolverFactory.create_solver(
             solver="pennylane",
@@ -610,6 +626,7 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
             device=device,
             params=init_params,
             verbose_level=verbose_level,
+            machine=args.machine,
         )
 
     elif args.solver == "ilp":
