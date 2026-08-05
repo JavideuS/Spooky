@@ -2,6 +2,29 @@ import pyomo.environ as pyo
 from quantum.utils.logger import get_logger
 
 
+def bfs_reachable_sets(reachable, start, max_steps):
+    """Plain (non-aggressive) BFS from start, allowed to stay in place or
+    revisit cells each step — reachable[v] must already include v itself.
+    Returns a list of sets indexed by step count 0..max_steps: sets[k] is
+    every vertex the robot could occupy after exactly k moves. Unlike QUBO's
+    non-backtracking reachable_positions_aggressive(), this is exact (a true
+    over-approximation is impossible here, and staying/backtracking are both
+    legal ILP moves), so it never excludes a feasible cell — it only shrinks
+    the ILP's search space, it can't change the optimal solution. The set is
+    monotonically non-decreasing and saturates once it covers the robot's
+    whole connected component, so this stops growing it early rather than
+    recomputing an unchanged set out to max_steps."""
+    sets = [{start}]
+    for step in range(1, max_steps + 1):
+        prev = sets[-1]
+        nxt = prev | {n for v in prev for n in reachable[v]}
+        sets.append(nxt)
+        if len(nxt) == len(prev):
+            sets.extend([nxt] * (max_steps - step))
+            break
+    return sets
+
+
 class BaseILPBuilder:
     """
     Shared scaffolding for ILP builders: robot-state reset, penalty-set stub
@@ -27,13 +50,28 @@ class BaseILPBuilder:
         self.penalties = {
             "name": "ilp_hard_constraints",
             "constraints": [
-                "one_hot", "adjacency", "start", "goal",
-                "goal_lock", "crash", "swap",
+                "one_hot",
+                "adjacency",
+                "start",
+                "goal",
+                "goal_lock",
+                "crash",
+                "swap",
             ],
         }
 
-    def build(self):
-        """Build the Pyomo ILP model for the current problem state and return it."""
+    def build(self, preprocess=True):
+        """Build the Pyomo ILP model for the current problem state and return it.
+
+        Args:
+            preprocess: When True (default), fixes x[a, v, t] to 0 for every
+                (v, t) a BFS-from-start reachability check rules out for robot
+                a (see bfs_reachable_sets()) — an exact reduction that shrinks
+                the search space HiGHS has to branch over without excluding
+                any feasible solution. When False, only the per-robot active
+                time window is fixed (the minimum needed for correctness);
+                the full free-cell set is left open at every in-window t.
+        """
         raise NotImplementedError
 
     def local_index(self, v):
@@ -61,7 +99,7 @@ class GridILPBuilder(BaseILPBuilder):
         i, j = v
         return i * self.problem.grid.N + j
 
-    def build(self):
+    def build(self, preprocess=True):
         problem = self.problem
         grid = problem.grid
         robots = problem.robots
@@ -87,23 +125,56 @@ class GridILPBuilder(BaseILPBuilder):
         # Each robot only exists for its own [start_time, start_time + T - 1] window,
         # matching the QUBO: no variables before start_time, none after the robot's
         # own goal is reached (regardless of how long the shared horizon runs).
-        active_range = {a: range(robots[a].start_time, robots[a].start_time + robots[a].T)
-                         for a in robots}
+        active_range = {
+            a: range(robots[a].start_time, robots[a].start_time + robots[a].T)
+            for a in robots
+        }
 
+        # BFS-from-start reachability per robot: cells it cannot possibly reach
+        # within t - start_time moves are fixed to 0 too. See bfs_reachable_sets().
+        reach_sets = (
+            {
+                a: bfs_reachable_sets(
+                    reachable, robots[a].current_position, robots[a].T - 1
+                )
+                for a in robots
+            }
+            if preprocess
+            else None
+        )
+        self.logger.debug(f"Reach sets: {reach_sets}")
         # Decision variables x[robot, position, time]
         model.x = pyo.Var(model.A, model.V, model.T, within=pyo.Binary)
 
+        in_window_vars = 0
+        bfs_fixed = 0
         for a in model.A:
             for v in model.V:
                 for t in model.T:
                     if t not in active_range[a]:
                         model.x[a, v, t].fix(0)
+                        continue
+                    in_window_vars += 1
+                    if preprocess and v not in reach_sets[a][t - robots[a].start_time]:
+                        model.x[a, v, t].fix(0)
+                        bfs_fixed += 1
+        self.bfs_stats = {
+            "window": 0,
+            "preprocess": preprocess,
+            "initial_variables": in_window_vars,
+            "variables_reduced": bfs_fixed,
+            "final_variables": in_window_vars - bfs_fixed,
+            "reduction_ratio": round(bfs_fixed / in_window_vars, 4)
+            if in_window_vars
+            else 0,
+        }
 
         # exactly one cell per robot per timestep, only while the robot exists
         def one_hot_rule(m, a, t):
             if t not in active_range[a]:
                 return pyo.Constraint.Skip
             return sum(m.x[a, v, t] for v in m.V) == 1
+
         model.one_hot = pyo.Constraint(model.A, model.T, rule=one_hot_rule)
 
         # if at v at time t, must move to a neighbor of v at time t+1, only while
@@ -111,19 +182,28 @@ class GridILPBuilder(BaseILPBuilder):
         def adjacency_rule(m, a, i, j, t):
             if t not in active_range[a] or (t + 1) not in active_range[a]:
                 return pyo.Constraint.Skip
-            return m.x[a, (i, j), t] <= sum(m.x[a, vp, t + 1] for vp in reachable[(i, j)])
-        model.adjacency = pyo.Constraint(model.A, model.V, model.T_minus, rule=adjacency_rule)
+            return m.x[a, (i, j), t] <= sum(
+                m.x[a, vp, t + 1] for vp in reachable[(i, j)]
+            )
+
+        model.adjacency = pyo.Constraint(
+            model.A, model.V, model.T_minus, rule=adjacency_rule
+        )
 
         # at start position at each robot's own start time
         model.start = pyo.Constraint(
             model.A,
-            rule=lambda m, a: m.x[a, robots[a].current_position, robots[a].start_time] == 1
+            rule=lambda m, a: (
+                m.x[a, robots[a].current_position, robots[a].start_time] == 1
+            ),
         )
 
         # at goal position at each robot's own goal time
         model.goal = pyo.Constraint(
             model.A,
-            rule=lambda m, a: m.x[a, robots[a].goal, robots[a].start_time + robots[a].T - 1] == 1
+            rule=lambda m, a: (
+                m.x[a, robots[a].goal, robots[a].start_time + robots[a].T - 1] == 1
+            ),
         )
 
         # once at goal, stay at goal, only within the robot's own window
@@ -131,12 +211,14 @@ class GridILPBuilder(BaseILPBuilder):
             if t not in active_range[a] or (t + 1) not in active_range[a]:
                 return pyo.Constraint.Skip
             return m.x[a, robots[a].goal, t] <= m.x[a, robots[a].goal, t + 1]
+
         model.goal_lock = pyo.Constraint(model.A, model.T_minus, rule=goal_lock_rule)
 
         # at most one robot per cell per timestep
         model.crash = pyo.Constraint(
-            model.V, model.T,
-            rule=lambda m, i, j, t: sum(m.x[a, (i, j), t] for a in m.A) <= 1
+            model.V,
+            model.T,
+            rule=lambda m, i, j, t: sum(m.x[a, (i, j), t] for a in m.A) <= 1,
         )
 
         # no two robots may swap positions across an edge between t and t+1
@@ -149,8 +231,11 @@ class GridILPBuilder(BaseILPBuilder):
                     for v in model.V:
                         for w in grid.adjacency[v]:
                             model.swap.add(
-                                model.x[ai, v, t] + model.x[aj, w, t] +
-                                model.x[ai, w, t + 1] + model.x[aj, v, t + 1] <= 3
+                                model.x[ai, v, t]
+                                + model.x[aj, w, t]
+                                + model.x[ai, w, t + 1]
+                                + model.x[aj, v, t + 1]
+                                <= 3
                             )
 
         # minimize total timesteps spent away from goal (equivalent to sum of arrival times,
@@ -159,14 +244,17 @@ class GridILPBuilder(BaseILPBuilder):
             sense=pyo.minimize,
             expr=sum(
                 model.x[a, v, t]
-                for a in model.A for t in model.T
-                for v in model.V if v != robots[a].goal
-            )
+                for a in model.A
+                for t in model.T
+                for v in model.V
+                if v != robots[a].goal
+            ),
         )
 
         self.logger.standard(
             f"ILP model built: {len(model.A)} robots, {len(model.V)} free cells, "
             f"{problem.T} timesteps"
+            f"\nBFS Stats: {self.bfs_stats}"
         )
         self.model = model
         return self.model
@@ -186,7 +274,7 @@ class GraphILPBuilder(BaseILPBuilder):
     def local_index(self, v):
         return v
 
-    def build(self):
+    def build(self, preprocess=True):
         problem = self.problem
         graph = problem.graph
         robots = problem.robots
@@ -208,23 +296,54 @@ class GraphILPBuilder(BaseILPBuilder):
         # for graph robot state (see PathfindingProblem.get_graph_robot_current_goal).
         start_goal = {a: problem.get_graph_robot_current_goal(a) for a in robots}
 
-        active_range = {a: range(robots[a].start_time, robots[a].start_time + robots[a].T)
-                         for a in robots}
+        active_range = {
+            a: range(robots[a].start_time, robots[a].start_time + robots[a].T)
+            for a in robots
+        }
 
+        # BFS-from-start reachability per robot: nodes it cannot possibly reach
+        # within t - start_time moves are fixed to 0 too. See bfs_reachable_sets().
+        reach_sets = (
+            {
+                a: bfs_reachable_sets(reachable, start_goal[a][0], robots[a].T - 1)
+                for a in robots
+            }
+            if preprocess
+            else None
+        )
+        self.logger.debug(f"Reach sets: {reach_sets}")
         # Decision variables x[robot, node, time]
         model.x = pyo.Var(model.A, model.V, model.T, within=pyo.Binary)
 
+        in_window_vars = 0
+        bfs_fixed = 0
         for a in model.A:
             for v in model.V:
                 for t in model.T:
                     if t not in active_range[a]:
                         model.x[a, v, t].fix(0)
+                        continue
+                    in_window_vars += 1
+                    if preprocess and v not in reach_sets[a][t - robots[a].start_time]:
+                        model.x[a, v, t].fix(0)
+                        bfs_fixed += 1
+        self.bfs_stats = {
+            "window": 0,
+            "preprocess": preprocess,
+            "initial_variables": in_window_vars,
+            "variables_reduced": bfs_fixed,
+            "final_variables": in_window_vars - bfs_fixed,
+            "reduction_ratio": round(bfs_fixed / in_window_vars, 4)
+            if in_window_vars
+            else 0,
+        }
 
         # exactly one node per robot per timestep, only while the robot exists
         def one_hot_rule(m, a, t):
             if t not in active_range[a]:
                 return pyo.Constraint.Skip
             return sum(m.x[a, v, t] for v in m.V) == 1
+
         model.one_hot = pyo.Constraint(model.A, model.T, rule=one_hot_rule)
 
         # if at v at time t, must move to a neighbor of v at time t+1, only while
@@ -233,18 +352,23 @@ class GraphILPBuilder(BaseILPBuilder):
             if t not in active_range[a] or (t + 1) not in active_range[a]:
                 return pyo.Constraint.Skip
             return m.x[a, v, t] <= sum(m.x[a, vp, t + 1] for vp in reachable[v])
-        model.adjacency = pyo.Constraint(model.A, model.V, model.T_minus, rule=adjacency_rule)
+
+        model.adjacency = pyo.Constraint(
+            model.A, model.V, model.T_minus, rule=adjacency_rule
+        )
 
         # at start node at each robot's own start time
         model.start = pyo.Constraint(
             model.A,
-            rule=lambda m, a: m.x[a, start_goal[a][0], robots[a].start_time] == 1
+            rule=lambda m, a: m.x[a, start_goal[a][0], robots[a].start_time] == 1,
         )
 
         # at goal node at each robot's own goal time
         model.goal = pyo.Constraint(
             model.A,
-            rule=lambda m, a: m.x[a, start_goal[a][1], robots[a].start_time + robots[a].T - 1] == 1
+            rule=lambda m, a: (
+                m.x[a, start_goal[a][1], robots[a].start_time + robots[a].T - 1] == 1
+            ),
         )
 
         # once at goal, stay at goal, only within the robot's own window
@@ -253,12 +377,12 @@ class GraphILPBuilder(BaseILPBuilder):
                 return pyo.Constraint.Skip
             goal_node = start_goal[a][1]
             return m.x[a, goal_node, t] <= m.x[a, goal_node, t + 1]
+
         model.goal_lock = pyo.Constraint(model.A, model.T_minus, rule=goal_lock_rule)
 
         # at most one robot per node per timestep
         model.crash = pyo.Constraint(
-            model.V, model.T,
-            rule=lambda m, v, t: sum(m.x[a, v, t] for a in m.A) <= 1
+            model.V, model.T, rule=lambda m, v, t: sum(m.x[a, v, t] for a in m.A) <= 1
         )
 
         # no two robots may swap positions across an edge between t and t+1
@@ -271,8 +395,11 @@ class GraphILPBuilder(BaseILPBuilder):
                     for v in model.V:
                         for w, _weight in graph.adjacency[v]:
                             model.swap.add(
-                                model.x[ai, v, t] + model.x[aj, w, t] +
-                                model.x[ai, w, t + 1] + model.x[aj, v, t + 1] <= 3
+                                model.x[ai, v, t]
+                                + model.x[aj, w, t]
+                                + model.x[ai, w, t + 1]
+                                + model.x[aj, v, t + 1]
+                                <= 3
                             )
 
         # minimize total timesteps spent away from goal (equivalent to sum of arrival times,
@@ -281,14 +408,17 @@ class GraphILPBuilder(BaseILPBuilder):
             sense=pyo.minimize,
             expr=sum(
                 model.x[a, v, t]
-                for a in model.A for t in model.T
-                for v in model.V if v != start_goal[a][1]
-            )
+                for a in model.A
+                for t in model.T
+                for v in model.V
+                if v != start_goal[a][1]
+            ),
         )
 
         self.logger.standard(
             f"ILP model built: {len(model.A)} robots, {len(model.V)} nodes, "
             f"{problem.T} timesteps"
+            f"\nBFS Stats: {self.bfs_stats}"
         )
         self.model = model
         return self.model

@@ -251,9 +251,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help=(
-            "Disable variable reduction and correction loop (runs the simple "
-            "raw-sampler loop). By default, BFS logical-variable reduction and "
-            "diagonal pruning are applied before each window."
+            "Disable variable reduction (QUBO: BFS logical-variable reduction, "
+            "diagonal pruning, and the correction loop, runs the simple "
+            "raw-sampler loop instead. ILP: BFS reachability pruning of the "
+            "decision variables, solves the unpruned model instead). Enabled "
+            "by default for both."
         ),
     )
     sol.add_argument(
@@ -790,13 +792,18 @@ def main():
             solver,
             num_runs=args.num_runs,
             level=args.benchmark_level,
+            preprocess=not args.no_preprocess,
         )
         runner.run_build()
 
     else:
         # Single solve
         timer = time.time()
-        builder.build()
+        # ILP builders rebuild themselves inside solver.solve() (see
+        # ILPSolver.solve()) so the preprocess flag always takes effect;
+        # pre-building here would just duplicate work and logging.
+        if not hasattr(builder, "local_index"):
+            builder.build()
         solution = solver.solve(builder, preprocess=not args.no_preprocess)
         # Use p (the grid-only/graph-only problem actually passed to the
         # builder), not problem

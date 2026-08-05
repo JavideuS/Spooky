@@ -8,7 +8,8 @@ from quantum.utils.logger import get_logger
 
 class BenchmarkRunner:
     def __init__(
-        self, qubobuilder, solver, num_runs=10, output_dir="results/benchmarks", level=2
+        self, qubobuilder, solver, num_runs=10, output_dir="results/benchmarks",
+        level=2, preprocess=True
     ):
         """
         Run benchmark on a given solver and problem.
@@ -22,12 +23,17 @@ class BenchmarkRunner:
                 - Level 1: Only statistics, timing, energy, validation pass/fail
                 - Level 2: Level 1 + robot paths and per-robot validation details
                 - Level 3: Level 2 + raw bit solution for debugging
+            preprocess (bool): Forwarded to solver.solve() each run — toggles
+                each solver's own variable-reduction step (BFS reachability
+                pruning for both QUBO and ILP, plus diagonal fixing/windowing
+                for QUBO specifically).
         """
         self.builder = qubobuilder
         self.problem = qubobuilder.problem
         self.penalty_set = qubobuilder.penalties
         self.solver = solver
         self.num_runs = num_runs
+        self.preprocess = preprocess
         self.level = max(1, min(3, level))  # Clamp to 1-3
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -61,11 +67,17 @@ class BenchmarkRunner:
         for run_id in range(1, self.num_runs + 1):
             self.builder.reset_problem()
             build_start = time.time()
-            self.builder.build()
+            # ILP builders rebuild themselves inside solver.solve() so the
+            # preprocess flag always takes effect (see ILPSolver.solve());
+            # pre-building here would just be redundant work and duplicate
+            # logging. QUBO builders still need this: their preprocess=False
+            # path reads builder.Q directly without calling build() itself.
+            if not hasattr(self.builder, "local_index"):
+                self.builder.build()
             build_duration = time.time() - build_start
-        
+
             solve_start = time.time()
-            solution = self.solver.solve(self.builder)
+            solution = self.solver.solve(self.builder, preprocess=self.preprocess)
             solve_duration = time.time() - solve_start
 
             self.logger.minimal(

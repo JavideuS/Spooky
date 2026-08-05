@@ -42,15 +42,19 @@ class ILPSolver(BaseSolver):
             builder: GridILPBuilder or GraphILPBuilder instance
             optimization: Accepted for interface compatibility; unused (no
                 variational step for an exact ILP solve).
-            preprocess: Accepted for interface compatibility; unused (no
-                windowing/variable-reduction pipeline — ILP solves the whole
-                horizon exactly in one shot).
+            preprocess: When True (default), builder.build() fixes x[a, v, t]
+                to 0 for every BFS-from-start-unreachable (v, t) — see
+                BaseILPBuilder.build(). When False, only the per-robot active
+                time window is fixed; the full free-cell set stays open.
+                Always rebuilds (even if builder.model already exists) so
+                this flag reliably takes effect regardless of any prior
+                build() call — no windowing/sampling either way, ILP solves
+                the whole horizon exactly in one shot.
 
         Returns:
             Dictionary containing solution, energy, and raw response
         """
-        if builder.model is None:
-            builder.build()
+        builder.build(preprocess=preprocess)
 
         pyomo_solver = pyo.SolverFactory(self.pyomo_solver_name)
         results = pyomo_solver.solve(builder.model)
