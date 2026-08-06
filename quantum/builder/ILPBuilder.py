@@ -25,6 +25,21 @@ def bfs_reachable_sets(reachable, start, max_steps):
     return sets
 
 
+def reverse_adjacency(reachable):
+    """Build the reverse of a forward adjacency map: reverse[v] lists every u
+    with v in reachable[u]. Needed for a goal-anchored backward BFS — reusing
+    `reachable` directly for that would silently assume the graph is
+    undirected, which grid movement happens to satisfy but isn't guaranteed
+    for an arbitrary loaded graph. bfs_reachable_sets(reverse_adjacency(adj),
+    goal, k) then gives exactly the set of vertices that can reach `goal`
+    within k moves in the original (forward) graph."""
+    reverse = {v: [] for v in reachable}
+    for u, neighbors in reachable.items():
+        for v in neighbors:
+            reverse[v].append(u)
+    return reverse
+
+
 class BaseILPBuilder:
     """
     Shared scaffolding for ILP builders: robot-state reset, penalty-set stub
@@ -65,12 +80,17 @@ class BaseILPBuilder:
 
         Args:
             preprocess: When True (default), fixes x[a, v, t] to 0 for every
-                (v, t) a BFS-from-start reachability check rules out for robot
-                a (see bfs_reachable_sets()) — an exact reduction that shrinks
-                the search space HiGHS has to branch over without excluding
-                any feasible solution. When False, only the per-robot active
-                time window is fixed (the minimum needed for correctness);
-                the full free-cell set is left open at every in-window t.
+                (v, t) that fails a forward-from-start BFS reachability check
+                *or* a backward-from-goal one (see bfs_reachable_sets() /
+                reverse_adjacency()) — cells robot a couldn't possibly have
+                reached by t, or couldn't possibly still reach its goal from
+                by the deadline. Both are exact: any feasible path's own
+                prefix/suffix proves its cells pass both checks, so this can
+                only shrink the search space HiGHS branches over, never
+                exclude a feasible (or optimal) solution. When False, only
+                the per-robot active time window is fixed (the minimum
+                needed for correctness); the full free-cell set is left open
+                at every in-window t.
         """
         raise NotImplementedError
 
@@ -130,19 +150,27 @@ class GridILPBuilder(BaseILPBuilder):
             for a in robots
         }
 
-        # BFS-from-start reachability per robot: cells it cannot possibly reach
-        # within t - start_time moves are fixed to 0 too. See bfs_reachable_sets().
-        reach_sets = (
-            {
+        # Forward-from-start and backward-from-goal BFS reachability per robot:
+        # cells it cannot possibly have reached by t, or cannot possibly still
+        # reach goal from by the deadline, are fixed to 0. See
+        # bfs_reachable_sets() / reverse_adjacency() docstrings for why the
+        # intersection of both is exact.
+        goal_deadline = {a: robots[a].start_time + robots[a].T - 1 for a in robots}
+        if preprocess:
+            reverse_reachable = reverse_adjacency(reachable)
+            forward_sets = {
                 a: bfs_reachable_sets(
                     reachable, robots[a].current_position, robots[a].T - 1
                 )
                 for a in robots
             }
-            if preprocess
-            else None
-        )
-        self.logger.debug(f"Reach sets: {reach_sets}")
+            backward_sets = {
+                a: bfs_reachable_sets(reverse_reachable, robots[a].goal, robots[a].T - 1)
+                for a in robots
+            }
+        else:
+            forward_sets = backward_sets = None
+        self.logger.debug(f"Forward sets: {forward_sets}\nBackward sets: {backward_sets}")
         # Decision variables x[robot, position, time]
         model.x = pyo.Var(model.A, model.V, model.T, within=pyo.Binary)
 
@@ -155,9 +183,12 @@ class GridILPBuilder(BaseILPBuilder):
                         model.x[a, v, t].fix(0)
                         continue
                     in_window_vars += 1
-                    if preprocess and v not in reach_sets[a][t - robots[a].start_time]:
-                        model.x[a, v, t].fix(0)
-                        bfs_fixed += 1
+                    if preprocess:
+                        forward_ok = v in forward_sets[a][t - robots[a].start_time]
+                        backward_ok = v in backward_sets[a][goal_deadline[a] - t]
+                        if not (forward_ok and backward_ok):
+                            model.x[a, v, t].fix(0)
+                            bfs_fixed += 1
         self.bfs_stats = {
             "window": 0,
             "preprocess": preprocess,
@@ -301,17 +332,27 @@ class GraphILPBuilder(BaseILPBuilder):
             for a in robots
         }
 
-        # BFS-from-start reachability per robot: nodes it cannot possibly reach
-        # within t - start_time moves are fixed to 0 too. See bfs_reachable_sets().
-        reach_sets = (
-            {
+        # Forward-from-start and backward-from-goal BFS reachability per robot:
+        # nodes it cannot possibly have reached by t, or cannot possibly still
+        # reach goal from by the deadline, are fixed to 0. See
+        # bfs_reachable_sets() / reverse_adjacency() docstrings for why the
+        # intersection of both is exact.
+        goal_deadline = {a: robots[a].start_time + robots[a].T - 1 for a in robots}
+        if preprocess:
+            reverse_reachable = reverse_adjacency(reachable)
+            forward_sets = {
                 a: bfs_reachable_sets(reachable, start_goal[a][0], robots[a].T - 1)
                 for a in robots
             }
-            if preprocess
-            else None
-        )
-        self.logger.debug(f"Reach sets: {reach_sets}")
+            backward_sets = {
+                a: bfs_reachable_sets(
+                    reverse_reachable, start_goal[a][1], robots[a].T - 1
+                )
+                for a in robots
+            }
+        else:
+            forward_sets = backward_sets = None
+        self.logger.debug(f"Forward sets: {forward_sets}\nBackward sets: {backward_sets}")
         # Decision variables x[robot, node, time]
         model.x = pyo.Var(model.A, model.V, model.T, within=pyo.Binary)
 
@@ -324,9 +365,12 @@ class GraphILPBuilder(BaseILPBuilder):
                         model.x[a, v, t].fix(0)
                         continue
                     in_window_vars += 1
-                    if preprocess and v not in reach_sets[a][t - robots[a].start_time]:
-                        model.x[a, v, t].fix(0)
-                        bfs_fixed += 1
+                    if preprocess:
+                        forward_ok = v in forward_sets[a][t - robots[a].start_time]
+                        backward_ok = v in backward_sets[a][goal_deadline[a] - t]
+                        if not (forward_ok and backward_ok):
+                            model.x[a, v, t].fix(0)
+                            bfs_fixed += 1
         self.bfs_stats = {
             "window": 0,
             "preprocess": preprocess,

@@ -99,5 +99,10 @@ class ILPSolver(BaseSolver):
             "metadata": {
                 "termination_condition": str(results.solver.termination_condition),
                 "solver_config": self.to_dict(),
+                # Single-entry list, not a per-window loop like QUBO's — ILP
+                # solves the whole horizon in one shot. Wrapped in a list so
+                # BenchmarkRunner.run_build()'s existing window_stats
+                # aggregation (benchmark.py) picks it up unchanged.
+                "window_stats": [builder.bfs_stats],
             },
         }
