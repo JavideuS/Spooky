@@ -267,6 +267,17 @@ def build_parser() -> argparse.ArgumentParser:
             "e.g. 'appsi_highs' (default), 'cbc', 'glpk'."
         ),
     )
+    sol.add_argument(
+        "--time-limit",
+        type=float,
+        default=30,
+        metavar="SECONDS",
+        help=(
+            "Solver time limit in seconds (only used with --solver ilp). "
+            "HiGHS returns its best incumbent found so far if the limit is "
+            "hit before proving optimality. Default: 30."
+        ),
+    )
 
     # PennyLane / QAOA-specific
     pl = parser.add_argument_group(
@@ -632,10 +643,14 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
         )
 
     elif args.solver == "ilp":
-        logger.minimal(f"Creating ILP solver (pyomo backend={args.pyomo_solver})")
+        logger.minimal(
+            f"Creating ILP solver (pyomo backend={args.pyomo_solver}, "
+            f"time_limit={args.time_limit}s)"
+        )
         return SolverFactory.create_solver(
             solver="ilp",
             pyomo_solver_name=args.pyomo_solver,
+            time_limit=args.time_limit,
         )
 
     else:

@@ -47,6 +47,7 @@ gpu = [
 dwave = [
     "dimod",
     "dwave-system",
+    "dwave-neal",
 ]
 ibm = [
     "qiskit-ibm-runtime",

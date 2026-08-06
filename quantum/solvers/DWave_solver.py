@@ -1,5 +1,7 @@
 # Solver (Quantum annealing)
-from dimod import BinaryQuadraticModel, SimulatedAnnealingSampler
+from dimod import BinaryQuadraticModel
+# Optimized version is neal AnnealingSampler not dimod one (C++ based)
+from neal import SimulatedAnnealingSampler
 from .base_solver import BaseSolver
 
 

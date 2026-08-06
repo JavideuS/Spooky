@@ -1,3 +1,4 @@
+import inspect
 import pyomo.environ as pyo
 from typing import Any, Dict
 from .base_solver import BaseSolver
@@ -22,8 +23,19 @@ class ILPSolver(BaseSolver):
         num_reads=1,
         max_corrections=0,
         verbose_level=2,
+        time_limit=30,
         **kwargs,
     ):
+        """
+        Args:
+            time_limit: Max solve time in seconds (default 30). Nothing else
+                in this codebase bounds ILP's runtime — unlike QAOA's fixed
+                opt_steps budget, branch-and-bound can otherwise run
+                arbitrarily long as problems scale up. If the limit is hit
+                before HiGHS proves optimality, it returns its best
+                incumbent so far (termination_condition reflects this —
+                check it before trusting `energy` as the true optimum).
+        """
         super().__init__(
             solver="ilp",
             normalize_scale=normalize_scale,
@@ -33,6 +45,7 @@ class ILPSolver(BaseSolver):
             **kwargs,
         )
         self.pyomo_solver_name = pyomo_solver_name
+        self.time_limit = time_limit
 
     def solve(self, builder, optimization=False, preprocess=True) -> Dict[str, Any]:
         """
@@ -57,7 +70,20 @@ class ILPSolver(BaseSolver):
         builder.build(preprocess=preprocess)
 
         pyomo_solver = pyo.SolverFactory(self.pyomo_solver_name)
-        results = pyomo_solver.solve(builder.model)
+        if "timelimit" in inspect.signature(pyomo_solver.solve).parameters:
+            # APPSI-backed solvers (appsi_highs, appsi_cbc, ...) — Pyomo's
+            # LegacySolverInterface.solve() replaces self.config with a fresh
+            # default config on every call and only reads time_limit from
+            # this kwarg, so setting pyomo_solver.config.time_limit ahead of
+            # time (the obvious-looking approach) is silently discarded.
+            results = pyomo_solver.solve(builder.model, timelimit=self.time_limit)
+        else:
+            # Plain legacy plugin backends (cbc, glpk, ...) — no shared
+            # kwarg; option name varies by solver (cbc wants 'seconds',
+            # glpk wants 'tmlim'). 'time_limit' covers the common case but
+            # isn't universal for every possible backend.
+            pyomo_solver.options["time_limit"] = self.time_limit
+            results = pyomo_solver.solve(builder.model)
 
         problem = builder.problem
         robot_nums = problem.get_robot_nums()
