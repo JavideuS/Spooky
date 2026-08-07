@@ -97,7 +97,7 @@ classical = [
     "highspy",
 ]
 
-# quantum/benchmark/sweep_runner.py + quantum/analysis/
+# quantum/benchmark/sweep_runner.py + quantum/benchmark/analysis/
 benchmark = [
     "pandas",
     "scipy",
