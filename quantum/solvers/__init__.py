@@ -11,6 +11,7 @@ Main classes:
 - DWaveSolver: DWave quantum annealing solver
 - PennylaneSolver: Pennylane QAOA solver
 - ILPSolver: Exact ILP solver via Pyomo (classical baseline)
+- CBSSolver: Conflict-Based Search solver (classical baseline)
 """
 
 from .base_solver import BaseSolver
@@ -18,6 +19,7 @@ from .solver_factory import SolverFactory, DynamicSolver
 from .DWave_solver import DWaveSolver
 from .Pennylane_solver import PennylaneSolver
 from .ILP_solver import ILPSolver
+from .CBS_solver import CBSSolver
 
 __all__ = [
     "BaseSolver",
@@ -26,4 +28,5 @@ __all__ = [
     "DWaveSolver",
     "PennylaneSolver",
     "ILPSolver",
+    "CBSSolver",
 ]

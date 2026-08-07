@@ -1,19 +1,30 @@
 # Solver (Quantum annealing)
 from dimod import BinaryQuadraticModel
+
 # Optimized version is neal AnnealingSampler not dimod one (C++ based)
 from neal import SimulatedAnnealingSampler
 from .base_solver import BaseSolver
 
 
 class DWaveSolver(BaseSolver):
-    def __init__(self, normalize_scale=0, num_reads=10, verbose_level=2, **kwargs):
+    def __init__(
+        self, normalize_scale=0, num_reads=10, verbose_level=2, seed=None, **kwargs
+    ):
+        """
+        Args:
+            seed: Random seed forwarded to neal.SimulatedAnnealingSampler.sample().
+                None (default) leaves annealing non-deterministic run-to-run;
+                set for reproducible sweeps/benchmarks.
+        """
         super().__init__(
             solver="dwave",
             normalize_scale=normalize_scale,
             num_reads=num_reads,
             verbose_level=verbose_level,
+            seed=seed,
             **kwargs,
         )
+        self.seed = seed
 
     def solve(self, builder, optimization=False, preprocess=True):
         """
@@ -48,7 +59,7 @@ class DWaveSolver(BaseSolver):
                 )
                 bqm = BinaryQuadraticModel.from_qubo(Q)
                 sampler = SimulatedAnnealingSampler()
-                response = sampler.sample(bqm, num_reads=self.num_reads)
+                response = sampler.sample(bqm, num_reads=self.num_reads, seed=self.seed)
                 first = response.first
                 best_sample.append(first.sample)
                 best_energy.append(response.first.energy)
@@ -105,7 +116,7 @@ class DWaveSolver(BaseSolver):
 
             bqm = BinaryQuadraticModel.from_qubo(builder.Q)
             sampler = SimulatedAnnealingSampler()
-            response = sampler.sample(bqm, num_reads=self.num_reads)
+            response = sampler.sample(bqm, num_reads=self.num_reads, seed=self.seed)
 
             first = response.first
             full_sol, invalid_moves = self._handle_iteration_result(

@@ -37,6 +37,7 @@ dependencies = [
     "h5py",
     "numpy",
     "pennylane",
+    "networkx", # Used by the CBS classical baseline
 ]
 
 [project.optional-dependencies]
@@ -88,7 +89,6 @@ fastapi = [
 ]
 
 paper = [
-    "networkx",
     "matplotlib",
 ]
 
@@ -97,14 +97,20 @@ classical = [
     "highspy",
 ]
 
+# quantum/benchmark/sweep_runner.py + quantum/analysis/
+benchmark = [
+    "pandas",
+    "scipy",
+]
+
 all = [
-    "spooky[gpu,dwave,ibm,iqm,jupyter,dev,visualizer,fastapi,paper,ros,classical]",
+    "spooky[gpu,dwave,ibm,iqm,jupyter,dev,visualizer,fastapi,paper,ros,classical,benchmark]",
 ]
 
 # PennyLane ships no CUDA/lightning-gpu wheels for Windows, so this mirrors
 # "all" minus the gpu extra.
 windows = [
-    "spooky[dwave,ibm,iqm,jupyter,dev,visualizer,fastapi,paper,ros,classical]",
+    "spooky[dwave,ibm,iqm,jupyter,dev,visualizer,fastapi,paper,ros,classical,benchmark]",
 ]
 
 [project.urls]
@@ -114,6 +120,7 @@ Issues = "https://github.com/JavideuS/Spooky/issues"
 
 [project.scripts]
 spooky-solve = "quantum.qubo_cli:main"
+spooky-sweep = "quantum.benchmark.run_sweep:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

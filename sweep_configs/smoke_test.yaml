@@ -1,0 +1,36 @@
+# Phase-2 verification artifact for the sweep pipeline — small and fast on
+# purpose (2 instances x {ilp, cbs}, 1 run each, no hardware). Run from the
+# repo root:
+#   spooky-sweep --config sweep_configs/smoke_test.yaml --dry-run
+#   spooky-sweep --config sweep_configs/smoke_test.yaml
+
+sweep:
+  id: null # auto-generated sweep_<timestamp>_<hex8> if omitted
+  seed: 42
+  enable_hardware: false
+  output_root: results/sweeps
+
+instances:
+  - map: quantum/maps/synthetic/3x3/obs3x3_standard
+    problems: [baseline]
+    builder: grid
+  - map: quantum/maps/synthetic/5x5/obs5x5_easy
+    problems: [two_robots]
+    builder: grid
+
+solvers:
+  - name: ilp_highs
+    backend: ilp
+    params: { time_limit: 30 }
+    num_runs: 1 # deterministic — HiGHS gives the same answer every time
+    ablation: { preprocess: [true, false] }
+
+  - name: cbs
+    backend: cbs
+    params: { node_limit: 5000, time_limit: 30 }
+    num_runs: 1 # deterministic — see CBS's tie-breaking note in cbs_algorithm.py
+    ablation: { preprocess: [true, false] }
+
+execution:
+  preprocess_default: true
+  fail_fast: false

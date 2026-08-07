@@ -1,3 +1,4 @@
+import os
 import pennylane as qml
 from pennylane import numpy as np
 from .base_solver import BaseSolver
@@ -27,15 +28,37 @@ class PennylaneSolver(BaseSolver):
         params=None,
         verbose_level=2,
         machine=None,
+        threads=None,
         **kwargs,
     ):
+        """
+        Args:
+            threads: CPU thread count for lightning.qubit's OpenMP backend
+                (default.qubit, lightning.gpu unaffected). None (default)
+                leaves OpenMP's own default in place, which is every
+                available core (os.cpu_count()) — set this to pin a specific
+                count, e.g. to match another solver's thread count for a
+                fair wall-clock comparison. Must be set before the device is
+                constructed: OpenMP reads OMP_NUM_THREADS on first use, not
+                on every call, so this only takes effect if set here rather
+                than after qml.device(...) has already run once.
+        """
         super().__init__(
             solver="pennylane",
             normalize_scale=normalize_scale,
             num_reads=num_reads,
             verbose_level=verbose_level,
+            layers=layers,
+            optimizer=optimizer,
+            opt_steps=opt_steps,
+            device=device,
+            machine=machine,
+            threads=threads,
+            params=params,
             **kwargs,
         )
+        if threads is not None:
+            os.environ["OMP_NUM_THREADS"] = str(threads)
         self.optimizer_name = optimizer
         self.p = layers  # Number of QAOA layers
         self.dev = device
@@ -81,6 +104,7 @@ class PennylaneSolver(BaseSolver):
         params = config.get("params", None)
         opt_steps = config.get("optimizer_steps", 10)
         machine = config.get("machine", None)
+        threads = config.get("threads", None)
         if optimizer not in ["GradientDescent", "Adam", "QNG", "SPSA", "QNSPSA"]:
             raise ValueError(
                 "Optimizer must be either 'GradientDescent', "
@@ -106,6 +130,7 @@ class PennylaneSolver(BaseSolver):
             params=params,
             opt_steps=opt_steps,
             machine=machine,
+            threads=threads,
         )
 
     def _select_iqm_machine(self, num_qubits):
@@ -160,8 +185,7 @@ class PennylaneSolver(BaseSolver):
                 self.hardware_qubits = self.backend.num_qubits
                 backend_time = time.time() - backend_start
                 self.logger.standard(
-                    f"✓ Backend selected: {machine} "
-                    f"({self.hardware_qubits} qubits)"
+                    f"✓ Backend selected: {machine} ({self.hardware_qubits} qubits)"
                 )
                 self.logger.standard(f"  Backend selection time: {backend_time:.2f}s")
                 self.logger.standard("=" * 60)
@@ -169,7 +193,9 @@ class PennylaneSolver(BaseSolver):
                 self.logger.standard("=" * 60)
                 backend_start = time.time()
                 if self.machine:
-                    self.logger.standard(f"🔍 Connecting to IBM backend: {self.machine}")
+                    self.logger.standard(
+                        f"🔍 Connecting to IBM backend: {self.machine}"
+                    )
                     self.backend = self.service.backend(self.machine)
                     if self.backend.num_qubits < num_qubits:
                         raise ValueError(
@@ -200,7 +226,10 @@ class PennylaneSolver(BaseSolver):
         (pennylane_qiskit.circuit_to_qiskit), then Qiskit -> Qrisp
         (qrisp.interface.converter.convert_from_qiskit).
         """
-        from pennylane_qiskit.qiskit_device import QISKIT_OPERATION_MAP, circuit_to_qiskit
+        from pennylane_qiskit.qiskit_device import (
+            QISKIT_OPERATION_MAP,
+            circuit_to_qiskit,
+        )
         from qrisp.interface.converter import convert_from_qiskit
 
         with qml.queuing.AnnotatedQueue() as q:
@@ -225,7 +254,9 @@ class PennylaneSolver(BaseSolver):
         Returns:
             dict: Qiskit/Qrisp-style bitstring -> shot count.
         """
-        qrisp_circuit = self._pennylane_tape_to_qrisp(ansatz_circuit, params, num_qubits)
+        qrisp_circuit = self._pennylane_tape_to_qrisp(
+            ansatz_circuit, params, num_qubits
+        )
         backend = self._get_backend(num_qubits)
         return backend.run(qrisp_circuit, shots=shots)
 

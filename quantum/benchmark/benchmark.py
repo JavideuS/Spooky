@@ -8,8 +8,13 @@ from quantum.utils.logger import get_logger
 
 class BenchmarkRunner:
     def __init__(
-        self, qubobuilder, solver, num_runs=10, output_dir="results/benchmarks",
-        level=2, preprocess=True
+        self,
+        qubobuilder,
+        solver,
+        num_runs=10,
+        output_dir="results/benchmarks",
+        level=2,
+        preprocess=True,
     ):
         """
         Run benchmark on a given solver and problem.
@@ -38,7 +43,7 @@ class BenchmarkRunner:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.logger = get_logger()  # Use global logger level
-        
+
         # Store metadata once, not per-run
         self.results = {
             "metadata": {
@@ -47,9 +52,9 @@ class BenchmarkRunner:
                 "penalty_set": self.penalty_set,
                 "benchmark_level": self.level,
                 "num_runs": num_runs,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             },
-            "runs": []
+            "runs": [],
         }
 
     def run_build(self):
@@ -57,7 +62,9 @@ class BenchmarkRunner:
         self.logger.minimal(f"\nBenchmarking Problem: {self.problem.name}")
         self.logger.minimal(f"Using Solver: {self.solver.name}")
         self.logger.minimal(f"Penalty Set: {self.penalty_set.get('name', 'unnamed')}")
-        self.logger.minimal(f"Benchmark Level: {self.level} ({'Summary' if self.level == 1 else 'Paths' if self.level == 2 else 'Full'})")
+        self.logger.minimal(
+            f"Benchmark Level: {self.level} ({'Summary' if self.level == 1 else 'Paths' if self.level == 2 else 'Full'})"
+        )
         self.logger.minimal("-" * 60)
 
         valid_count = 0
@@ -81,8 +88,7 @@ class BenchmarkRunner:
             solve_duration = time.time() - solve_start
 
             self.logger.minimal(
-                f"Build time: {build_duration:.4f}s, "
-                f"Solve time: {solve_duration:.4f}s"
+                f"Build time: {build_duration:.4f}s, Solve time: {solve_duration:.4f}s"
             )
 
             # Decode path for validation
@@ -92,7 +98,9 @@ class BenchmarkRunner:
             # If invalid, work out whether pre-processing forced the conflict
             # (bypassing K_crash/K_swap entirely) or the solver actually
             # sampled a bitstring that violates a penalty that was present.
-            forced_collisions = solution.get("metadata", {}).get("forced_collisions", [])
+            forced_collisions = solution.get("metadata", {}).get(
+                "forced_collisions", []
+            )
             invalid_cause = _attribute_invalid_cause(validation, forced_collisions)
             if invalid_cause:
                 validation["invalid_cause"] = invalid_cause
@@ -117,6 +125,15 @@ class BenchmarkRunner:
             if invalid_cause:
                 result["invalid_cause"] = invalid_cause
 
+            # Exact solvers (ILP, CBS) report whether they actually proved
+            # optimality or just returned their best satisfy solution on a
+            # time/node-limit timeout
+            termination_condition = solution.get("metadata", {}).get(
+                "termination_condition"
+            )
+            if termination_condition is not None:
+                result["termination_condition"] = termination_condition
+
             # Add variable stats from solver based on level
             window_stats = solution.get("metadata", {}).get("window_stats", [])
             if window_stats:
@@ -124,17 +141,19 @@ class BenchmarkRunner:
                 total_initial = sum(ws["initial_variables"] for ws in window_stats)
                 total_reduced = sum(ws["variables_reduced"] for ws in window_stats)
                 total_final = sum(ws["final_variables"] for ws in window_stats)
-                avg_reduction = total_reduced / total_initial if total_initial > 0 else 0
-                
+                avg_reduction = (
+                    total_reduced / total_initial if total_initial > 0 else 0
+                )
+
                 # Level 1: Just totals (aggregated across all windows)
                 result["variable_stats"] = {
                     "total_initial_variables": total_initial,
                     "total_variables_reduced": total_reduced,
                     "total_final_variables": total_final,
                     "average_reduction_ratio": round(avg_reduction, 4),
-                    "num_windows": len(window_stats)
+                    "num_windows": len(window_stats),
                 }
-                
+
                 # Level 2+: Add detailed per-window breakdown
                 if self.level >= 2:
                     result["window_variable_stats"] = window_stats
@@ -145,17 +164,17 @@ class BenchmarkRunner:
                 robot_paths = {}
                 for robot_id, robot in self.problem.robots.items():
                     robot_paths[robot_id] = robot.path
-                
+
                 result["robot_paths"] = robot_paths
-                
+
                 # Add per-robot validation details
                 validation_details = {}
                 for key, value in validation.get("details", {}).items():
                     if key.startswith("robot_"):
                         validation_details[key] = value
-                
+
                 result["validation_details"] = validation_details
-                
+
                 # Also store per-window energies for analysis
                 if isinstance(solution["energy"], list):
                     result["window_energies"] = solution["energy"]
@@ -168,7 +187,9 @@ class BenchmarkRunner:
 
             status = "✅ Valid" if validation["valid"] else "❌ Invalid"
             if not validation["valid"]:
-                self.logger.standard("Validation details:", validation.get("details", {}))
+                self.logger.standard(
+                    "Validation details:", validation.get("details", {})
+                )
                 self.logger.standard("Reason:", validation.get("reason", "unknown"))
                 self.logger.standard("Message:", validation.get("message", ""))
                 if invalid_cause:
@@ -255,13 +276,17 @@ def _attribute_invalid_cause(validation, forced_collisions):
 
     matches = []
     for fc in matched:
-        labels = {_FIX_MECHANISM_LABELS.get(source, source) for _, source in fc["sources"]}
-        matches.append({
-            "cell": fc["cell"],
-            "time": fc["time"],
-            "robots": fc["robots"],
-            "fixed_by": " + ".join(sorted(labels)),
-        })
+        labels = {
+            _FIX_MECHANISM_LABELS.get(source, source) for _, source in fc["sources"]
+        }
+        matches.append(
+            {
+                "cell": fc["cell"],
+                "time": fc["time"],
+                "robots": fc["robots"],
+                "fixed_by": " + ".join(sorted(labels)),
+            }
+        )
 
     return {"origin": "pre_processing", "matches": matches}
 
@@ -271,21 +296,21 @@ def is_solution_valid(solution, problem):
     Checks if the decoded path represents a valid path from start to goal.
     Accepts a list of ((i, j, t), robot_num) tuples (decoded path), or a list of such paths.
     Args:
-        solution (list): List of ((i, j, t), robot_num) tuples, 
+        solution (list): List of ((i, j, t), robot_num) tuples,
             or list of such lists.
         problem: Problem instance (grid or graph)
     Returns:
         dict: Validation result with 'valid' flag and optional error details
     """
     problem_type = problem.get_format_type()
-    
+
     if problem_type != "grid" and problem_type != "graph":
         return {
             "valid": False,
             "reason": "unsupported_problem_type",
             "message": f"Unsupported problem type: {problem_type}",
         }
-    
+
     result = {"valid": True, "details": {}}
 
     # If input is a list of paths (list of lists of tuples)
@@ -313,7 +338,8 @@ def is_solution_valid(solution, problem):
     for robot_num, robot_path in robot_positions.items():
         robot_id = list(problem.robots.keys())[robot_num]
         robot_result = _validate_single_robot_path_unified(
-            robot_path, problem, robot_id, robot_num)
+            robot_path, problem, robot_id, robot_num
+        )
         if not robot_result["valid"]:
             result["valid"] = False
             result["reason"] = f"robot_{robot_num}_invalid"
@@ -325,7 +351,7 @@ def is_solution_valid(solution, problem):
     # multi-robot vertex conflict check (same cell at same time)
     occupancy = {}  # (i, j, t) -> [robot_num, ...]
     for robot_num, robot_path in robot_positions.items():
-        for (i, j, t) in robot_path:
+        for i, j, t in robot_path:
             key = (i, j, t)
             occupancy.setdefault(key, []).append(robot_num)
 
@@ -333,11 +359,7 @@ def is_solution_valid(solution, problem):
     conflicts = []
     for (i, j, t), robots in occupancy.items():
         if len(robots) > 1:
-            conflicts.append({
-                "cell": (i, j),
-                "time": t,
-                "robots": sorted(robots)
-            })
+            conflicts.append({"cell": (i, j), "time": t, "robots": sorted(robots)})
 
     # multi-robot swap (edge) conflict check: two robots exchange cells
     # between consecutive timesteps (robot A: X@t -> Y@t+1, robot B: Y@t -> X@t+1).
@@ -350,18 +372,20 @@ def is_solution_valid(solution, problem):
     robot_nums_sorted = sorted(position_by_time.keys())
     swap_conflicts = []
     for idx, r1 in enumerate(robot_nums_sorted):
-        for r2 in robot_nums_sorted[idx + 1:]:
+        for r2 in robot_nums_sorted[idx + 1 :]:
             times_r1 = position_by_time[r1]
             times_r2 = position_by_time[r2]
             for t in set(times_r1) & set(times_r2):
                 if (t + 1) not in times_r1 or (t + 1) not in times_r2:
                     continue
                 if times_r1[t] == times_r2[t + 1] and times_r2[t] == times_r1[t + 1]:
-                    swap_conflicts.append({
-                        "cells": (times_r1[t], times_r2[t]),
-                        "time": (t, t + 1),
-                        "robots": [r1, r2],
-                    })
+                    swap_conflicts.append(
+                        {
+                            "cells": (times_r1[t], times_r2[t]),
+                            "time": (t, t + 1),
+                            "robots": [r1, r2],
+                        }
+                    )
 
     if conflicts or swap_conflicts:
         conflicts.sort(key=lambda c: (c["time"], c["cell"]))
@@ -385,30 +409,30 @@ def is_solution_valid(solution, problem):
     result["message"] = "✅ Solution is valid"
     return result
 
-def _validate_single_robot_path_unified(positions, problem, robot_id, 
-                                        robot_num):
+
+def _validate_single_robot_path_unified(positions, problem, robot_id, robot_num):
     """
-    Unified validation function for single robot paths in both grid and graph 
+    Unified validation function for single robot paths in both grid and graph
     problems.
-    
+
     Args:
         positions: List of (i, j, t) tuples for one robot
         problem: Problem instance (grid or graph)
         robot_id: Robot identifier/name
         robot_num: Robot number for error messages
-        
+
     Returns:
         dict: Validation result
     """
     result = {"valid": True, "details": {}}
-    
+
     # Get notation abstraction based on problem type
     notation = _get_notation_abstraction(problem)
 
     # Get robot's individual timeline end
     robot = problem.robots[robot_id]
     robot_end_time = robot.T + robot.start_time
-    
+
     if not positions:
         result["valid"] = False
         result["reason"] = "empty_path"
@@ -421,28 +445,33 @@ def _validate_single_robot_path_unified(positions, problem, robot_id,
     # 2. Get expected time range and check all time steps are present
     expected_times = notation.get_expected_time_range(problem, robot_id, robot_end_time)
     expected_goal = notation.get_goal_position(problem, robot_id)
-    
+
     # Early stop support: Check if robot reached goal early
-    goal_times = [t for i, j, t in positions 
-                  if get_position_representation(problem, (i, j)) == expected_goal]
-    
+    goal_times = [
+        t
+        for i, j, t in positions
+        if get_position_representation(problem, (i, j)) == expected_goal
+    ]
+
     if goal_times:
         first_goal_time = min(goal_times)
         # Only require timesteps up to when goal was first reached
         expected_times = set(t for t in expected_times if t <= first_goal_time)
-        
+
         # Verify robot stayed at goal if it has positions after reaching it
         later_positions = [(i, j, t) for i, j, t in positions if t > first_goal_time]
         for i, j, t in later_positions:
             if get_position_representation(problem, (i, j)) != expected_goal:
                 result["valid"] = False
                 result["reason"] = "left_goal_after_reaching"
-                result["message"] = (f"❌ Robot {robot_num}: Left goal position at time {t} "
-                                   f"after reaching it at time {first_goal_time}")
+                result["message"] = (
+                    f"❌ Robot {robot_num}: Left goal position at time {t} "
+                    f"after reaching it at time {first_goal_time}"
+                )
                 result["details"]["first_goal_time"] = first_goal_time
                 result["details"]["left_at_time"] = t
                 return result
-    
+
     all_times = set(t for _, _, t in positions)
     missing_times = expected_times - all_times
     # Only flag as extra if timesteps exceed the robot's full timeline range
@@ -453,18 +482,21 @@ def _validate_single_robot_path_unified(positions, problem, robot_id,
     if missing_times:
         result["valid"] = False
         result["reason"] = "missing_time_steps"
-        result["message"] = (f"❌ Robot {robot_num}: Missing time steps: "
-                             f"{missing_times}")
+        result["message"] = f"❌ Robot {robot_num}: Missing time steps: {missing_times}"
         result["details"]["missing_times"] = list(missing_times)
         return result
 
     if extra_times:
         result["valid"] = False
         result["reason"] = "extra_time_steps"
-        result["message"] = (f"❌ Robot {robot_num}: Timesteps exceed robot's timeline "
-                             f"[{robot.start_time}, {robot_end_time-1}]: {extra_times}")
+        result["message"] = (
+            f"❌ Robot {robot_num}: Timesteps exceed robot's timeline "
+            f"[{robot.start_time}, {robot_end_time - 1}]: {extra_times}"
+        )
         result["details"]["extra_times"] = list(extra_times)
-        result["details"]["robot_timeline"] = f"[{robot.start_time}, {robot_end_time-1}]"
+        result["details"]["robot_timeline"] = (
+            f"[{robot.start_time}, {robot_end_time - 1}]"
+        )
         return result
 
     # 3. One-hot constraint per time step
@@ -476,7 +508,9 @@ def _validate_single_robot_path_unified(positions, problem, robot_id,
         if len(cells) > 1:
             result["valid"] = False
             result["reason"] = "multiple_positions_per_time"
-            result["message"] = f"❌ Robot {robot_num}: Multiple positions at time {t}: {cells}"
+            result["message"] = (
+                f"❌ Robot {robot_num}: Multiple positions at time {t}: {cells}"
+            )
             result["details"]["conflicts"] = {t: cells}
             return result
 
@@ -486,15 +520,19 @@ def _validate_single_robot_path_unified(positions, problem, robot_id,
     if not start_positions:
         result["valid"] = False
         result["reason"] = "wrong_start"
-        result["message"] = f"❌ Robot {robot_num}: No start position found at time {start_time}"
+        result["message"] = (
+            f"❌ Robot {robot_num}: No start position found at time {start_time}"
+        )
         return result
-    
+
     expected_start = notation.get_start_position(problem, robot_id)
     actual_start = get_position_representation(problem, start_positions[0])
     if actual_start != expected_start:
         result["valid"] = False
         result["reason"] = "wrong_start"
-        result["message"] = f"❌ Robot {robot_num}: Wrong start position. Expected {expected_start}, got {actual_start}"
+        result["message"] = (
+            f"❌ Robot {robot_num}: Wrong start position. Expected {expected_start}, got {actual_start}"
+        )
         result["details"]["expected_start"] = expected_start
         result["details"]["actual_start"] = actual_start
         return result
@@ -504,35 +542,40 @@ def _validate_single_robot_path_unified(positions, problem, robot_id,
     if not goal_times:
         result["valid"] = False
         result["reason"] = "goal_not_reached"
-        result["message"] = f"❌ Robot {robot_num}: Goal position {expected_goal} never reached"
+        result["message"] = (
+            f"❌ Robot {robot_num}: Goal position {expected_goal} never reached"
+        )
         result["details"]["goal"] = expected_goal
         return result
-
 
     # 6. Movement must be valid (adjacent positions only)
     last_pos = None
     for i, j, t in positions:
         current_pos = (i, j)
-        
+
         # Check for obstacles (grid only)
         if notation.has_obstacle_check():
             obstacles = notation.get_obstacles(problem)
             if current_pos in obstacles:
                 result["valid"] = False
                 result["reason"] = "obstacle_collision"
-                result["message"] = f"❌ Robot {robot_num}: Path goes through obstacle at {current_pos} at time {t}"
+                result["message"] = (
+                    f"❌ Robot {robot_num}: Path goes through obstacle at {current_pos} at time {t}"
+                )
                 result["details"]["collisions"] = [(*current_pos, t)]
                 return result
-        
+
         if last_pos is not None:
             last_i, last_j, last_t = last_pos
-            
+
             # Goal-lock bypass: if both current and previous are goal, allow staying
-            if (get_position_representation(problem, (last_i, last_j)) == expected_goal and 
-                get_position_representation(problem, current_pos) == expected_goal):
+            if (
+                get_position_representation(problem, (last_i, last_j)) == expected_goal
+                and get_position_representation(problem, current_pos) == expected_goal
+            ):
                 last_pos = (i, j, t)
                 continue
-            
+
             # Valid move check using shared validation utility
             if not is_valid_move(problem, (last_i, last_j), current_pos):
                 result["valid"] = False
@@ -545,7 +588,11 @@ def _validate_single_robot_path_unified(positions, problem, robot_id,
         last_pos = (i, j, t)
 
     # 7. Final check: Goal times
-    goal_times = [t for i, j, t in positions if get_position_representation(problem, (i, j)) == expected_goal]
+    goal_times = [
+        t
+        for i, j, t in positions
+        if get_position_representation(problem, (i, j)) == expected_goal
+    ]
     result["details"]["goal_times"] = goal_times
 
     result["valid"] = True
@@ -553,10 +600,11 @@ def _validate_single_robot_path_unified(positions, problem, robot_id,
     result["message"] = f"✅ Robot {robot_num}: Solution is valid"
     return result
 
+
 def _get_notation_abstraction(problem):
     """Get the appropriate notation abstraction for the problem type."""
     problem_type = problem.get_format_type()
-    
+
     if problem_type == "grid":
         return GridNotation()
     elif problem_type in ["graph", "both"]:
@@ -567,12 +615,12 @@ def _get_notation_abstraction(problem):
 
 class BaseNotation:
     """Base notation abstraction with common methods."""
-    
+
     def get_expected_time_range(self, problem, robot_id, T):
         """Get expected time range for robot."""
         robot = problem.robots[robot_id]
         return set(range(robot.start_time, T))
-    
+
     def get_start_time(self, problem, robot_id):
         """Get start time for robot."""
         robot = problem.robots[robot_id]
@@ -581,56 +629,51 @@ class BaseNotation:
 
 class GridNotation(BaseNotation):
     """Notation abstraction for grid problems."""
-    
+
     def get_start_position(self, problem, robot_id):
         """Get start position for robot."""
         robot = problem.robots[robot_id]
         return robot.start
-    
+
     def get_goal_position(self, problem, robot_id):
         """Get goal position for robot."""
         robot = problem.robots[robot_id]
         return robot.goal
-    
 
-    
     def has_obstacle_check(self):
         """Whether this notation checks for obstacles."""
         return True
-    
+
     def get_obstacles(self, problem):
         """Get obstacles for the problem."""
         return problem.grid.obstacles
-    
-
 
 
 class GraphNotation(BaseNotation):
     """Notation abstraction for graph problems."""
-    
+
     def get_start_position(self, problem, robot_id):
         """Get start node for robot."""
         robot = problem.robots[robot_id]
-        start_node = (robot.start if isinstance(robot.start, int)
-                      else problem.graph.get_node_from_position(robot.start))
+        start_node = (
+            robot.start
+            if isinstance(robot.start, int)
+            else problem.graph.get_node_from_position(robot.start)
+        )
         return start_node
-    
+
     def get_goal_position(self, problem, robot_id):
         """Get goal node for robot."""
         _, goal_node = problem.get_graph_robot_current_goal(robot_id)
         return goal_node
-    
 
-    
     def has_obstacle_check(self):
         """Whether this notation checks for obstacles (graphs don't)."""
         return False
-    
+
     def get_obstacles(self, problem):
         """Get obstacles for the problem (not used for graphs)."""
         return set()
-    
-
 
 
 def convert_tuple_keys_to_str(obj):
@@ -639,7 +682,10 @@ def convert_tuple_keys_to_str(obj):
     This is useful for serializing dictionaries with tuple keys to JSON.
     """
     if isinstance(obj, dict):
-        return {str(k) if isinstance(k, tuple) else k: convert_tuple_keys_to_str(v) for k, v in obj.items()}
+        return {
+            str(k) if isinstance(k, tuple) else k: convert_tuple_keys_to_str(v)
+            for k, v in obj.items()
+        }
     elif isinstance(obj, list):
         return [convert_tuple_keys_to_str(i) for i in obj]
     else:

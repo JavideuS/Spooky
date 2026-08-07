@@ -3,6 +3,7 @@ from .base_solver import BaseSolver
 from .DWave_solver import DWaveSolver
 from .Pennylane_solver import PennylaneSolver
 from .ILP_solver import ILPSolver
+from .CBS_solver import CBSSolver
 
 
 class SolverFactory:
@@ -16,6 +17,7 @@ class SolverFactory:
         "dwave": DWaveSolver,
         "pennylane": PennylaneSolver,
         "ilp": ILPSolver,
+        "cbs": CBSSolver,
     }
     
     @classmethod

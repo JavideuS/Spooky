@@ -42,6 +42,8 @@ class ILPSolver(BaseSolver):
             num_reads=num_reads,
             max_corrections=max_corrections,
             verbose_level=verbose_level,
+            pyomo_solver_name=pyomo_solver_name,
+            time_limit=time_limit,  # forwarded so to_dict()/the manifest records it too
             **kwargs,
         )
         self.pyomo_solver_name = pyomo_solver_name

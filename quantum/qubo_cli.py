@@ -41,7 +41,10 @@ from pennylane import numpy as np
 from quantum.solvers import SolverFactory
 from quantum.pathFormulation import PathfindingProblem
 import quantum.config.parser as config_parser
-from quantum.builder import QUBOBuilder, GraphQUBO, GridILPBuilder, GraphILPBuilder
+from quantum.builder import (
+    QUBOBuilder, GraphQUBO, GridILPBuilder, GraphILPBuilder,
+    GridCBSBuilder, GraphCBSBuilder,
+)
 import quantum.benchmark.benchmark as bm_module
 from quantum.utils.logger import set_verbose_level, get_logger
 from quantum.utils.paths import clip_path_at_goal
@@ -222,7 +225,7 @@ def build_parser() -> argparse.ArgumentParser:
     sol.add_argument(
         "--solver",
         "-s",
-        choices=["dwave", "pennylane", "qiskit_remote", "qiskit_iqm", "ilp"],
+        choices=["dwave", "pennylane", "qiskit_remote", "qiskit_iqm", "ilp", "cbs"],
         default="dwave",
         help="Solver backend (default: dwave)",
     )
@@ -273,9 +276,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=30,
         metavar="SECONDS",
         help=(
-            "Solver time limit in seconds (only used with --solver ilp). "
-            "HiGHS returns its best incumbent found so far if the limit is "
-            "hit before proving optimality. Default: 30."
+            "Solver time limit in seconds (--solver ilp or cbs). ILP/HiGHS "
+            "returns its best incumbent found so far if the limit is hit "
+            "before proving optimality; CBS returns its best incumbent "
+            "found in its constraint-tree search so far. Default: 30."
+        ),
+    )
+    sol.add_argument(
+        "--node-limit",
+        type=int,
+        default=5000,
+        metavar="N",
+        help=(
+            "Max constraint-tree nodes CBS will expand (only used with "
+            "--solver cbs) — a second safety cap alongside --time-limit, "
+            "whichever is hit first stops the search. Default: 5000."
         ),
     )
 
@@ -290,6 +305,17 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "PennyLane device string, e.g. 'lightning.gpu', 'lightning.qubit', "
             "'qiskit.remote' (default: lightning.gpu)"
+        ),
+    )
+    pl.add_argument(
+        "--threads",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "CPU thread count for lightning.qubit's OpenMP backend "
+            "(default.qubit/lightning.gpu unaffected). Default: unset, uses "
+            "every available core (OpenMP's own default)."
         ),
     )
     pl.add_argument(
@@ -561,6 +587,7 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
             params=init_params,
             verbose_level=verbose_level,
             machine=args.machine,
+            threads=args.threads,
         )
 
     elif args.solver == "qiskit_remote":
@@ -650,6 +677,17 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
         return SolverFactory.create_solver(
             solver="ilp",
             pyomo_solver_name=args.pyomo_solver,
+            time_limit=args.time_limit,
+        )
+
+    elif args.solver == "cbs":
+        logger.minimal(
+            f"Creating CBS solver (node_limit={args.node_limit}, "
+            f"time_limit={args.time_limit}s)"
+        )
+        return SolverFactory.create_solver(
+            solver="cbs",
+            node_limit=args.node_limit,
             time_limit=args.time_limit,
         )
 
@@ -778,6 +816,15 @@ def main():
         else:  # graph
             p = problem.as_graph_only()
             builder = GraphILPBuilder(p, name=args.problem, verbose_level=verbose_level)
+    elif args.solver == "cbs":
+        # CBS has no penalty weights, var_limit, or windowing either — same
+        # reasoning as ILP above.
+        if args.builder == "grid":
+            p = problem.as_grid_only()
+            builder = GridCBSBuilder(p, name=args.problem, verbose_level=verbose_level)
+        else:  # graph
+            p = problem.as_graph_only()
+            builder = GraphCBSBuilder(p, name=args.problem, verbose_level=verbose_level)
     elif args.builder == "grid":
         p = problem.as_grid_only()
         builder_kwargs["distance_scaling"] = args.distance_scaling
