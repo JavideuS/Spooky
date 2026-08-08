@@ -1,5 +1,6 @@
 from pathlib import Path
 from datetime import datetime
+import heapq
 import json
 import time
 from quantum.utils.validation import is_valid_move, get_position_representation
@@ -175,6 +176,10 @@ class BenchmarkRunner:
 
                 result["validation_details"] = validation_details
 
+                result["solution_statistics"] = _compute_solution_statistics(
+                    self.problem, robot_paths, validation_details, validation["valid"]
+                )
+
                 # Also store per-window energies for analysis
                 if isinstance(solution["energy"], list):
                     result["window_energies"] = solution["energy"]
@@ -233,6 +238,115 @@ _FIX_MECHANISM_LABELS = {
     "diag": "diag_fixing",
     "locked_inactive": "goal_lock",
 }
+
+
+def _graph_shortest_distance(graph, start_node, goal_node):
+    """Dijkstra shortest-path distance between two node indices over a
+    quantum.map.Graph's adjacency (node -> set of (neighbor, weight)).
+
+    Used as the "optimal length" baseline for graph-problem path
+    efficiency — abs(goal_node - start_node) only means anything if node
+    IDs happen to be laid out linearly along the path, which isn't true
+    for a real graph topology."""
+    if start_node == goal_node:
+        return 0.0
+    best = {start_node: 0.0}
+    visited = set()
+    heap = [(0.0, start_node)]
+    while heap:
+        dist, node = heapq.heappop(heap)
+        if node in visited:
+            continue
+        visited.add(node)
+        if node == goal_node:
+            return dist
+        for neighbor, weight in graph.adjacency.get(node, ()):
+            new_dist = dist + weight
+            if new_dist < best.get(neighbor, float("inf")):
+                best[neighbor] = new_dist
+                heapq.heappush(heap, (new_dist, neighbor))
+    return float("inf")  # goal unreachable from start
+
+
+def _compute_solution_statistics(problem, robot_paths, validation_details, overall_valid):
+    """
+    Per-robot and aggregate path-quality statistics for one run: path
+    length, whether the goal was reached, and path efficiency (optimal
+    length / moves actually taken). Complements is_solution_valid()'s
+    pass/fail check with a continuous quality measure.
+
+    robot_paths: {robot_id: [(i, j, t), ...]} as stored on
+        problem.robots[...].path. path[0] is always the robot's start
+        position (decode_path() includes it), so "moves taken" is
+        len(path) - 1, not len(path) — dividing optimal_length (a move
+        count) by len(path) directly undercounts efficiency by one step
+        for every real path.
+    validation_details: is_solution_valid()'s per-robot {"robot_N": {...}}
+        entries. Only present for robots is_solution_valid actually
+        reached (it returns early on the first individually-invalid
+        robot) — overall_valid is the fallback for any robot it didn't
+        get to.
+    """
+    robot_ids = list(problem.robots.keys())
+    stats = {"total_robots": problem.num_robots, "robot_statistics": {}}
+
+    successful = 0
+    for robot_num, robot_id in enumerate(robot_ids):
+        robot = problem.robots[robot_id]
+        path = robot_paths.get(robot_id, [])
+        detail = validation_details.get(f"robot_{robot_num}")
+        robot_valid = detail["valid"] if detail is not None else overall_valid
+        successful += int(robot_valid)
+
+        moves_taken = max(0, len(path) - 1)
+        robot_stats = {
+            "path_length": len(path),
+            "moves_taken": moves_taken,
+            "goal_reached": robot.is_at_goal(),
+            "validation_passed": robot_valid,
+            "priority": robot.priority,
+            "start_time": robot.start_time,
+            "time_horizon": robot.T,
+        }
+
+        if problem.grid is not None:
+            optimal_length = problem.manhattan_distance(robot.start, robot.goal)
+        elif isinstance(robot.start, int) and isinstance(robot.goal, int):
+            optimal_length = _graph_shortest_distance(
+                problem.graph, robot.start, robot.goal
+            )
+        else:
+            optimal_length = problem.euclidean_distance(robot.start, robot.goal)
+        robot_stats["optimal_path_length"] = optimal_length
+
+        if optimal_length == 0:
+            robot_stats["path_efficiency"] = 1.0  # already at goal
+        elif moves_taken > 0:
+            robot_stats["path_efficiency"] = optimal_length / moves_taken
+        else:
+            robot_stats["path_efficiency"] = 0.0  # never moved but should have
+
+        stats["robot_statistics"][robot_id] = robot_stats
+
+    stats["successful_robots"] = successful
+    stats["success_rate"] = (
+        successful / problem.num_robots if problem.num_robots else 0.0
+    )
+
+    if problem.num_robots > 1:
+        lengths = [s["path_length"] for s in stats["robot_statistics"].values()]
+        efficiencies = [
+            s["path_efficiency"] for s in stats["robot_statistics"].values()
+        ]
+        stats["aggregate"] = {
+            "total_path_length": sum(lengths),
+            "avg_path_length": sum(lengths) / len(lengths),
+            "max_path_length": max(lengths),
+            "min_path_length": min(lengths),
+            "avg_efficiency": sum(efficiencies) / len(efficiencies),
+        }
+
+    return stats
 
 
 def _attribute_invalid_cause(validation, forced_collisions):

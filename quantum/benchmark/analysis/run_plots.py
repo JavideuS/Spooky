@@ -20,10 +20,16 @@ def main():
         "--runs-csv", default=None,
         help="Defaults to <sweep-dir>/analysis/runs_long.csv (run_aggregate.py first).",
     )
+    parser.add_argument(
+        "--robot-csv", default=None,
+        help="Defaults to <sweep-dir>/analysis/robot_statistics_long.csv; "
+        "missing file just skips the path-efficiency plot.",
+    )
     parser.add_argument("--output-dir", default=None, help="Defaults to <sweep-dir>/analysis/plots/.")
     args = parser.parse_args()
 
     csv_path = args.runs_csv or f"{args.sweep_dir}/analysis/runs_long.csv"
+    robot_csv_path = args.robot_csv or f"{args.sweep_dir}/analysis/robot_statistics_long.csv"
     output_dir = args.output_dir or f"{args.sweep_dir}/analysis/plots"
 
     try:
@@ -32,7 +38,12 @@ def main():
         print(f"[plots] {csv_path} not found — run quantum.benchmark.analysis.run_aggregate first.", file=sys.stderr)
         sys.exit(1)
 
-    figs = generate_all_plots(df, output_dir=output_dir)
+    try:
+        robot_df = pd.read_csv(robot_csv_path)
+    except FileNotFoundError:
+        robot_df = None
+
+    figs = generate_all_plots(df, output_dir=output_dir, robot_df=robot_df)
     print(f"[plots] generated {len(figs)} plots in {output_dir}")
 
 

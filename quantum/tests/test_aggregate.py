@@ -14,6 +14,7 @@ import pytest
 from quantum.benchmark.analysis.aggregate import (
     compute_optimality_gap,
     compute_success_rate,
+    load_robot_statistics,
     load_sweep,
     run_statistical_tests,
 )
@@ -46,19 +47,37 @@ def synthetic_sweep(tmp_path):
     sweep_dir = tmp_path / "sweep_test"
     sweep_dir.mkdir()
 
+    def _robot_stats(efficiency):
+        return {
+            "total_robots": 1,
+            "robot_statistics": {
+                "r0": {
+                    "path_length": 5, "moves_taken": 4, "optimal_path_length": 4.0,
+                    "path_efficiency": efficiency, "goal_reached": True,
+                    "validation_passed": True, "priority": 1.0,
+                }
+            },
+            "successful_robots": 1, "success_rate": 1.0,
+        }
+
     ilp_json = sweep_dir / "instA__p1__ilp_ref" / "benchmark_1.json"
     _write_benchmark_json(
         ilp_json, "instA_p1", num_robots=1,
         runs=[{"run_id": 1, "valid": True, "energy": 10.0, "execution_time_sec": 1.0,
-               "termination_condition": "optimal"}],
+               "termination_condition": "optimal", "solution_statistics": _robot_stats(1.0)}],
     )
 
     test_json = sweep_dir / "instA__p1__test_solver" / "benchmark_1.json"
     _write_benchmark_json(
         test_json, "instA_p1", num_robots=1,
         runs=[
-            {"run_id": 1, "valid": True, "energy": 10.0, "execution_time_sec": 2.0},
-            {"run_id": 2, "valid": True, "energy": 12.0, "execution_time_sec": 3.0},
+            {"run_id": 1, "valid": True, "energy": 10.0, "execution_time_sec": 2.0,
+             "solution_statistics": _robot_stats(0.8)},
+            {"run_id": 2, "valid": True, "energy": 12.0, "execution_time_sec": 3.0,
+             "solution_statistics": _robot_stats(0.6)},
+            # run_id=3 deliberately has NO solution_statistics key, simulating a
+            # BenchmarkRunner level<2 run — load_sweep/load_robot_statistics must
+            # degrade gracefully (None columns / no robot rows), not KeyError.
             {"run_id": 3, "valid": False, "energy": 99.0, "execution_time_sec": 0.1},
         ],
     )
@@ -86,6 +105,33 @@ def test_load_sweep_schema(synthetic_sweep):
         "preprocess", "valid", "energy", "execution_time_sec", "termination_condition",
     }
     assert (df["num_robots"] == 1).all()
+
+
+def test_load_sweep_path_efficiency_columns(synthetic_sweep):
+    df = load_sweep(synthetic_sweep)
+    ilp_row = df[df["solver_name"] == "ilp_ref"].iloc[0]
+    assert ilp_row["avg_path_efficiency"] == pytest.approx(1.0)
+    assert ilp_row["min_path_efficiency"] == pytest.approx(1.0)
+    assert ilp_row["robot_success_rate"] == pytest.approx(1.0)
+
+    test_rows = df[df["solver_name"] == "test_solver"].sort_values("run_id")
+    assert test_rows.iloc[0]["avg_path_efficiency"] == pytest.approx(0.8)
+    assert test_rows.iloc[1]["avg_path_efficiency"] == pytest.approx(0.6)
+    # run_id=3 has no solution_statistics at all -> NaN, not a crash/0.0
+    assert pd.isna(test_rows.iloc[2]["avg_path_efficiency"])
+
+
+def test_load_robot_statistics_schema_and_missing_data(synthetic_sweep):
+    df = load_robot_statistics(synthetic_sweep)
+    # 1 ilp_ref robot-run + 2 test_solver robot-runs (run_id=3 contributes none)
+    assert len(df) == 3
+    assert set(df.columns) >= {
+        "instance_map", "problem_name", "solver_name", "run_id", "robot_id",
+        "path_length", "path_efficiency", "validation_passed",
+    }
+    test_rows = df[df["solver_name"] == "test_solver"].sort_values("run_id")
+    assert list(test_rows["path_efficiency"]) == pytest.approx([0.8, 0.6])
+    assert set(test_rows["run_id"]) == {1, 2}  # confirms run_id=3 is absent
 
 
 def test_optimality_gap_uses_only_proven_optimal_reference(synthetic_sweep):

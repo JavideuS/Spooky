@@ -39,7 +39,9 @@ def main():
     print(f"[report] aggregated {len(tables['runs_long'])} runs")
 
     plots_dir = f"{args.sweep_dir}/analysis/plots"
-    figs = generate_all_plots(tables["runs_long"], output_dir=plots_dir)
+    figs = generate_all_plots(
+        tables["runs_long"], output_dir=plots_dir, robot_df=tables["robot_statistics_long"]
+    )
     print(f"[report] generated {len(figs)} plots in {plots_dir}")
 
     table_path = f"{args.sweep_dir}/analysis/benchmark_table.tex"

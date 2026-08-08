@@ -252,6 +252,54 @@ def plot_optimality_gap(
     return fig
 
 
+def plot_path_efficiency(
+    df: pd.DataFrame, output_dir: Optional[str] = None, boxpoints: str = "all"
+) -> go.Figure:
+    """Per-robot path efficiency (optimal length / moves actually taken —
+    see quantum.benchmark.benchmark._compute_solution_statistics), one box
+    per solver. df should be aggregate.load_robot_statistics()'s per-robot
+    table, not runs_long (which only has the avg/min-per-run summary
+    columns) — this plot wants the full per-robot distribution.
+
+    Only validation_passed==True robots are plotted: efficiency computed
+    off an invalid path (crashed into another robot, etc.) isn't a
+    meaningful quality measure, same reasoning as plot_optimality_gap's
+    valid-only filter."""
+    valid = df[df["validation_passed"] & df["path_efficiency"].notna()]
+    colors = _solver_colors(valid["solver_name"])
+
+    fig = go.Figure()
+    for solver_name, group in valid.groupby("solver_name"):
+        fig.add_trace(
+            go.Box(
+                y=group["path_efficiency"],
+                name=solver_name,
+                marker=dict(color=colors[solver_name], size=5, opacity=0.6),
+                line=dict(color=colors[solver_name]),
+                boxpoints=boxpoints,
+                jitter=0.4,
+                pointpos=-1.8,
+                hovertemplate=f"{solver_name}<br>efficiency=%{{y:.1%}}<extra></extra>",
+            )
+        )
+    fig.add_hline(
+        y=1.0,
+        line=dict(color="#555555", dash="dash", width=1.2),
+        annotation_text="Optimal (100%)",
+        annotation_position="bottom right",
+        annotation_font=dict(size=11, color="#555555"),
+    )
+    fig.update_layout(
+        **_LAYOUT_THEME,
+        title="Per-robot path efficiency (optimal length / moves taken)",
+        xaxis=dict(**_AXIS_THEME, title="Solver"),
+        yaxis=dict(**_AXIS_THEME, title="Path efficiency", tickformat=".0%"),
+    )
+    if output_dir:
+        _save(fig, output_dir, "path_efficiency")
+    return fig
+
+
 def plot_variable_reduction(df: pd.DataFrame, output_dir: Optional[str] = None) -> go.Figure:
     summary = (
         df[df["preprocess"] & df["average_reduction_ratio"].notna()]
@@ -297,10 +345,15 @@ def plot_variable_reduction(df: pd.DataFrame, output_dir: Optional[str] = None) 
     return fig
 
 
-def generate_all_plots(df: pd.DataFrame, output_dir: str) -> Dict[str, go.Figure]:
+def generate_all_plots(
+    df: pd.DataFrame, output_dir: str, robot_df: Optional[pd.DataFrame] = None
+) -> Dict[str, go.Figure]:
     """df should be aggregate.aggregate_sweep()'s runs_long (already has
     optimality_gap) for the full set of plots; plot_optimality_gap is
-    skipped gracefully if that column is missing."""
+    skipped gracefully if that column is missing. robot_df is
+    aggregate_sweep()'s robot_statistics_long — plot_path_efficiency is
+    skipped gracefully if it's None or empty (e.g. sweep run at
+    BenchmarkRunner level<2, which never records per-robot statistics)."""
     figs = {
         "scaling": plot_scaling(df, output_dir=output_dir),
         "success_rate": plot_success_rate_bars(df, output_dir=output_dir),
@@ -308,4 +361,6 @@ def generate_all_plots(df: pd.DataFrame, output_dir: str) -> Dict[str, go.Figure
     }
     if "optimality_gap" in df.columns:
         figs["optimality_gap"] = plot_optimality_gap(df, output_dir=output_dir)
+    if robot_df is not None and not robot_df.empty:
+        figs["path_efficiency"] = plot_path_efficiency(robot_df, output_dir=output_dir)
     return figs
