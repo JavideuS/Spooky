@@ -21,11 +21,13 @@ COPY pyproject.toml README.md ./
 COPY quantum/ ./quantum/
 COPY fastapi_app/ ./fastapi_app/
 
-# Core install (numpy/h5py/pennylane/pyyaml) + fastapi extra + the two
+# Core install (numpy/h5py/pennylane/pyyaml) + fastapi extra + the
 # lightweight extras the API actually imports at startup: dimod (classical
-# D-Wave solver, no dwave-system/cloud client needed) and plotly
-# (quantum/visualizer.py, imported unconditionally by api.py).
-RUN pip install -e ".[fastapi, dwave, visualizer]"
+# D-Wave solver, no dwave-system/cloud client needed), plotly
+# (quantum/visualizer.py, imported unconditionally by api.py), and
+# pyomo/highspy (quantum/builder/ILPBuilder.py, imported unconditionally by
+# quantum/builder/__init__.py — the ILP solver).
+RUN pip install -e ".[fastapi, dwave, visualizer, classical]"
 
 # Regenerating maps
 RUN python quantum/maps/generate_all_maps.py
