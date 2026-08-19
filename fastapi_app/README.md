@@ -36,6 +36,25 @@ uvicorn api:app --reload
 whatever the container serves at `/`) — this app is a backend/demo service
 without its own landing page, so `/demo` is the closest thing to one.
 
+### Logging & debugging
+
+Any request that fails (4xx/5xx) is logged to the console with its method,
+path, status, and JSON body — so a bad request or a 500 is diagnosable from
+the server console alone, not just from what the client prints. 500s also log
+a full traceback.
+
+Set `SPOOKY_DEBUG=1` to log every JSON request, success included — useful for
+watching live traffic during development (e.g. confirming `/demo` or an
+external caller is sending what you expect):
+
+```bash
+SPOOKY_DEBUG=1 uvicorn api:app --reload
+```
+
+Off by default: it buffers every request body and puts payloads in server
+logs. Multipart map uploads are never buffered by this logging, regardless of
+the setting — only `application/json` bodies are captured.
+
 ### Docker
 
 ```bash

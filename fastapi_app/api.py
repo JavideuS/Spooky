@@ -1,9 +1,11 @@
-from fastapi import FastAPI, UploadFile, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import FastAPI, UploadFile, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 import json
+import logging
 import uvicorn
 import quantum.config.hdf5parser as h5parser
 import quantum.config.parser as config_parser
@@ -32,7 +34,18 @@ from config_api import (
 )
 from typing import Dict, Optional
 import datetime
+import os
 import time
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+)
+logger = logging.getLogger("spooky.api")
+
+# SPOOKY_DEBUG=1 logs every JSON request (method/path/body), not just failed
+# ones — useful to see live traffic during development. Off by default: it
+# buffers every request body and can put payloads in server logs.
+DEBUG_MODE = os.environ.get("SPOOKY_DEBUG", "").lower() in ("1", "true", "yes")
 
 # This app's own assets (config/, web/), addressed relative to this file so
 # uvicorn can be launched from any directory. Library-owned data (penalty sets,
@@ -114,6 +127,73 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """
+    Print method/path/body for JSON requests, so they're diagnosable from the
+    server console alone instead of only from whatever the client chose to
+    print of the response. Failed requests (4xx/5xx) always log; with
+    SPOOKY_DEBUG=1 (DEBUG_MODE) every request logs, success included — handy
+    for watching live traffic during development.
+
+    Only buffers JSON bodies. request.body() drains and caches the whole ASGI
+    stream on the Request object — downstream JSON parsing still works from
+    that cache, but doing this on a multipart upload (map file endpoints) would
+    force the entire file into memory ahead of the streaming multipart parser,
+    and then get logged as decoded-with-replace binary garbage.
+    """
+    body = b""
+    if request.method in ("POST", "PUT", "PATCH") and request.headers.get(
+        "content-type", ""
+    ).startswith("application/json"):
+        body = await request.body()  # cached on the request; downstream reads still work
+    response = await call_next(request)
+    if DEBUG_MODE or response.status_code >= 400:
+        log = logger.info if response.status_code < 400 else logger.warning
+        log(
+            "%s %s -> %s | body=%s",
+            request.method,
+            request.url.path,
+            response.status_code,
+            body.decode("utf-8", errors="replace")[:2000] if body else "<empty>",
+        )
+    return response
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """
+    FastAPI's default 422 handler returns error details in the response body
+    but logs nothing — so a malformed request looks silent in the console.
+    Log the offending body alongside the field errors here.
+    """
+    body = await request.body()
+    logger.warning(
+        "Validation error on %s %s: %s | body=%s",
+        request.method,
+        request.url.path,
+        exc.errors(),
+        body.decode("utf-8", errors="replace")[:2000] if body else "<empty>",
+    )
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """
+    Safety net for any exception not already caught and wrapped in an
+    HTTPException by the route itself — logs the full traceback server-side
+    (exc_info=True) and returns the exception type + message to the client,
+    instead of a bare 'Internal Server Error'.
+    """
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"{type(exc).__name__}: {exc}"},
+    )
+
+
 DEMO_HTML_PATH = APP_ROOT / "web" / "demo.html"
 
 
@@ -182,7 +262,10 @@ async def upload_map(
         return {"status": "map_uploaded", "map_id": map_id}
 
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Map loading failed: {str(e)}")
+        logger.exception("Map upload failed for robot_id=%s map_id=%s", robot_id, map_id)
+        raise HTTPException(
+            status_code=400, detail=f"Map loading failed: {type(e).__name__}: {e}"
+        )
 
 
 @app.get("/robots/{robot_id}/maps", response_model=RobotMapsResponse)
@@ -395,7 +478,11 @@ def plan_path(robot_id: str, request: PlanRequest):
 
         return response
     except Exception as e:
-        raise HTTPException(500, f"Planning failed: {str(e)}")
+        logger.exception(
+            "Planning failed for robot_id=%s map_id=%s request=%s",
+            robot_id, request.map_id, request.model_dump(),
+        )
+        raise HTTPException(500, f"Planning failed: {type(e).__name__}: {e}")
 
 
 # STATELESS PLANNER (v1) — no per-robot session, maps/solvers already in memory
@@ -494,7 +581,10 @@ async def upload_registered_map(
         )
 
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Map loading failed: {str(e)}")
+        logger.exception("Map registration failed for map_id=%s", map_id)
+        raise HTTPException(
+            status_code=400, detail=f"Map loading failed: {type(e).__name__}: {e}"
+        )
 
 
 @app.post("/v1/plan", response_model=StatelessPlanResponse)
@@ -665,7 +755,11 @@ def plan_stateless(request: StatelessPlanRequest):
 
         return response
     except Exception as e:
-        raise HTTPException(500, f"Planning failed: {str(e)}")
+        logger.exception(
+            "Planning failed for map_id=%s solver=%s request=%s",
+            request.map_id, request.solver, request.model_dump(),
+        )
+        raise HTTPException(500, f"Planning failed: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":
