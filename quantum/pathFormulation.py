@@ -31,13 +31,15 @@ class PathfindingProblem:
         # (builders, solvers, adjacency checks) only ever sees matrix coordinates.
         num_rows = self.grid.M if self.grid is not None else None
         for robot in self.robots.values():
-            if robot.coordinate_format == "cartesian" and num_rows is None:
+            if robot.coordinate_format in ("cartesian", "world") and num_rows is None:
                 raise ValueError(
-                    f"Robot '{robot.robot_id}' uses coordinate_format='cartesian' but "
-                    f"this problem has no grid to derive a row count from — cartesian "
-                    f"conversion requires a grid."
+                    f"Robot '{robot.robot_id}' uses coordinate_format='{robot.coordinate_format}' "
+                    f"but this problem has no grid to derive a row count from — "
+                    f"{robot.coordinate_format} conversion requires a grid."
                 )
-            robot.resolve_coordinates(num_rows)
+            origin = self.grid.origin if self.grid is not None else None
+            resolution = self.grid.resolution if self.grid is not None else None
+            robot.resolve_coordinates(num_rows, origin=origin, resolution=resolution)
 
         if T is None:
             T = self.calculate_timeline()

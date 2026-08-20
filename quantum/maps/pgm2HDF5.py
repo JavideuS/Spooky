@@ -19,6 +19,7 @@ import yaml
 from PIL import Image
 
 from quantum.maps.yaml2HDF5 import grid_to_graph_edges
+from quantum.utils.coordinates import world_to_grid_cell, grid_cell_to_world
 
 # Standard map_server/map_saver defaults (see ROS wiki: map_server).
 DEFAULT_OCCUPIED_THRESH = 0.65
@@ -134,10 +135,169 @@ def upsample_occupancy(occupancy, factor):
     return np.repeat(np.repeat(occupancy, factor, axis=0), factor, axis=1)
 
 
+def _load_geo_meta(h5_source):
+    """Accept either an .h5 path (opened here) or a pre-loaded (M, origin, resolution) tuple."""
+    if isinstance(h5_source, tuple):
+        return h5_source
+    with h5py.File(h5_source, "r") as f:
+        M = f["map_structure"].shape[0]
+        origin = tuple(f.attrs["origin"])
+        resolution = float(f.attrs["resolution"])
+    return M, origin, resolution
+
+
+def world_to_grid(x, y, h5_source):
+    """
+    Convert a world-frame point (meters, ROS "map" frame) into the (row, col)
+    grid cell of an .h5 map produced by `generate_map_from_pgm`. Thin
+    file-I/O wrapper around `quantum.utils.coordinates.world_to_grid_cell` --
+    see that function for the actual math and conventions.
+    """
+    M, origin, resolution = _load_geo_meta(h5_source)
+    return world_to_grid_cell(x, y, M, origin, resolution)
+
+
+def grid_to_world(row, col, h5_source):
+    """
+    Inverse of `world_to_grid`. Thin file-I/O wrapper around
+    `quantum.utils.coordinates.grid_cell_to_world`.
+    """
+    M, origin, resolution = _load_geo_meta(h5_source)
+    return grid_cell_to_world(row, col, M, origin, resolution)
+
+
+def load_waypoints_yaml(path):
+    """
+    Load named world-frame points of interest from a companion YAML:
+
+        waypoints:
+          origin: [0.0, 0.0, 0.0]     # x, y, yaw(optional, default 0)
+          dock_1: [3.2, -1.5]
+          inspection_zone_a: [-4.0, 2.0]
+
+    These are map-level landmarks (docks, charging stations, inspection
+    zones, ...) -- not a robot's start/goal, which is per-problem data that
+    stays in the sibling problems YAML instead.
+    """
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    return data.get("waypoints", {})
+
+
+def _normalize_waypoints(waypoints):
+    """dict name -> [x, y] or [x, y, yaw] --> name -> (x, y, yaw) with yaw defaulted to 0.0."""
+    normalized = {}
+    for name, point in waypoints.items():
+        point = list(point)
+        if len(point) == 2:
+            point.append(0.0)
+        elif len(point) != 3:
+            raise ValueError(f"Waypoint {name!r} must be [x, y] or [x, y, yaw], got {point}")
+        normalized[name] = (float(point[0]), float(point[1]), float(point[2]))
+    return normalized
+
+
+def read_waypoints(h5_source):
+    """
+    Read the named waypoints stored by `generate_map_from_pgm`/`add_waypoints`
+    back out of an .h5, as {name: {"world": (x, y, yaw), "grid": (row, col)}}.
+    """
+    with h5py.File(h5_source, "r") as f:
+        if "waypoints" not in f:
+            return {}
+        world_grp = f["waypoints/world"]
+        grid_grp = f["waypoints/grid"]
+        return {
+            name: {
+                "world": tuple(world_grp[name][:]),
+                "grid": tuple(int(v) for v in grid_grp[name][:]),
+            }
+            for name in world_grp.keys()
+        }
+
+
+def _resolve_waypoints_input(waypoints, waypoints_path, default_waypoints_path):
+    """
+    Shared merge logic for `generate_map_from_pgm`/`add_waypoints`: an
+    explicit `waypoints_path` file, else `default_waypoints_path` if it
+    exists, merged with an explicit `waypoints` dict (which wins on a name
+    collision). Returns name -> (x, y, yaw).
+    """
+    resolved = {}
+    if waypoints_path is not None:
+        resolved.update(load_waypoints_yaml(waypoints_path))
+    elif default_waypoints_path.exists():
+        resolved.update(load_waypoints_yaml(default_waypoints_path))
+    if waypoints is not None:
+        resolved.update(waypoints)
+    return _normalize_waypoints(resolved)
+
+
+def _compute_waypoint_cells(resolved_waypoints, M, origin, resolution):
+    """name -> (x, y, yaw) --> name -> (row, col), with the offending name in any ValueError."""
+    cells = {}
+    for wp_name, (wx, wy, wyaw) in resolved_waypoints.items():
+        try:
+            cells[wp_name] = world_to_grid_cell(wx, wy, M, origin, resolution)
+        except ValueError as e:
+            raise ValueError(f"Waypoint {wp_name!r}: {e}") from e
+    return cells
+
+
+def add_waypoints(h5_path, waypoints=None, waypoints_path=None, overwrite=False):
+    """
+    Add named waypoints to an existing .h5 written by `generate_map_from_pgm`,
+    without reconstructing the map. A waypoint's grid cell only depends on
+    the map's `origin`/`resolution`/row count, which are already stored in
+    the file, so this just opens it in append mode -- `map_structure` and
+    `graph` are never touched.
+
+    `overwrite=False` (default) raises if any name in `waypoints`/
+    `waypoints_path` already exists in the file; pass `overwrite=True` to
+    replace those entries instead.
+    """
+    h5_path = Path(h5_path)
+
+    with h5py.File(h5_path, "a") as f:
+        if "map_structure" not in f:
+            raise ValueError(f"{h5_path} has no map_structure -- is this a Spooky map .h5?")
+
+        M = f["map_structure"].shape[0]
+        origin = tuple(f.attrs["origin"])
+        resolution = float(f.attrs["resolution"])
+
+        default_waypoints_path = h5_path.with_name(f"{h5_path.stem}_waypoints.yaml")
+        resolved = _resolve_waypoints_input(waypoints, waypoints_path, default_waypoints_path)
+        if not resolved:
+            return {}
+
+        world_grp = f.require_group("waypoints/world")
+        grid_grp = f.require_group("waypoints/grid")
+
+        collisions = [name for name in resolved if name in world_grp]
+        if collisions and not overwrite:
+            raise ValueError(
+                f"Waypoint name(s) already exist in {h5_path}: {collisions} "
+                f"-- pass overwrite=True to replace them"
+            )
+
+        cells = _compute_waypoint_cells(resolved, M, origin, resolution)
+        for wp_name, world_point in resolved.items():
+            if wp_name in world_grp:
+                del world_grp[wp_name]
+                del grid_grp[wp_name]
+            world_grp.create_dataset(wp_name, data=np.array(world_point, dtype=np.float64))
+            grid_grp.create_dataset(wp_name, data=np.array(cells[wp_name], dtype=np.int32))
+
+    print(f"Added {len(resolved)} waypoint(s) to {h5_path}: {sorted(resolved)}")
+    return cells
+
+
 def generate_map_from_pgm(yaml_path, output_dir=None, map_name=None,
                            unknown_as_obstacle=True, connectivity=4,
                            downsample_factor=None, target_resolution=None,
-                           pool_mode="max", occupancy_threshold=0.2):
+                           pool_mode="max", occupancy_threshold=0.2,
+                           waypoints=None, waypoints_path=None):
     """
     Convert a ROS map_server/nav2 map (.yaml + .pgm/.png) into a Spooky .h5
     map, matching the layout `yaml2HDF5.generate_map_from_yaml` produces
@@ -149,6 +309,16 @@ def generate_map_from_pgm(yaml_path, output_dir=None, map_name=None,
     the factor is derived by rounding `target_resolution / source_resolution`)
     may be given, to coarsen the map down to a solver-feasible cell count.
     See `pool_occupancy` for why this is usually necessary for real maps.
+
+    `waypoints`: optional dict of name -> [x, y] / [x, y, yaw] world-frame
+    points (see `load_waypoints_yaml`). `waypoints_path`: optional companion
+    YAML to load more from. If neither is given, a sibling
+    `<yaml_stem>_waypoints.yaml` is loaded automatically if it exists. Both
+    sources are merged (explicit `waypoints` wins on a name collision); each
+    is stored in the output .h5 as both its original world-frame point and
+    its resolved (row, col) grid cell, since -- unlike a robot's start/goal,
+    which is per-problem and stays out of the map file -- these are static
+    landmarks that belong to the map itself.
     """
     if downsample_factor is not None and target_resolution is not None:
         raise ValueError("Pass only one of downsample_factor or target_resolution, not both")
@@ -159,6 +329,9 @@ def generate_map_from_pgm(yaml_path, output_dir=None, map_name=None,
     pgm_path = yaml_path.parent / meta["image"]
     if not pgm_path.exists():
         raise FileNotFoundError(f"Map image not found: {pgm_path}")
+
+    default_waypoints_path = yaml_path.with_name(f"{yaml_path.stem}_waypoints.yaml")
+    resolved_waypoints = _resolve_waypoints_input(waypoints, waypoints_path, default_waypoints_path)
 
     occupancy = pgm_to_occupancy(pgm_path, meta, unknown_as_obstacle=unknown_as_obstacle)
     source_resolution = float(meta.get("resolution", 1.0))
@@ -174,6 +347,8 @@ def generate_map_from_pgm(yaml_path, output_dir=None, map_name=None,
                                     occupancy_threshold=occupancy_threshold)
     resolution = source_resolution * factor
     M, N = occupancy.shape
+    map_origin = tuple(meta.get("origin", [0.0, 0.0, 0.0]))
+    waypoint_cells = _compute_waypoint_cells(resolved_waypoints, M, map_origin, resolution)
 
     nodes, edges = grid_to_graph_edges(occupancy, connectivity=connectivity)
 
@@ -206,10 +381,18 @@ def generate_map_from_pgm(yaml_path, output_dir=None, map_name=None,
         f.attrs["generated_from"] = os.path.relpath(str(pgm_path))
         f.attrs["generated_at"] = np.bytes_(str(np.datetime64("now")))
 
+        if resolved_waypoints:
+            world_grp = f.create_group("waypoints/world")
+            grid_grp = f.create_group("waypoints/grid")
+            for wp_name, world_point in resolved_waypoints.items():
+                world_grp.create_dataset(wp_name, data=np.array(world_point, dtype=np.float64))
+                grid_grp.create_dataset(wp_name, data=np.array(waypoint_cells[wp_name], dtype=np.int32))
+
     print(
         f"Generated: {h5_path}  ({M}x{N}, {int(occupancy.sum())} occupied cells, "
         f"{resolution:.3g} m/cell"
         + (f", downsampled {factor}x from {source_resolution:.3g} m/px)" if factor > 1 else ")")
+        + (f", {len(resolved_waypoints)} waypoint(s)" if resolved_waypoints else "")
     )
     return h5_path
 
@@ -244,6 +427,11 @@ def main():
         "--occupancy-threshold", type=float, default=0.2,
         help="Occupied-fraction cutoff used by --pool-mode threshold (default: 0.2)",
     )
+    parser.add_argument(
+        "--waypoints-file", default=None,
+        help="YAML of named world-frame points (see load_waypoints_yaml); "
+             "default: <yaml_stem>_waypoints.yaml alongside the map yaml, if it exists",
+    )
     args = parser.parse_args()
 
     generate_map_from_pgm(
@@ -256,6 +444,7 @@ def main():
         target_resolution=args.target_resolution,
         pool_mode=args.pool_mode,
         occupancy_threshold=args.occupancy_threshold,
+        waypoints_path=args.waypoints_file,
     )
 
 

@@ -41,12 +41,13 @@ class MapUploadResponse(BaseModel):
 # Stateless planning (multi-robot capable)
 class RobotSpec(BaseModel):
     id: Optional[str] = None        # auto-assigned ("robot_0", ...) if omitted
-    start: list[int]
-    goal: list[int]
+    start: list[float]              # int cells for "matrix"/"cartesian"; real meters for "world"
+    goal: list[float]
     start_time: int = 0
     priority: float = 1.0
     safety_radius: float = 0.5
-    coordinate_format: str = "matrix"  # "matrix" (row, col) or "cartesian" (x, y robotics/Y-up);
+    coordinate_format: str = "matrix"  # "matrix" (row, col), "cartesian" (x, y robotics/Y-up),
+    # or "world" (real-world x, y meters in the map's frame — see quantum/maps/pgm2HDF5.py);
     # applies to this robot's start/goal, and its returned path is formatted the same way
 
 
@@ -81,7 +82,7 @@ class StatelessPlanRequest(BaseModel):
 
 class RobotPathResult(BaseModel):
     robot_id: str
-    path: List[List[int]]           # ordered by timestep, in coordinate_format below
+    path: List[List[float]]         # ordered by timestep, in coordinate_format below
     coordinate_format: str = "matrix"  # convention this robot's start/goal/path used
 
 
@@ -98,16 +99,17 @@ class StatelessPlanResponse(BaseModel):
 # Stateful (per-robot) planning
 class PlanRequest(BaseModel):
     map_id: str
-    start: list[int]
-    goal:  list[int]
+    start: list[float]              # int cells for "matrix"/"cartesian"; real meters for "world"
+    goal:  list[float]
     solver: Optional[str] = None  # if None → use robot's active_solver
     details: bool = False
-    coordinate_format: str = "matrix"  # "matrix" (row, col) or "cartesian" (x, y robotics/Y-up)
+    coordinate_format: str = "matrix"  # "matrix" (row, col), "cartesian" (x, y robotics/Y-up),
+    # or "world" (real-world x, y meters in the map's frame — see quantum/maps/pgm2HDF5.py)
     clip_at_goal: bool = False  # trim the returned path once parked at goal, keeping only the first arrival
 
 class PlanResponse(BaseModel):
     # ✅ Always present
-    path: List[List[int]]           # decoded path, in coordinate_format below
+    path: List[List[float]]         # decoded path, in coordinate_format below
     coordinate_format: str = "matrix"
     cost: float                     # best energy/cost
     # success: bool                   # did the solver succeed?

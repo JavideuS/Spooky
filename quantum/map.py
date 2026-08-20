@@ -3,7 +3,7 @@ import numpy as np
 
 class Grid:
     def __init__(self, M, N, obstacles=None, terrain=None, elevation=None,
-                 materials=None, materials_data=None, resolution=1.0, name="unnamed"):
+                 materials=None, materials_data=None, resolution=1.0, origin=None, name="unnamed"):
         self.M = M
         self.N = N
         self.moves = [(-1, 0), (1, 0), (0, -1), (0, 1)]  # 4-connectivity
@@ -16,6 +16,10 @@ class Grid:
         self.adjacency = self.build_adjacency()
         self.name = name
         self.resolution = resolution  # meters per grid cell
+        # World-frame pose (x, y, yaw) of grid cell [M-1, 0], from a ROS-imported
+        # map's origin (see quantum/maps/pgm2HDF5.py); (0, 0, 0) for a synthetic
+        # map with no real-world frame. Used by RobotConfig's "world" coordinate_format.
+        self.origin = tuple(origin) if origin is not None else (0.0, 0.0, 0.0)
 
     @classmethod
     def from_dict(cls, grid_dict):
@@ -50,7 +54,8 @@ class Grid:
         elevation_grid = map_data.get('elevation_grid')
         materials = map_data.get('materials', [])  # if you pass material list
         resolution = map_data.get('resolution', 1.0)
-        
+        origin = map_data.get('origin')
+
         return cls(
             M=M,
             N=N,
@@ -60,6 +65,7 @@ class Grid:
             materials=materials,
             materials_data=materials_data,
             resolution=resolution,
+            origin=origin,
             name=name or map_data.get('name', 'unnamed')
         )
     
@@ -72,6 +78,8 @@ class Grid:
             "N": self.N,
             "obstacles": self.obstacles,
             "adjacency": self.adjacency,
+            "resolution": self.resolution,
+            "origin": self.origin,
         }
 
     def build_adjacency(self):

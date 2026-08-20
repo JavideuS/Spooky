@@ -19,6 +19,7 @@ param for display. These functions are the primitives those call; use them
 directly for anything outside that path (e.g. converting a plain path list
 before handing it to a robotics stack that expects Y-up).
 """
+import math
 from typing import List, Sequence, Tuple
 
 
@@ -60,3 +61,57 @@ def flip_region_cartesian_to_matrix(
     r0, c0 = to_matrix_rc(start[0], start[1], num_rows)
     r1, c1 = to_matrix_rc(end[0], end[1], num_rows)
     return (min(r0, r1), min(c0, c1)), (max(r0, r1), max(c0, c1))
+
+
+def world_to_grid_cell(
+    x: float, y: float, num_rows: int, origin: Sequence[float], resolution: float
+) -> Tuple[int, int]:
+    """
+    Convert a world-frame point (meters, ROS "map" frame -- e.g. an AMCL pose,
+    an rviz-clicked goal, a waypoint from a semantic map) into a Spooky matrix
+    (row, col) grid cell.
+
+    `origin` is (x, y, yaw): the world pose of grid cell [num_rows-1, 0]
+    (bottom-left, ROS's OccupancyGrid index-0 convention) -- what a ROS map
+    .yaml's `origin` field, or an .h5 written by `quantum.maps.pgm2HDF5`,
+    already carries. `row` is Spooky's convention (row 0 = top), the
+    vertical mirror of ROS's bottom-up index.
+
+    Raises ValueError if the point falls outside the grid -- most likely
+    because it's outside the mapped area, not because of a bug here.
+    """
+    ox, oy, oyaw = origin
+    dx, dy = x - ox, y - oy
+    c, s = math.cos(oyaw), math.sin(oyaw)
+    local_x = dx * c + dy * s     # meters along the map's local +x (-> col)
+    local_y = -dx * s + dy * c    # meters along the map's local +y (-> row, from bottom)
+
+    col = int(math.floor(local_x / resolution))
+    row_from_bottom = int(math.floor(local_y / resolution))
+    row = num_rows - 1 - row_from_bottom
+
+    if not (0 <= row < num_rows) or col < 0:
+        raise ValueError(
+            f"World point ({x}, {y}) maps to grid cell (row={row}, col={col}), "
+            f"which is outside this map -- check it's actually within the mapped area"
+        )
+    return row, col
+
+
+def grid_cell_to_world(
+    row: int, col: int, num_rows: int, origin: Sequence[float], resolution: float
+) -> Tuple[float, float]:
+    """
+    Inverse of `world_to_grid_cell`: the world-frame (x, y) meters, map frame,
+    of the center of grid cell (row, col) -- e.g. to turn a decoded Spooky
+    path back into poses for a ROS controller.
+    """
+    ox, oy, oyaw = origin
+    row_from_bottom = num_rows - 1 - row
+    local_x = (col + 0.5) * resolution
+    local_y = (row_from_bottom + 0.5) * resolution
+
+    c, s = math.cos(oyaw), math.sin(oyaw)
+    x = ox + local_x * c - local_y * s
+    y = oy + local_x * s + local_y * c
+    return x, y

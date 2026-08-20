@@ -39,6 +39,7 @@ def load_map_from_hdf5(h5_source):
                 map_name = "unknown_map"
 
         resolution = f.attrs.get('resolution', 1.0)
+        origin = list(f.attrs.get('origin', [0.0, 0.0, 0.0]))
 
         # Load materials
         materials = []
@@ -53,6 +54,7 @@ def load_map_from_hdf5(h5_source):
                 'obstacles': obstacles
             },
             'resolution': resolution,
+            'origin': origin,
             'materials': materials
         }
 
@@ -125,14 +127,16 @@ def load_both_from_hdf5(h5_source):
                 map_name = "unknown_map"
 
         resolution = f.attrs.get('resolution', 1.0)
-        
+        origin = list(f.attrs.get('origin', [0.0, 0.0, 0.0]))
+
         # Check what data is available
         has_map = 'map_structure' in f
         has_graph = 'graph' in f
-        
+
         result = {
             'name': map_name,
             'resolution': resolution,
+            'origin': origin,
             'has_map': has_map,
             'has_graph': has_graph,
             'map_data': None,
@@ -163,6 +167,7 @@ def load_both_from_hdf5(h5_source):
                     'obstacles': obstacles
                 },
                 'resolution': resolution,
+                'origin': origin,
                 'materials': materials
             }
 

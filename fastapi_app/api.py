@@ -131,11 +131,13 @@ app = FastAPI(lifespan=lifespan)
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """
-    Print method/path/body for JSON requests, so they're diagnosable from the
-    server console alone instead of only from whatever the client chose to
-    print of the response. Failed requests (4xx/5xx) always log; with
-    SPOOKY_DEBUG=1 (DEBUG_MODE) every request logs, success included — handy
-    for watching live traffic during development.
+    Print method/path/body for JSON requests as they arrive — logged before
+    call_next, not after, so a request is visible in the console immediately
+    even while a long solve (QAOA, D-Wave) is still running, rather than only
+    once the response comes back. The completion line (status code) logs
+    separately once it's known: failures always, successes only in
+    SPOOKY_DEBUG=1 (DEBUG_MODE) — handy for watching live traffic during
+    development without a full solve's worth of silence in between.
 
     Only buffers JSON bodies. request.body() drains and caches the whole ASGI
     stream on the Request object — downstream JSON parsing still works from
@@ -143,21 +145,21 @@ async def log_requests(request: Request, call_next):
     force the entire file into memory ahead of the streaming multipart parser,
     and then get logged as decoded-with-replace binary garbage.
     """
-    body = b""
-    if request.method in ("POST", "PUT", "PATCH") and request.headers.get(
+    is_json = request.method in ("POST", "PUT", "PATCH") and request.headers.get(
         "content-type", ""
-    ).startswith("application/json"):
+    ).startswith("application/json")
+    if is_json:
         body = await request.body()  # cached on the request; downstream reads still work
-    response = await call_next(request)
-    if DEBUG_MODE or response.status_code >= 400:
-        log = logger.info if response.status_code < 400 else logger.warning
-        log(
-            "%s %s -> %s | body=%s",
+        logger.info(
+            "%s %s received | body=%s",
             request.method,
             request.url.path,
-            response.status_code,
             body.decode("utf-8", errors="replace")[:2000] if body else "<empty>",
         )
+    response = await call_next(request)
+    if is_json and (DEBUG_MODE or response.status_code >= 400):
+        log = logger.info if response.status_code < 400 else logger.warning
+        log("%s %s -> %s", request.method, request.url.path, response.status_code)
     return response
 
 
@@ -596,11 +598,19 @@ def plan_stateless(request: StatelessPlanRequest):
     entry for a single robot, more for multi-robot — and both the grid and
     graph builder are supported (request.format).
 
-    Positions are always given as [row, col] — even in graph mode, where they're
-    resolved to node ids server-side via Graph.get_node_from_position. Paths are
-    returned the same way: [[row, col], ...], Spooky's native (row, col) matrix
-    convention — see quantum/utils/coordinates.py to convert to robotics (x, y)
-    Y-up if needed.
+    Each robot's `start`/`goal` are given in its own `coordinate_format`, and its
+    returned path comes back in that same format — the server round-trips
+    whatever convention you send:
+      - "matrix" (default): Spooky's native [row, col].
+      - "cartesian": robotics/Y-up [x, y] (unit-less grid cells, not meters).
+      - "world": real-world [x, y] meters in the map's frame, converted via the
+        map's origin/resolution (only maps imported through
+        quantum/maps/pgm2HDF5.py carry these — see quantum/utils/coordinates.py
+        for the underlying world_to_grid_cell/grid_cell_to_world conversion).
+    In graph mode (request.format == "graph"), positions are always [row, col]
+    regardless of coordinate_format — they're resolved to node ids server-side
+    via Graph.get_node_from_position, and node ids have no coordinate frame of
+    their own, so "cartesian"/"world" are rejected there.
     """
     if request.format not in ("grid", "graph"):
         raise HTTPException(
@@ -635,13 +645,13 @@ def plan_stateless(request: StatelessPlanRequest):
     def resolve_position(pos: list[int], coordinate_format: str):
         # Graph builders index robots by node id, not (row, col) — RobotConfig
         # must hold the node id directly (see PathfindingProblem.from_graph_data).
-        # Node ids have no coordinate frame of their own, so cartesian input isn't
-        # supported in graph mode — convert to matrix before the position lookup
-        # would be needed elsewhere, but here we just reject it outright.
-        if coordinate_format == "cartesian" and request.format == "graph":
+        # Node ids have no coordinate frame of their own, so cartesian/world input
+        # isn't supported in graph mode — convert to matrix before the position
+        # lookup would be needed elsewhere, but here we just reject it outright.
+        if coordinate_format in ("cartesian", "world") and request.format == "graph":
             raise HTTPException(
                 400,
-                "coordinate_format='cartesian' is not supported in graph mode — "
+                f"coordinate_format='{coordinate_format}' is not supported in graph mode — "
                 "positions there resolve directly to node ids.",
             )
         if request.format != "graph":

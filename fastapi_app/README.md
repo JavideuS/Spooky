@@ -38,22 +38,21 @@ without its own landing page, so `/demo` is the closest thing to one.
 
 ### Logging & debugging
 
-Any request that fails (4xx/5xx) is logged to the console with its method,
-path, status, and JSON body — so a bad request or a 500 is diagnosable from
-the server console alone, not just from what the client prints. 500s also log
-a full traceback.
-
-Set `SPOOKY_DEBUG=1` to log every JSON request, success included — useful for
-watching live traffic during development (e.g. confirming `/demo` or an
-external caller is sending what you expect):
+Every JSON request (`/v1/plan`, `/robots/{id}/plan`, ...) is logged to the
+console as soon as it arrives — method, path, and body — before solving even
+starts. That matters for long solves (QAOA, D-Wave): otherwise you'd see
+nothing in the console until the response comes back, minutes later. Once the
+response is ready, a completion line (status code) is logged too: always for
+failures (4xx/5xx, alongside a full traceback for 500s), and for successes
+only with `SPOOKY_DEBUG=1`:
 
 ```bash
 SPOOKY_DEBUG=1 uvicorn api:app --reload
 ```
 
-Off by default: it buffers every request body and puts payloads in server
-logs. Multipart map uploads are never buffered by this logging, regardless of
-the setting — only `application/json` bodies are captured.
+Multipart map uploads are never buffered by this logging, regardless of the
+setting — only `application/json` bodies are captured, so a large HDF5
+upload still streams straight to the multipart parser.
 
 ### Docker
 
@@ -139,10 +138,14 @@ That never changes; every builder, solver, and QUBO index encoding/decoding
 works exclusively in matrix indices.
 
 At the API boundary, though, `coordinate_format` is a per-robot, request-time
-choice: `"matrix"` (default) or `"cartesian"` (robotics/Y-up: origin
-bottom-left, y increasing upward). Set it per entry in `/v1/plan`'s `robots`
-list (`RobotSpec.coordinate_format`), or once on `/robots/{id}/plan`
-(`PlanRequest.coordinate_format`):
+choice: `"matrix"` (default), `"cartesian"` (robotics/Y-up: origin
+bottom-left, y increasing upward, still unit-less grid cells), or `"world"`
+(real-world meters in the map's own frame, converted via the map's
+`origin`/`resolution` — only maps imported through `quantum/maps/pgm2HDF5.py`
+carry those; a synthetic map defaults to `origin=(0,0,0)`,
+`resolution=1.0`, making `"world"` a no-op equivalent to `"matrix"` there).
+Set it per entry in `/v1/plan`'s `robots` list (`RobotSpec.coordinate_format`),
+or once on `/robots/{id}/plan` (`PlanRequest.coordinate_format`):
 
 - **Input**: that robot's `start`/`goal` are read in the declared convention
   and converted to matrix once, before solving
@@ -151,9 +154,9 @@ list (`RobotSpec.coordinate_format`), or once on `/robots/{id}/plan`
   convention (`RobotConfig.format_position` / `BaseSolver.format_output_path`)
   — each `RobotPathResult`/`PlanResponse` echoes the `coordinate_format` it
   used, so a caller never has to guess which frame a path is in.
-- **Graph mode** doesn't support `"cartesian"` — positions there resolve
-  directly to node ids server-side, which have no coordinate frame of their
-  own to convert; a cartesian request against `format: "graph"` returns 400.
+- **Graph mode** doesn't support `"cartesian"`/`"world"` — positions there
+  resolve directly to node ids server-side, which have no coordinate frame of
+  their own to convert; such a request against `format: "graph"` returns 400.
 - `GET /v1/maps/{map_id}/preview` and `/v1/plan`'s `render: true` figure both
   take/reflect the same `coordinate_format` too, but purely as a **display**
   choice passed to `quantum/visualizer.py`'s `convention` param — it changes
