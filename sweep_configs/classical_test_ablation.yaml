@@ -1,0 +1,141 @@
+# Preprocessing ablation, 3x3 only — the companion to classical_test.yaml.
+#
+# classical_test.yaml runs the QUBO backends with preprocess=true because
+# that is the only setting that executes at 5x5. That leaves an unanswered
+# question: how much of the result is the sampler, and how much is the BFS
+# pre-processing in solve_qubo_smart()? This config answers it on the one
+# problem size where preprocess=false actually runs.
+#
+#   spooky-sweep --config sweep_configs/classical_test_ablation.yaml
+#
+# Pairs with classical_test.yaml. The difference:
+#
+#   classical_test     the comparison. 14 instance/problem pairs across 3x3
+#                      and 5x5, all four backends, ~476 runs. Answers "how do
+#                      the backends compare".
+#   this file          the control. Same four backends, but 2 instances at
+#                      3x3 only and every backend running BOTH preprocess
+#                      arms, ~48 runs. Answers "how much of that comparison
+#                      was the solver, and how much was BFS".
+#
+# Run this one first: it is far cheaper, and it tells you how much of the
+# comparison's output is worth reading.
+#
+# ---------------------------------------------------------------------------
+# Why 3x3 only, and why qaoa_sim carries a var_limit
+# ---------------------------------------------------------------------------
+# Measured 2026-08-23, crash penalty set, lightning.gpu:
+#
+#   3x3 no_obs, preprocess=false, default var_limit -> std::bad_alloc
+#       (no reduction, so the window is all 108 variables -> 2^108 state)
+#   3x3 no_obs, preprocess=false, var_limit=20 -> runs. ~15s/run on
+#       lightning.gpu, ~160s/run on lightning.qubit, and returns an INVALID
+#       solution every time. That is a measurement, not a failure: unaided
+#       QAOA does not solve even a 3x3 here.
+#   5x5 easy/two_robots, preprocess=false, var_limit=52 -> custatevec error
+#       (52 qubits is a 2^52 statevector; a genuine limit, not tunable)
+#
+# NOTE: an earlier WireError here ("wires 375-449 not found on device") was a
+# bug in the solver, not a simulator limit, and was fixed alongside this
+# config. What remains at 5x5 is real qubit count. 5x5 single-robot at
+# var_limit=26 has NOT been retried since that fix and may well work now —
+# worth checking before assuming 3x3 is the ceiling.
+#
+# var_limit must also stay >= cells-per-timestep-per-robot (9 for a 3x3), or
+# a single timestep cannot fit in a window at all.
+#
+# sa_neal's preprocess=false path was broken until 2026-08-23: it referenced
+# a nonexistent problem.start, and passed a coordinate tuple to
+# update_problem(), which wants {robot_num: segment}. Both arms run now, and
+# neal handles a full unreduced 108-variable window in ~0.02s, so this is the
+# cheapest and most informative arm of the ablation.
+#
+# Runtime shape: 2 instance/problem pairs.
+#   ilp/cbs  2 x 2 ablations x 1 run  =  8 runs
+#   sa       2 x 2 ablations x 10     = 40 runs (~0.02s each)
+#   qaoa     2 x 2 ablations x 10     = 40 runs. The 20 preprocess=false
+#            runs dominate at ~160s each on lightning.qubit (~55 min);
+#            switch the device to lightning.gpu for ~15s each (~5 min).
+#            The 20 preprocess=true runs are ~10ms each.
+#
+# What the ablation showed, measured with sa_neal at 10 runs per cell on
+# 2026-08-23 (3x3 as in this config, plus 5x5 instances run separately since
+# SA is fast enough to afford them):
+#
+#   instance                   pre=true   pre=false   reduction   final vars
+#   no_obs3x3/baseline           10/10      10/10        0.56          7
+#   obs3x3_standard/baseline     10/10       0/10        0.60          6
+#   obs5x5_easy/baseline         10/10       0/10        1.00          0
+#   obs5x5_easy/two_robots       10/10       0/10        0.94          5
+#   obs5x5_hard/baseline         10/10       0/10        1.00          0
+#   obs5x5_hard/two_robots       10/10       0/10        1.00          0
+#   obs5x5_hard/three_robots      0/10       0/10        1.00          0
+#
+# The only instance the sampler solves on its own is the 3x3 with no
+# obstacles. On four of the seven, final vars is 0 with preprocessing on --
+# the solver was never invoked at all, BFS produced the whole path, and the
+# recorded energy is the 0.0 sentinel. So a comparison table reading
+# "SA: 100% on 5x5" is reporting BFS. aggregate.py catches this without
+# anyone having to notice: n_solver_skipped and median_reduction_ratio in
+# energy_diagnostics.csv, with a note on the affected rows.
+#
+# qaoa_sim has NOT been measured this way since the solver fixes landed. An
+# earlier attempt produced "0/8 valid at 160s per run", but that was the
+# silent-early-exit bug (only window 0 was ever solved), not a property of
+# QAOA -- do not cite it. The one honest post-fix data point is a single
+# 3x3/no_obs CLI run: all windows, 28.5s, invalid.
+
+sweep:
+  id: null # auto-generated sweep_<timestamp>_<hex8> if omitted
+  seed: 42
+  enable_hardware: false
+  output_root: results/sweeps
+
+instances:
+  - map: quantum/maps/synthetic/3x3/no_obs3x3
+    problems: [baseline]
+    builder: grid
+  - map: quantum/maps/synthetic/3x3/obs3x3_standard
+    problems: [baseline]
+    builder: grid
+
+solvers:
+  - name: ilp_highs
+    backend: ilp
+    params: { time_limit: 60 }
+    num_runs: 1
+    ablation: { preprocess: [true, false] }
+
+  - name: cbs
+    backend: cbs
+    params: { node_limit: 5000, time_limit: 60 }
+    num_runs: 1
+    ablation: { preprocess: [true, false] }
+
+  - name: sa_neal
+    backend: dwave
+    params: { normalize_scale: 4, num_reads: 4 }
+    penalty_set: crash
+    num_runs: 10
+    ablation: { preprocess: [true, false] }
+
+  - name: qaoa_sim
+    backend: pennylane
+    params:
+      device: lightning.qubit
+      normalize_scale: 1.0
+      layers: 2
+      optimizer: QNG
+      opt_steps: 30
+    penalty_set: crash
+    # 20 is the largest cap measured to run preprocess=false without
+    # exhausting memory, and >= 9 so a 3x3 timestep still fits in a window.
+    # It applies to the preprocess=true arm too, which keeps the two arms
+    # comparable — the only thing varying between them is the BFS.
+    var_limit: 20
+    num_runs: 10
+    ablation: { preprocess: [true, false] }
+
+execution:
+  preprocess_default: true
+  fail_fast: false

@@ -1,0 +1,152 @@
+# All-classical four-way comparison: ILP, CBS, simulated annealing (the
+# `dwave` backend) and simulated QAOA (`pennylane`). Nothing here touches a
+# QPU or a cloud API — the `dwave` backend in this repo is always neal's
+# SimulatedAnnealingSampler (DWave_solver.py:61,118), and pennylane runs on
+# the local lightning device. So this config needs no tokens, no quota and
+# no --enable-hardware, and it is fully reproducible from sweep.seed.
+#
+# Run from the repo root:
+#   spooky-sweep --config sweep_configs/classical_test.yaml --dry-run
+#   spooky-sweep --config sweep_configs/classical_test.yaml
+#   python -m quantum.benchmark.analysis.run_aggregate -d results/sweeps/<id>
+#
+# Pairs with classical_test_ablation.yaml. The difference:
+#
+#   this file          the comparison. 14 instance/problem pairs across 3x3
+#                      and 5x5, all four backends, ~476 runs. Answers "how do
+#                      the backends compare on this benchmark".
+#   the ablation file  the control. 2 instances, 3x3 only, ~48 runs. Answers
+#                      "how much of that was the solver, and how much was the
+#                      BFS pre-processing". It is 3x3-only because QAOA's
+#                      preprocess=false arm does not fit in a simulator above
+#                      that size.
+#
+# The comparison is not interpretable on its own — most of its QUBO rows are
+# BFS output. Run both.
+#
+# ---------------------------------------------------------------------------
+# Read this before trusting the output
+# ---------------------------------------------------------------------------
+# Measured on 2026-08-23 while sizing this config, on the crash penalty set:
+#
+#   5x5/obs5x5_hard + three_robots   -> every window pre-processed to 0 vars,
+#                                       QAOA never ran, energy recorded as 0.0
+#   10x10/obs10x10_easy + four_robots -> 304 vars reduced to 8 across 9
+#                                       windows (97.4%), so the result is
+#                                       ~BFS with a rounding error of QAOA
+#
+# QAOA does not get *slow* on the harder instances, it gets *skipped* — the
+# BFS pre-processing in solve_qubo_smart() absorbs the whole problem. Two
+# consequences this config is built around:
+#
+#  1. qaoa_sim runs preprocess=true only, so its rows are largely
+#     benchmarking BFS rather than the sampler. That is not a preference:
+#     its preprocess=false arm does not fit in a simulator at 5x5 (see the
+#     ablation config). sa_neal runs both arms, so it is the backend that can
+#     actually show you the difference at this scale. Do not present any
+#     qaoa_sim row as a quantum result without citing the ablation.
+#     aggregate.py flags this per configuration via median_reduction_ratio
+#     and n_solver_skipped in energy_diagnostics.csv; expect those to read
+#     >= 0.9 for the QUBO backends on 5x5.
+#
+#  2. The paired tests will drop instances for the QUBO pairs. That is the
+#     survivorship bias built into any paired comparison — check
+#     n_dropped_invalid / n_dropped_unshared / min_valid_runs in
+#     statistical_tests.csv alongside success_rate before reading any
+#     p-value. A solver that only succeeds on easy instances is compared
+#     only on easy instances and will look excellent.
+#
+# Instance scope is deliberately 3x3 and 5x5. On 10x10 the QUBO backends are
+# almost entirely pre-processed away, so the comparison stops being
+# meaningful before it stops being affordable. Add the 10x10 block back once
+# preprocess=false runs there are producing real solver output.
+#
+# Runtime shape: 14 instance/problem pairs.
+#   ilp  14 x 2 ablations x 1 run  =  28 runs (deterministic)
+#   cbs  14 x 2 ablations x 1 run  =  28 runs (deterministic)
+#   sa   14 x 2 ablations x 10     = 280 runs
+#   qaoa 14 x 1            x 10    = 140 runs (~2s each measured on 3x3/5x5,
+#                                     and ~10ms once BFS has reduced the
+#                                     window to a handful of variables)
+# ~476 runs total, dominated by the two stochastic backends.
+
+sweep:
+  id: null # auto-generated sweep_<timestamp>_<hex8> if omitted
+  seed: 42
+  enable_hardware: false
+  output_root: results/sweeps
+
+instances:
+  - map: quantum/maps/synthetic/3x3/no_obs3x3
+    problems: [baseline]
+    builder: grid
+  - map: quantum/maps/synthetic/3x3/obs3x3_standard
+    problems: [baseline]
+    builder: grid
+
+  - map: quantum/maps/synthetic/5x5/no_obs5x5
+    problems: [baseline, easyv3]
+    builder: grid
+  - map: quantum/maps/synthetic/5x5/obs5x5_easy
+    problems: [baseline, two_robots, three_robots]
+    builder: grid
+  - map: quantum/maps/synthetic/5x5/obs5x5_medium
+    problems: [baseline, easy, two_robots]
+    builder: grid
+  - map: quantum/maps/synthetic/5x5/obs5x5_hard
+    problems: [baseline, hard, two_robots, three_robots]
+    builder: grid
+
+solvers:
+  - name: ilp_highs
+    backend: ilp
+    params: { time_limit: 60 }
+    num_runs: 1 # deterministic — HiGHS gives the same answer every time
+    ablation: { preprocess: [true, false] }
+
+  - name: cbs
+    backend: cbs
+    params: { node_limit: 5000, time_limit: 60 }
+    num_runs: 1 # deterministic — see CBS's tie-breaking note in cbs_algorithm.py
+    ablation: { preprocess: [true, false] }
+
+  # Simulated annealing. Named for what it is rather than for the vendor:
+  # the backend key stays `dwave` because that is what SolverFactory
+  # registers, but no annealer is involved. seed is auto-injected from
+  # sweep.seed by sweep_runner.py.
+  - name: sa_neal
+    backend: dwave
+    params: { normalize_scale: 4, num_reads: 4 }
+    penalty_set: crash
+    num_runs: 10 # stochastic — the whole point of energy_diagnostics.csv
+    # The preprocess=false path was fixed on 2026-08-23 (it referenced a
+    # nonexistent problem.start, and passed a coordinate tuple to
+    # update_problem(), which wants {robot_num: segment}). Both arms run, and
+    # SA handles a full unreduced window without trouble, so this is the one
+    # backend where the ablation is both cheap and meaningful.
+    ablation: { preprocess: [true, false] }
+
+  # Simulated QAOA on the local lightning device. Parameters mirror qubo.py's
+  # simulated defaults. lightning.qubit rather than lightning.gpu so the
+  # sweep is reproducible on a machine without CUDA; switch to lightning.gpu
+  # if you have it and want the speed.
+  - name: qaoa_sim
+    backend: pennylane
+    params:
+      device: lightning.qubit
+      normalize_scale: 1.0
+      layers: 2
+      optimizer: QNG
+      opt_steps: 30
+    penalty_set: crash
+    num_runs: 10 # stochastic — QAOA sampling varies run to run
+    # No preprocess ablation: without BFS reduction the window is the whole
+    # problem and the simulator dies — std::bad_alloc on 3x3 at the default
+    # var_limit, and on 5x5 it fails at *any* var_limit because the device is
+    # sized by raw flat variable index (WireError naming wires 375-449), not
+    # by the reduced variable count. classical_test_ablation.yaml caps it low
+    # enough to run on 3x3.
+
+execution:
+  preprocess_default: true
+  fail_fast: false
