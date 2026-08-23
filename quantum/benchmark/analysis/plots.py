@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
+from quantum.benchmark.analysis.aggregate import _valid_mask
 from quantum.visualizer import QuantumRoboticsVisualizer
 
 _PALETTE = QuantumRoboticsVisualizer.ROBOT_PALETTE
@@ -98,7 +99,7 @@ def plot_scaling(
     draws it as if the axis were linear, which reads as a misleadingly
     truncated bar near small values). The upper arm is left as the plain
     symmetric CI."""
-    valid = df[df["valid"]]
+    valid = df[_valid_mask(df)]
     agg = (
         valid.groupby(["grid_size", x, "solver_name"])["execution_time_sec"]
         .agg(mean="mean", std="std", n="size")
@@ -160,7 +161,8 @@ def plot_scaling(
 
 def plot_success_rate_bars(df: pd.DataFrame, output_dir: Optional[str] = None) -> go.Figure:
     summary = (
-        df.groupby(["instance_map", "problem_name", "solver_name"])["valid"]
+        df.assign(valid=_valid_mask(df))
+        .groupby(["instance_map", "problem_name", "solver_name"])["valid"]
         .mean()
         .reset_index()
     )
@@ -198,57 +200,69 @@ def plot_success_rate_bars(df: pd.DataFrame, output_dir: Optional[str] = None) -
     return fig
 
 
-def plot_optimality_gap(
+def plot_energy_excess(
     df: pd.DataFrame, output_dir: Optional[str] = None, boxpoints: str = "all"
 ) -> go.Figure:
-    """Requires compute_optimality_gap() to have already run on df (adds
-    the 'optimality_gap' column) — see quantum.benchmark.analysis.aggregate.
+    """Within-configuration energy excess — requires compute_energy_excess()
+    to have already run on df (adds the 'energy_excess' column), see
+    quantum.benchmark.analysis.aggregate.
+
+    One box per solver, in each solver's own raw energy units. The boxes are
+    deliberately NOT comparable to each other, and the axis is not a
+    percentage: a QUBO Hamiltonian has no meaningful zero (the penalty terms'
+    additive constants are dropped), so only differences within one
+    configuration mean anything. compute_energy_excess's docstring has the
+    numbers.
+
+    What each box shows is that solver's run-to-run spread on its own best
+    result — the quantity that matters for a stochastic backend. A box
+    collapsed onto 0 means the sampler reaches its best basin every run; a
+    long upper tail means it doesn't.
 
     boxpoints controls per-point overlay ("all", "outliers", "suspectedoutliers",
     or False to hide points entirely) — default "all" is fine for small
     sweeps but gets noisy with hundreds of runs per solver; pass "outliers"
     or False for those."""
-    if "optimality_gap" not in df.columns:
+    if "energy_excess" not in df.columns:
         raise ValueError(
-            "df has no 'optimality_gap' column — run compute_optimality_gap(df) first."
+            "df has no 'energy_excess' column — run compute_energy_excess(df) first."
         )
-    valid = df[df["valid"] & df["optimality_gap"].notna()]
+    valid = df[_valid_mask(df) & df["energy_excess"].notna()]
     colors = _solver_colors(valid["solver_name"])
 
     fig = go.Figure()
     for solver_name, group in valid.groupby("solver_name"):
         fig.add_trace(
             go.Box(
-                y=group["optimality_gap"],
+                y=group["energy_excess"],
                 name=solver_name,
                 marker=dict(color=colors[solver_name], size=5, opacity=0.6),
                 line=dict(color=colors[solver_name]),
                 boxpoints=boxpoints,
                 jitter=0.4,           # spread raw points so they don't stack
                 pointpos=-1.8,        # offset points to the left of the box
-                hovertemplate=f"{solver_name}<br>gap=%{{y:.1%}}<extra></extra>",
+                hovertemplate=f"{solver_name}<br>excess=%{{y:.4g}}<extra></extra>",
             )
         )
-    # Horizontal reference line at y=0: "as good as proven-optimal ILP"
+    # Horizontal reference line at y=0: "this configuration's own best run"
     fig.add_hline(
         y=0,
         line=dict(color="#555555", dash="dash", width=1.2),
-        annotation_text="ILP reference (0% gap)",
+        annotation_text="configuration's own best energy",
         annotation_position="bottom right",
         annotation_font=dict(size=11, color="#555555"),
     )
     fig.update_layout(
         **_LAYOUT_THEME,
-        title="Optimality gap distribution (vs. proven-optimal reference)",
+        title="Energy excess over each configuration's own best run",
         xaxis=dict(**_AXIS_THEME, title="Solver"),
         yaxis=dict(
             **_AXIS_THEME,
-            title="Optimality gap",
-            tickformat=".0%",
+            title="Energy excess (raw units, not comparable between solvers)",
         ),
     )
     if output_dir:
-        _save(fig, output_dir, "optimality_gap")
+        _save(fig, output_dir, "energy_excess")
     return fig
 
 
@@ -263,7 +277,7 @@ def plot_path_efficiency(
 
     Only validation_passed==True robots are plotted: efficiency computed
     off an invalid path (crashed into another robot, etc.) isn't a
-    meaningful quality measure, same reasoning as plot_optimality_gap's
+    meaningful quality measure, same reasoning as plot_energy_excess's
     valid-only filter."""
     valid = df[df["validation_passed"] & df["path_efficiency"].notna()]
     colors = _solver_colors(valid["solver_name"])
@@ -349,7 +363,7 @@ def generate_all_plots(
     df: pd.DataFrame, output_dir: str, robot_df: Optional[pd.DataFrame] = None
 ) -> Dict[str, go.Figure]:
     """df should be aggregate.aggregate_sweep()'s runs_long (already has
-    optimality_gap) for the full set of plots; plot_optimality_gap is
+    energy_excess) for the full set of plots; plot_energy_excess is
     skipped gracefully if that column is missing. robot_df is
     aggregate_sweep()'s robot_statistics_long — plot_path_efficiency is
     skipped gracefully if it's None or empty (e.g. sweep run at
@@ -359,8 +373,8 @@ def generate_all_plots(
         "success_rate": plot_success_rate_bars(df, output_dir=output_dir),
         "variable_reduction": plot_variable_reduction(df, output_dir=output_dir),
     }
-    if "optimality_gap" in df.columns:
-        figs["optimality_gap"] = plot_optimality_gap(df, output_dir=output_dir)
+    if "energy_excess" in df.columns:
+        figs["energy_excess"] = plot_energy_excess(df, output_dir=output_dir)
     if robot_df is not None and not robot_df.empty:
         figs["path_efficiency"] = plot_path_efficiency(robot_df, output_dir=output_dir)
     return figs

@@ -9,6 +9,8 @@ from typing import Optional
 
 import pandas as pd
 
+from quantum.benchmark.analysis.aggregate import _valid_mask
+
 
 def export_benchmark_table(
     df: pd.DataFrame,
@@ -18,10 +20,10 @@ def export_benchmark_table(
 ) -> str:
     """df must be the runs_long DataFrame (see quantum.benchmark.analysis.aggregate) —
     only execution_time_sec and average_reduction_ratio are used, both
-    present without needing compute_optimality_gap() to have run first.
+    present without needing compute_energy_excess() to have run first.
     Writes the .tex snippet to output_path and returns it as a string, so
     it can be `\\input{}`'d into paper.tex or diffed against it."""
-    valid = df[df["valid"]]
+    valid = df[_valid_mask(df)]
     if valid.empty:
         raise ValueError("No valid runs to build a table from.")
 
