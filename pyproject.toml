@@ -51,19 +51,26 @@ dwave = [
     "dwave-neal",
 ]
 ibm = [
-    "qiskit-ibm-runtime",
-    "pennylane-qiskit",
-]
-ros = [
-    "pillow",
+    # Pinned, not just bounded: quantum/hardware/ibm_device.py's
+    # IBMHardwareDevice overrides pennylane_qiskit's private
+    # QiskitDevice._execute_sampler() with a copy of this exact version's
+    # implementation (see PINNED_PENNYLANE_QISKIT_VERSION there) — a
+    # mismatched pennylane-qiskit only warns at runtime, it doesn't stop you
+    # 0.45.1 is the last verified-working version against a real backend.
+    "qiskit-ibm-runtime==0.45.1",
+    "pennylane-qiskit==0.45.0",
+    # quantum/hardware/qpu_clops.py's IBM Cloud REST auth flow (IAM token +
+    # Service-CRN header) — not declared by qiskit-ibm-runtime itself, so
+    # listed explicitly rather than relying on it being pulled in transitively.
+    "requests",
+    "ibm-cloud-sdk-core",
 ]
 iqm = [
     # qrisp[iqm] pulls in iqm-client and provides qrisp.interface.IQMBackend,
     # the execution path Pennylane_solver.py bridges into for real IQM hardware
-    # (PennyLane -> Qiskit -> Qrisp) — see Pennylane_solver.py's IQM comments
-    # for why qiskit.remote's Sampler can't be used directly against IQM.
+    # (PennyLane -> Qiskit -> Qrisp)
     "qrisp[iqm]",
-    "pennylane-qiskit",
+    "pennylane-qiskit==0.45.0",  # see the ibm extra above for why this is pinned
     "python-dotenv",
 ]
 jupyter = [
@@ -79,6 +86,7 @@ dev = [
 visualizer = [
     "plotly",
     "kaleido",
+    "pillow",
 ]
 
 fastapi = [
@@ -137,6 +145,6 @@ exclude = ["quantum.prueba*", "quantum.tfg_proves*", "quantum.paper*"]
 # "images/*.png" is the only extension the visualizer's default "auto" theme
 # actually loads (quantum/images/*.jpg and *.svg are unused leftovers).
 [tool.setuptools.package-data]
-"quantum" = ["images/*.png"]
+quantum = ["images/*.png"]
 "quantum.config" = ["*.yaml"]
 "quantum.maps" = ["*.yaml"]

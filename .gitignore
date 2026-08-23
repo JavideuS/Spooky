@@ -45,8 +45,11 @@ quantum/paper/paper_figures/
 *.h5
 *.hdf5
 
-# Benchmark and output files
-benchmark_results/
+# Benchmark and output files (results/*.json at the top level — e.g.
+# ibm_usage_log.json, qpu_calibration.json, iqm_clops.json — are deliberate
+# calibration logs meant to be committed, not auto-generated run output)
+results/benchmarks/
+results/sweeps/
 output/
 logs/
 *.log

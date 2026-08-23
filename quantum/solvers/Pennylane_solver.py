@@ -2,6 +2,7 @@ import os
 import pennylane as qml
 from pennylane import numpy as np
 from .base_solver import BaseSolver
+from quantum.hardware.ibm_session import IBMSessionManager
 import time
 
 
@@ -29,6 +30,8 @@ class PennylaneSolver(BaseSolver):
         verbose_level=2,
         machine=None,
         threads=None,
+        use_session=True,
+        session_max_time=None,
         **kwargs,
     ):
         """
@@ -42,6 +45,19 @@ class PennylaneSolver(BaseSolver):
                 constructed: OpenMP reads OMP_NUM_THREADS on first use, not
                 on every call, so this only takes effect if set here rather
                 than after qml.device(...) has already run once.
+            use_session: device="qiskit.remote" only. Holds one IBM Runtime
+                Session open across this solve()'s whole windowed loop
+                instead of every window's job re-entering the public queue
+                from scratch (see quantum.hardware.ibm_session.IBMSessionManager).
+                Ignored for any other device. Requires a plan that supports
+                Sessions — IBM's Open plan explicitly doesn't; Pay-As-You-Go
+                and above do. If opening one fails for any reason, falls
+                back to today's per-job-queued behavior with a single
+                logged warning rather than raising (never worse than
+                use_session=False).
+            session_max_time: Forwarded to qiskit_ibm_runtime.Session's
+                max_time (seconds, or a string like "2h 30m"). None uses
+                IBM's own default (900s).
         """
         super().__init__(
             solver="pennylane",
@@ -55,6 +71,8 @@ class PennylaneSolver(BaseSolver):
             machine=machine,
             threads=threads,
             params=params,
+            use_session=use_session,
+            session_max_time=session_max_time,
             **kwargs,
         )
         if threads is not None:
@@ -72,6 +90,9 @@ class PennylaneSolver(BaseSolver):
         # Backend for qiskit.remote — avoids a least_busy() network call every window
         self.backend = None
         self.hardware_qubits = 0  # actual qubit count of the connected backend
+        self._session_manager = IBMSessionManager(
+            use_session=use_session, session_max_time=session_max_time
+        )
         # Parameters for the QAOA circuit
         self.params = params if params is not None else np.random.rand(layers, 2)
         self.optimizer_steps = opt_steps  # Number of optimization steps
@@ -105,6 +126,8 @@ class PennylaneSolver(BaseSolver):
         opt_steps = config.get("optimizer_steps", 10)
         machine = config.get("machine", None)
         threads = config.get("threads", None)
+        use_session = config.get("use_session", True)
+        session_max_time = config.get("session_max_time", None)
         if optimizer not in ["GradientDescent", "Adam", "QNG", "SPSA", "QNSPSA"]:
             raise ValueError(
                 "Optimizer must be either 'GradientDescent', "
@@ -131,6 +154,8 @@ class PennylaneSolver(BaseSolver):
             opt_steps=opt_steps,
             machine=machine,
             threads=threads,
+            use_session=use_session,
+            session_max_time=session_max_time,
         )
 
     def _select_iqm_machine(self, num_qubits):
@@ -219,18 +244,20 @@ class PennylaneSolver(BaseSolver):
             self.logger.standard(f"♻️  Reusing backend: {self.backend.name}")
         return self.backend
 
-    def _pennylane_tape_to_qrisp(self, ansatz_circuit, params, num_qubits):
+    def _pennylane_tape_to_qiskit(self, ansatz_circuit, params, num_qubits):
         """
-        Build the ansatz as a PennyLane tape and convert it into a Qrisp circuit,
-        via the same PennyLane -> Qiskit conversion qiskit.remote uses internally
-        (pennylane_qiskit.circuit_to_qiskit), then Qiskit -> Qrisp
-        (qrisp.interface.converter.convert_from_qiskit).
+        Build the ansatz as a PennyLane tape and convert it into a Qiskit
+        circuit, via the same conversion qiskit.remote uses internally
+        (pennylane_qiskit.circuit_to_qiskit). Used by _pennylane_tape_to_qrisp
+        for the IQM bridge. IBMHardwareDevice (quantum.hardware.ibm_device)
+        does its own equivalent conversion inline rather than calling this —
+        it operates on the tape the qnode hands it directly, not on a
+        freshly-built one from ansatz_circuit/params like this method does.
         """
         from pennylane_qiskit.qiskit_device import (
             QISKIT_OPERATION_MAP,
             circuit_to_qiskit,
         )
-        from qrisp.interface.converter import convert_from_qiskit
 
         with qml.queuing.AnnotatedQueue() as q:
             ansatz_circuit(params)
@@ -243,7 +270,17 @@ class PennylaneSolver(BaseSolver):
             tape, stopping_condition=lambda op: op.name in QISKIT_OPERATION_MAP
         )
 
-        qiskit_qc = circuit_to_qiskit(tape, num_qubits, diagonalize=True, measure=True)
+        return circuit_to_qiskit(tape, num_qubits, diagonalize=True, measure=True)
+
+    def _pennylane_tape_to_qrisp(self, ansatz_circuit, params, num_qubits):
+        """
+        Build the ansatz as a PennyLane tape and convert it into a Qrisp circuit,
+        via the shared Qiskit conversion (_pennylane_tape_to_qiskit), then
+        Qiskit -> Qrisp (qrisp.interface.converter.convert_from_qiskit).
+        """
+        from qrisp.interface.converter import convert_from_qiskit
+
+        qiskit_qc = self._pennylane_tape_to_qiskit(ansatz_circuit, params, num_qubits)
         return convert_from_qiskit(qiskit_qc)
 
     def _run_iqm_sampler(self, ansatz_circuit, params, num_qubits, shots):
@@ -251,14 +288,26 @@ class PennylaneSolver(BaseSolver):
         Run the QAOA ansatz on real IQM hardware via the Qrisp bridge, bypassing
         PennyLane's qiskit.remote Sampler entirely (see _get_backend for why).
 
+        Job telemetry (job_id logging, real-execution-time calibration
+        recording) is handled by IQMHardwareBackend — see
+        quantum.hardware.iqm_backend — rather than living here, so
+        this solve loop doesn't own hardware-accounting concerns directly.
+
         Returns:
-            dict: Qiskit/Qrisp-style bitstring -> shot count.
+            tuple: (counts, last_timing) — counts is a Qiskit/Qrisp-style
+            bitstring -> shot count dict; last_timing is
+            IQMHardwareBackend.last_timing after the run (a dict of real
+            measured timeline segments, or None if recording failed).
         """
+        from quantum.hardware.iqm_backend import IQMHardwareBackend
+
         qrisp_circuit = self._pennylane_tape_to_qrisp(
             ansatz_circuit, params, num_qubits
         )
         backend = self._get_backend(num_qubits)
-        return backend.run(qrisp_circuit, shots=shots)
+        hardware = IQMHardwareBackend(backend)
+        counts = hardware.run(qrisp_circuit, shots)
+        return counts, hardware.last_timing
 
     def create_ansatz(self, wires, qaoa_layer):
         """
@@ -284,8 +333,21 @@ class PennylaneSolver(BaseSolver):
 
     def solve(self, builder, optimization=False, preprocess=True):
         """
-        Solve QUBO using Pennylane QAOA.
+        Solve QUBO using Pennylane QAOA. Thin wrapper around _solve_impl()
+        that guarantees an IBM Runtime Session opened during the solve (see
+        quantum.hardware.ibm_session.IBMSessionManager) is always closed
+        afterwards — including on an exception or an early `break` out of
+        the windowed loop — so a reservation never leaks past this call.
+        """
+        try:
+            return self._solve_impl(
+                builder, optimization=optimization, preprocess=preprocess
+            )
+        finally:
+            self._session_manager.close()
 
+    def _solve_impl(self, builder, optimization=False, preprocess=True):
+        """
         Args:
             builder: QUBOBuilder instance
             optimization: When True, runs the variational QAOA parameter optimization
@@ -413,6 +475,7 @@ class PennylaneSolver(BaseSolver):
         # preprocess=True: full pipeline with variable reduction and correction loop
         window_stats = []  # Track per-window variable reduction stats
         forced_collisions = []  # Track pre-processing forced collisions across all windows
+        qpu_time_estimates = []  # Per-window pre-execution QPU time estimates (qiskit.remote only)
         correction_count = 0  # Track consecutive correction attempts for current window
 
         # Build the optimizer once — preserves internal state (e.g. Adam moments) across windows
@@ -513,13 +576,23 @@ class PennylaneSolver(BaseSolver):
                 qml.qaoa.mixer_layer(beta, Hmix)
 
             if self.dev == "qiskit.remote":
+                from quantum.hardware.ibm_device import IBMHardwareDevice
+
                 # Only re-queries least_busy when num_qubits grows beyond current backend
                 backend = self._get_backend(num_qubits)
+                session = self._session_manager.get_session(backend)  # None if unavailable/disabled
 
                 # Use sequential indices for qiskit.remote (circuit_wires is already sorted)
                 self.logger.standard("🔧 Initializing quantum device connection...")
                 dev_start = time.time()
-                dev = qml.device("qiskit.remote", wires=circuit_wires, backend=backend)
+                # IBMHardwareDevice, not qml.device("qiskit.remote", ...): adds
+                # job_id/usage telemetry and a pre-submission QPU-time estimate
+                # around the stock QiskitDevice
+                dev = IBMHardwareDevice(
+                    wires=circuit_wires,
+                    backend=backend,
+                    session=session,
+                )
                 dev_time = time.time() - dev_start
                 self.logger.standard(f"✓ Device initialized in {dev_time:.2f}s")
                 self.logger.standard("=" * 60)
@@ -578,9 +651,6 @@ class PennylaneSolver(BaseSolver):
                             )
                         else:
                             self.logger.debug(f"Step {step}, ⟨H_C⟩ = {cost:.6f}")
-                    # if step > 3 and abs(cost - prev_cost) < 1e-4:
-                    #     break
-                    # prev_cost = cost
 
             # Collect samples and calculate energies
             samples = []
@@ -603,13 +673,21 @@ class PennylaneSolver(BaseSolver):
                 self.logger.standard("   Waiting for quantum job to complete...")
                 self.logger.standard("=" * 60)
                 sample_start = time.time()
-                counts = self._run_iqm_sampler(
+                counts, iqm_timing = self._run_iqm_sampler(
                     ansatz_circuit, self.params, num_qubits, shots
                 )
                 sample_time = time.time() - sample_start
                 self.logger.standard("=" * 60)
                 self.logger.standard(f"✓ Samples collected in {sample_time:.2f}s")
                 self.logger.standard("=" * 60)
+
+                qpu_time_estimates.append(
+                    {
+                        "device": "qiskit.iqm",
+                        "wall_clock_sec": sample_time,
+                        "iqm_timing": iqm_timing,
+                    }
+                )
 
                 # One evaluation per unique outcome is enough — best_idx below only
                 # ever needs the best-energy outcome, not every individual shot.
@@ -649,9 +727,16 @@ class PennylaneSolver(BaseSolver):
 
                 # Get samples from the quantum circuit
                 if self.dev == "qiskit.remote":
+                    # dev (IBMHardwareDevice) logs its own pre-submission QPU-time
+                    # estimate and job_id as part of sample_circuit() below
+                    session_status = (
+                        f"🔐 via Session on {backend.name}"
+                        if session is not None
+                        else "🌐 via public queue (no session)"
+                    )
                     self.logger.standard("\n" + "=" * 60)
                     self.logger.standard(
-                        f"⏳ Collecting {shots} samples from quantum hardware..."
+                        f"⏳ Collecting {shots} samples from quantum hardware — {session_status}"
                     )
                     self.logger.standard("   Waiting for quantum job to complete...")
                     self.logger.standard("=" * 60)
@@ -661,6 +746,20 @@ class PennylaneSolver(BaseSolver):
                     self.logger.standard("=" * 60)
                     self.logger.standard(f"✓ Samples collected in {sample_time:.2f}s")
                     self.logger.standard("=" * 60)
+
+                    qpu_estimate_entry = {
+                        "device": "qiskit.remote",
+                        "wall_clock_sec": sample_time,
+                        "gate_model": dev.last_gate_estimate,
+                        "clops_model": dev.last_clops_estimate,
+                    }
+                    usage_info = dev.get_usage()
+                    if usage_info:
+                        self.logger.standard(
+                            f"💰 Billed QPU usage: {usage_info['usage']}"
+                        )
+                        qpu_estimate_entry["billed_usage"] = usage_info
+                    qpu_time_estimates.append(qpu_estimate_entry)
                 else:
                     raw_samples = sample_circuit(self.params)
 
@@ -707,7 +806,9 @@ class PennylaneSolver(BaseSolver):
 
                     energies.append(energy)
 
-            # print(f"Collected {len(samples)} samples with energies: {energies[:5]}...")
+            self.logger.debug(
+                f"Collected {len(samples)} samples with energies: {energies[:5]}..."
+            )
 
             # Handle case where no samples were collected
             if not samples:
@@ -764,8 +865,8 @@ class PennylaneSolver(BaseSolver):
             else:
                 correction_count = 0
 
-            # print(f"Best energy this iteration: {energies[best_idx]}")
-            # print(f"Best sample: {samples[best_idx]}")
+            self.logger.debug(f"Best energy this iteration: {energies[best_idx]}")
+            self.logger.debug(f"Best sample: {samples[best_idx]}")
 
             # Print iteration summary for quantum hardware
             if self.dev == "qiskit.remote" or self.dev == "qiskit.iqm":
@@ -785,6 +886,6 @@ class PennylaneSolver(BaseSolver):
             "metadata": {
                 "window_stats": window_stats,  # Per-window variable reduction stats
                 "forced_collisions": forced_collisions,  # Pre-processing forced collisions (bypass K_crash/K_swap)
-                # 'window_solutions': best_sample  # Keep window solutions for debugging
+                "qpu_time_estimates": qpu_time_estimates,  # Per-window pre-execution QPU time estimates (qiskit.remote only)
             },
         }

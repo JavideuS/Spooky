@@ -11,6 +11,7 @@ For theoretical background and formulation details, please refer to our paper: [
 - **`config/`**: Configuration management, file parsing (YAML, HDF5), and ROS integration tools.
 - **`utils/`**: Shared utility functions for path handling and data manipulation.
 - **`benchmark/`**: Tools for benchmarking solver performance and accuracy.
+- **`hardware/`**: Real-QPU telemetry — pre-execution time estimates, IBM job/usage capture, IQM job timeline calibration. See `hardware/README.md`, especially before running real hardware jobs at scale (quota costs money).
 
 ## Core Modules
 

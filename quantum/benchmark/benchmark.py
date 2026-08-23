@@ -70,6 +70,15 @@ class BenchmarkRunner:
 
         valid_count = 0
         total_solve_time = 0.0
+        total_estimated_qpu_time_gate = 0.0
+        runs_with_gate_estimate = 0
+        total_estimated_qpu_time_clops = 0.0
+        runs_with_clops_estimate = 0
+        total_billed_usage_sec = 0.0
+        runs_with_billed_usage = 0
+        total_queue_time_sec = 0.0
+        runs_with_queue_time = 0
+        total_overhead_sec = 0.0
 
         # Run multiple trials
         for run_id in range(1, self.num_runs + 1):
@@ -121,6 +130,7 @@ class BenchmarkRunner:
                 "timestamp": datetime.now().isoformat(),
                 "valid": validation["valid"],
                 "energy": total_energy,
+                "build_time_sec": round(build_duration, 3),
                 "execution_time_sec": round(solve_duration, 3),
             }
             if invalid_cause:
@@ -134,6 +144,59 @@ class BenchmarkRunner:
             )
             if termination_condition is not None:
                 result["termination_condition"] = termination_condition
+
+            # Pre-execution QPU time estimates + real hardware telemetry. Each
+            # window entry has "device" ("qiskit.remote"|"qiskit.iqm") plus
+            # "wall_clock_sec" (time.time() around the hardware call) and
+            # either IBM's {"gate_model", "clops_model", "billed_usage"} or
+            # IQM's {"iqm_timing": {...}} — see quantum.hardware.README.md.
+            qpu_time_estimates = solution.get("metadata", {}).get(
+                "qpu_time_estimates", []
+            )
+            gate_estimates = [
+                e["gate_model"] for e in qpu_time_estimates if e and e.get("gate_model")
+            ]
+            clops_estimates = [
+                e["clops_model"]
+                for e in qpu_time_estimates
+                if e and e.get("clops_model")
+            ]
+            if gate_estimates:
+                result["estimated_qpu_time_gate_model_sec"] = round(
+                    sum(e["total_estimate_sec"] for e in gate_estimates), 4
+                )
+            if clops_estimates:
+                result["estimated_qpu_time_clops_model_sec"] = round(
+                    sum(e["total_estimate_sec"] for e in clops_estimates), 4
+                )
+
+            billed_usage_values = [
+                e["billed_usage"]["usage"]
+                for e in qpu_time_estimates
+                if e and e.get("billed_usage") and e["billed_usage"].get("usage") is not None
+            ]
+            if billed_usage_values:
+                result["billed_usage_sec"] = sum(billed_usage_values)
+
+            # Build/execution/queue/overhead split — see
+            # _compute_hardware_time_split's docstring for why
+            # execution_time_sec is the real-execution reference directly,
+            # not solve_duration minus queue_time_sec (that silently folds
+            # backend/session setup and classical preprocessing into
+            # "execution"). None (and no split applied) if no window has
+            # enough data — e.g. a classical/simulator solve.
+            hw_execution_sec, queue_time_sec = _compute_hardware_time_split(
+                qpu_time_estimates
+            )
+            if queue_time_sec is not None:
+                result["execution_time_sec"] = round(hw_execution_sec, 3)
+                result["queue_time_sec"] = round(queue_time_sec, 3)
+                result["overhead_sec"] = round(
+                    max(0.0, solve_duration - hw_execution_sec - queue_time_sec), 3
+                )
+
+            if self.level >= 2 and qpu_time_estimates:
+                result["qpu_time_estimate_breakdown"] = qpu_time_estimates
 
             # Add variable stats from solver based on level
             window_stats = solution.get("metadata", {}).get("window_stats", [])
@@ -190,6 +253,24 @@ class BenchmarkRunner:
 
             self.results["runs"].append(result)
 
+            if "estimated_qpu_time_gate_model_sec" in result:
+                total_estimated_qpu_time_gate += result[
+                    "estimated_qpu_time_gate_model_sec"
+                ]
+                runs_with_gate_estimate += 1
+            if "estimated_qpu_time_clops_model_sec" in result:
+                total_estimated_qpu_time_clops += result[
+                    "estimated_qpu_time_clops_model_sec"
+                ]
+                runs_with_clops_estimate += 1
+            if "billed_usage_sec" in result:
+                total_billed_usage_sec += result["billed_usage_sec"]
+                runs_with_billed_usage += 1
+            if "queue_time_sec" in result:
+                total_queue_time_sec += result["queue_time_sec"]
+                total_overhead_sec += result["overhead_sec"]
+                runs_with_queue_time += 1
+
             status = "✅ Valid" if validation["valid"] else "❌ Invalid"
             if not validation["valid"]:
                 self.logger.standard(
@@ -199,9 +280,38 @@ class BenchmarkRunner:
                 self.logger.standard("Message:", validation.get("message", ""))
                 if invalid_cause:
                     self.logger.standard("Cause:", invalid_cause)
+            qpu_estimate_parts = []
+            if "estimated_qpu_time_gate_model_sec" in result:
+                qpu_estimate_parts.append(
+                    f"gate={result['estimated_qpu_time_gate_model_sec']:.2f}s"
+                )
+            if "estimated_qpu_time_clops_model_sec" in result:
+                qpu_estimate_parts.append(
+                    f"clops={result['estimated_qpu_time_clops_model_sec']:.2f}s"
+                )
+            if "billed_usage_sec" in result:
+                qpu_estimate_parts.append(f"billed={result['billed_usage_sec']:.2f}s")
+            qpu_estimate_str = (
+                f" | Est. QPU time ({', '.join(qpu_estimate_parts)})"
+                if qpu_estimate_parts
+                else ""
+            )
+            # build/execution/queue/overhead only splits apart once
+            # queue_time_sec is computable (hardware runs with enough
+            # per-window data) — a classical/simulator run just shows a
+            # plain solve time.
+            if "queue_time_sec" in result:
+                time_str = (
+                    f"build={result['build_time_sec']:.2f}s, "
+                    f"exec={result['execution_time_sec']:.2f}s, "
+                    f"queue={result['queue_time_sec']:.2f}s, "
+                    f"overhead={result['overhead_sec']:.2f}s"
+                )
+            else:
+                time_str = f"{solve_duration:.2f}s"
             self.logger.minimal(
-                f"Run {run_id}: {status} | Time: {solve_duration:.2f}s | "
-                f"Energy: {total_energy:.4f}"
+                f"Run {run_id}: {status} | Time: {time_str}"
+                f"{qpu_estimate_str} | Energy: {total_energy:.4f}"
             )
             self.logger.minimal(f"Path: {path}")
             for robot_id, robot in self.problem.robots.items():
@@ -219,6 +329,29 @@ class BenchmarkRunner:
             "accuracy": round(valid_count / self.num_runs, 4) if self.num_runs else 0,
             "average_solve_time_sec": round(avg_solve_time, 4),
         }
+        if runs_with_gate_estimate:
+            self.results["summary"]["average_estimated_qpu_time_gate_model_sec"] = (
+                round(total_estimated_qpu_time_gate / runs_with_gate_estimate, 4)
+            )
+        if runs_with_clops_estimate:
+            self.results["summary"]["average_estimated_qpu_time_clops_model_sec"] = (
+                round(total_estimated_qpu_time_clops / runs_with_clops_estimate, 4)
+            )
+        if runs_with_billed_usage:
+            self.results["summary"]["total_billed_qpu_usage_sec"] = round(
+                total_billed_usage_sec, 4
+            )
+            self.logger.minimal(
+                f"Total billed QPU usage this benchmark: {total_billed_usage_sec:.2f}s "
+                f"(across {runs_with_billed_usage}/{self.num_runs} run(s) with usage data)"
+            )
+        if runs_with_queue_time:
+            self.results["summary"]["total_queue_time_sec"] = round(
+                total_queue_time_sec, 4
+            )
+            self.results["summary"]["total_overhead_sec"] = round(
+                total_overhead_sec, 4
+            )
 
         self.save_results()
         return self.results
@@ -231,6 +364,70 @@ class BenchmarkRunner:
             serializable_results = convert_tuple_keys_to_str(self.results)
             json.dump(serializable_results, f, indent=2, default=str)
         self.logger.minimal(f"\nBenchmark complete. Results saved to {filepath}")
+
+
+def _compute_hardware_time_split(qpu_time_estimates):
+    """
+    Split real-hardware wall-clock time into (execution, queue), summed
+    across all windows in one run.
+
+    For each window, the best available *real* execution-time reference —
+    never a raw estimate when ground truth exists:
+        1. IBM: job.usage() (billed_usage) — actual billed QPU time.
+        2. IQM: iqm_timing.job_total_sec — the job's own server-processing
+           span (received -> ready), covering compile+validation+execution.
+        3. Fallback: the gate-model pre-execution estimate, only if neither
+           of the above is available for that window.
+    execution_time_sec is the sum of that reference directly. queue_time_sec
+    is wall-clock hardware-call time (Pennylane_solver.py's sample_time,
+    i.e. time.time() around the sampling call) minus that same reference.
+
+    Deliberately NOT `solve_duration - queue_time_sec`: solve_duration also
+    includes backend/session setup and classical per-window preprocessing,
+    neither of which is queue time OR real QPU execution — subtracting only
+    queue time from it would silently misattribute that overhead as
+    "execution" (exactly what this function replaces; see the "IBM quota"
+    section of quantum/hardware/README.md for the run that exposed it: 2s
+    billed usage vs. an "execution_time_sec" of 11s from the old formula).
+    Callers should treat solve_duration - execution_time_sec - queue_time_sec
+    as its own overhead bucket rather than folding it into either of these.
+
+    A window contributes nothing if it has no wall_clock_sec at all (e.g. a
+    fully pre-processed window that never touched hardware).
+
+    Returns:
+        (float, float) | (None, None): (execution_time_sec, queue_time_sec)
+        in seconds, or (None, None) if no window in this run had enough data
+        to compute either (e.g. a classical/simulator solve, where neither
+        concept applies at all).
+    """
+    execution_total = 0.0
+    queue_total = 0.0
+    counted_any = False
+    for entry in qpu_time_estimates:
+        if not entry:
+            continue
+        wall_clock_sec = entry.get("wall_clock_sec")
+        if wall_clock_sec is None:
+            continue
+
+        real_reference_sec = None
+        billed_usage = entry.get("billed_usage")
+        if billed_usage and billed_usage.get("usage") is not None:
+            real_reference_sec = billed_usage["usage"]
+        elif entry.get("iqm_timing") and entry["iqm_timing"].get("job_total_sec") is not None:
+            real_reference_sec = entry["iqm_timing"]["job_total_sec"]
+        elif entry.get("gate_model"):
+            real_reference_sec = entry["gate_model"]["total_estimate_sec"]
+
+        if real_reference_sec is None:
+            continue
+
+        execution_total += real_reference_sec
+        queue_total += max(0.0, wall_clock_sec - real_reference_sec)
+        counted_any = True
+
+    return (execution_total, queue_total) if counted_any else (None, None)
 
 
 _FIX_MECHANISM_LABELS = {
@@ -268,7 +465,9 @@ def _graph_shortest_distance(graph, start_node, goal_node):
     return float("inf")  # goal unreachable from start
 
 
-def _compute_solution_statistics(problem, robot_paths, validation_details, overall_valid):
+def _compute_solution_statistics(
+    problem, robot_paths, validation_details, overall_valid
+):
     """
     Per-robot and aggregate path-quality statistics for one run: path
     length, whether the goal was reached, and path efficiency (optimal

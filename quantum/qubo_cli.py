@@ -359,6 +359,34 @@ def build_parser() -> argparse.ArgumentParser:
             "(default: auto-picks the smallest that fits the window)."
         ),
     )
+    pl.add_argument(
+        "--no-session",
+        action="store_true",
+        default=False,
+        help=(
+            "Only used with --device qiskit.remote / --solver qiskit_remote. "
+            "Disable holding one IBM Runtime Session open across the whole "
+            "windowed solve — every window's job goes back through the "
+            "public queue instead. Session is on by default and requires a "
+            "plan that supports it (IBM's Open plan doesn't; Pay-As-You-Go "
+            "and above do) — it already falls back automatically with a "
+            "logged warning if opening one fails, so --no-session is rarely "
+            "needed, mainly for isolating whether Session itself is the "
+            "cause of an issue."
+        ),
+    )
+    pl.add_argument(
+        "--session-max-time",
+        type=int,
+        default=None,
+        metavar="SECONDS",
+        help=(
+            "Only used with --device qiskit.remote / --solver qiskit_remote "
+            "(and --no-session is not set). Max seconds the IBM Runtime "
+            "Session stays open. Default: unset, uses IBM's own default "
+            "(900s at time of writing)."
+        ),
+    )
 
     # ---- Run mode ----------------------------------------------------------
     run = parser.add_argument_group("Run mode")
@@ -588,6 +616,8 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
             verbose_level=verbose_level,
             machine=args.machine,
             threads=args.threads,
+            use_session=not args.no_session,
+            session_max_time=args.session_max_time,
         )
 
     elif args.solver == "qiskit_remote":
@@ -629,6 +659,8 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
             params=init_params,
             verbose_level=verbose_level,
             machine=args.machine,
+            use_session=not args.no_session,
+            session_max_time=args.session_max_time,
         )
 
     elif args.solver == "qiskit_iqm":
