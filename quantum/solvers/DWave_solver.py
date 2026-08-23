@@ -54,17 +54,22 @@ class DWaveSolver(BaseSolver):
                 Q = builder.Q
                 if self.norm_scale != 0:
                     Q = self.normalize_qubo(builder.Q, self.norm_scale)
-                self.logger.standard(
-                    "Start position:", builder.problem.start, "Iteration:", builder.iter
-                )
+                self.logger.standard("Iteration:", builder.iter)
                 bqm = BinaryQuadraticModel.from_qubo(Q)
                 sampler = SimulatedAnnealingSampler()
                 response = sampler.sample(bqm, num_reads=self.num_reads, seed=self.seed)
                 first = response.first
                 best_sample.append(first.sample)
                 best_energy.append(response.first.energy)
-                last_pos = self.decode_path(first.sample, builder.problem)[-1]
-                builder.update_problem(last_pos[:2])
+                # Same construction as the preprocess=True branch below.
+                path = self.decode_path(
+                    first.sample, builder.problem, t_offset=builder.current_T
+                )
+                robot_paths = self.get_robot_paths(path)
+                robot_paths = self._resolve_duplicate_timesteps(
+                    robot_paths, builder.problem
+                )
+                builder.update_problem(robot_paths)
 
             return {
                 "solution": best_sample,

@@ -381,8 +381,38 @@ class PennylaneSolver(BaseSolver):
                 if self.norm_scale != 0:
                     builder.Q = self.normalize_qubo(builder.Q, self.norm_scale)
 
-                wires = range(builder.get_num_wires())
+                # get_wires(), NOT range(get_num_wires()). get_wires() returns
+                # the QUBO's actual variable indices; get_num_wires() returns
+                # only how many there are. Those indices are the global
+                # encoding (robot*M*N*T + t*M*N + i*N + j), so they start at 0
+                # for the first robot's first window and nowhere else, while
+                # qubo_to_ising() builds PauliZ on the raw index. Sizing the
+                # device by the count gave a WireError (wires 375-449 absent
+                # from a 75-wire device) on anything past that first window.
+                # sorted() is defensive only: the pairing with qml.sample()'s
+                # column order is self-consistent either way, but set
+                # iteration order depends on hash-table layout and the
+                # qiskit.remote remap below turns it into a physical qubit
+                # assignment, which should not be an accident of that layout.
+                wires = sorted(builder.get_wires())
                 self.logger.standard(f"Number of qubits: {len(wires)}")
+
+                # An empty window has nothing to sample, and handing a
+                # zero-wire device to qml.sample() dies inside custatevec.
+                # The preprocess=True path already skips these ("Window fully
+                # pre-processed, skipping solver");
+                # Doing the same here, but guarding against a window that
+                # cannot advance, which would otherwise spin forever.
+                if not wires:
+                    previous_T = builder.current_T
+                    builder.update_problem({})
+                    if builder.current_T <= previous_T:
+                        self.logger.minimal(
+                            "Warning: empty window that cannot advance "
+                            f"(current_T stuck at {previous_T}) — stopping early"
+                        )
+                        break
+                    continue
 
                 Hc, constant = builder.qubo_to_ising()
                 Hmix = qml.qaoa.x_mixer(wires)
@@ -459,11 +489,24 @@ class PennylaneSolver(BaseSolver):
                 best_sample.append(samples[best_idx])
                 best_energy.append(energies[best_idx])
 
+                # update_problem() takes {robot_num: path_segment}, not a
+                # position — same construction as the preprocess=True branch.
+                # Else it would have only solved first window
                 try:
-                    last_pos = self.decode_path(samples[best_idx], builder.problem)[-1]
-                    builder.update_problem(last_pos[:2])
+                    path = self.decode_path(
+                        samples[best_idx], builder.problem, t_offset=builder.current_T
+                    )
+                    robot_paths = self.get_robot_paths(path)
+                    robot_paths = self._resolve_duplicate_timesteps(
+                        robot_paths, builder.problem
+                    )
+                    builder.update_problem(robot_paths)
                 except Exception as e:
-                    self.logger.minimal(f"Warning: Could not decode path: {e}")
+                    self.logger.minimal(
+                        f"Warning: could not decode window {builder.iter} "
+                        f"({e}) — stopping early, the returned path is "
+                        "incomplete and will fail validation"
+                    )
                     break
 
             return {
@@ -580,7 +623,9 @@ class PennylaneSolver(BaseSolver):
 
                 # Only re-queries least_busy when num_qubits grows beyond current backend
                 backend = self._get_backend(num_qubits)
-                session = self._session_manager.get_session(backend)  # None if unavailable/disabled
+                session = self._session_manager.get_session(
+                    backend
+                )  # None if unavailable/disabled
 
                 # Use sequential indices for qiskit.remote (circuit_wires is already sorted)
                 self.logger.standard("🔧 Initializing quantum device connection...")
