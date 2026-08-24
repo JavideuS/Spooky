@@ -155,6 +155,56 @@ class PathfindingProblem:
         return problem
     
     @classmethod
+    def from_h5(cls, h5_path, robots, materials_data=None, T=None, name=None):
+        """
+        Build a multi-robot PathfindingProblem straight from an .h5 map, with
+        no companion problems YAML -- for callers (CLI flags, argOS/FastAPI
+        requests) that supply robot start/goal at request time instead of
+        from a committed config. `from_map_config`'s multi-robot branch is a
+        thin wrapper around this that adds YAML parsing on top.
+
+        Args:
+            h5_path: Path to the map .h5 file (extension optional)
+            robots: RobotConfig instance, or list/dict of them
+            materials_data: Optional materials data for Grid object
+            T: Time horizon (optional)
+            name: Problem name (optional, defaults to the map's file stem)
+
+        Returns:
+            PathfindingProblem: Unified problem instance
+        """
+        h5_path = str(h5_path)
+        if not h5_path.endswith('.h5'):
+            h5_path = f"{h5_path}.h5"
+
+        from quantum.config.hdf5parser import load_both_from_hdf5
+        data = load_both_from_hdf5(h5_path)
+        problem_name = name or data['name']
+
+        grid = None
+        if data['has_map'] and data['map_data']:
+            grid = map.Grid.from_hdf5_data(
+                data['map_data'],
+                materials_data=materials_data,
+                name=problem_name
+            )
+
+        graph = None
+        if data['has_graph'] and data['graph_data']:
+            graph = map.Graph.from_hdf5_data(
+                data['graph_data'],
+                name=problem_name
+            )
+
+        return cls(
+            robots=robots,
+            grid=grid,
+            graph=graph,
+            T=T,
+            name=problem_name
+        )
+
+    @classmethod
     def from_map_config(cls, map_path, problem_name="baseline", materials_data=None, coordinate_format="matrix"):
         """
         Fast initialization from map path and problem configuration.
@@ -226,34 +276,12 @@ class PathfindingProblem:
                     coordinate_format=robot_data.get("coordinate_format", coordinate_format)
                 )
                 robots.append(robot)
-            
-            # Load unified data (grid and graph)
-            from quantum.config.hdf5parser import load_both_from_hdf5
-            data = load_both_from_hdf5(h5_path)
-            problem_full_name = f"{Path(base_path).stem}_{problem_name}"
-            
-            # Create grid if available
-            grid = None
-            if data['has_map'] and data['map_data']:
-                grid = map.Grid.from_hdf5_data(
-                    data['map_data'],
-                    materials_data=materials_data,
-                    name=problem_full_name
-                )
 
-            # Create graph if available
-            graph = None
-            if data['has_graph'] and data['graph_data']:
-                graph = map.Graph.from_hdf5_data(
-                    data['graph_data'],
-                    name=problem_full_name
-                )
-            
-            # Create multi-robot problem
-            return cls(
+            problem_full_name = f"{Path(base_path).stem}_{problem_name}"
+            return cls.from_h5(
+                h5_path,
                 robots=robots,
-                grid=grid,
-                graph=graph,
+                materials_data=materials_data,
                 T=time_limit,
                 name=problem_full_name
             )

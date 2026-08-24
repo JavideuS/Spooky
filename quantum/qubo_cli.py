@@ -20,6 +20,12 @@ Usage examples:
   # Graph-based problem
   python qubo_cli.py --map maps/graph/city --problem two_robots --builder graph --solver dwave --penalty-set graph
 
+  # Solve directly against a bare .h5 (no companion problems YAML needed)
+  python qubo_cli.py --map maps/synthetic/fraunhofer/test-scenario_simple --robot robot_0=7,5:7,49 --solver dwave
+
+  # Single-robot shorthand, real-world (ROS map frame) coordinates in meters
+  python qubo_cli.py --map maps/synthetic/fraunhofer/test-scenario_simple --coordinate-format world --start -9.8,17.8 --goal -9.4,17.8 --solver dwave
+
   # Override penalties individually
   python qubo_cli.py --map maps/synthetic/10x10/obs10x10_hard --K-hot 9 --K-adj 4.8 --K-start 6.5 --K-goal 3.0
 
@@ -83,7 +89,10 @@ def build_parser() -> argparse.ArgumentParser:
         "-p",
         default="four_robots",
         metavar="NAME",
-        help="Problem name defined inside the map config (default: four_robots)",
+        help=(
+            "Problem name defined inside the map config (default: four_robots). "
+            "Ignored when --robot or --start/--goal are given."
+        ),
     )
     prob.add_argument(
         "--builder",
@@ -118,13 +127,58 @@ def build_parser() -> argparse.ArgumentParser:
     )
     prob.add_argument(
         "--coordinate-format",
-        choices=["matrix", "cartesian"],
+        choices=["matrix", "cartesian", "world"],
         default="matrix",
         help=(
             "Coordinate convention for start/goal in the problem config and for "
             "printed/visualized output paths: 'matrix' (row, col), Spooky's native "
-            "convention (default), or 'cartesian' (x, y) robotics/Y-up. Per-robot "
+            "convention (default), 'cartesian' (x, y) robotics/Y-up, or 'world' "
+            "(real-world meters, ROS map frame -- requires the map .h5 to carry "
+            "an origin/resolution, see quantum/maps/pgm2HDF5.py). Also governs how "
+            "--robot/--start/--goal tokens are interpreted. Per-robot "
             "'coordinate_format' entries in the map YAML take precedence over this."
+        ),
+    )
+    prob.add_argument(
+        "--robot",
+        action="append",
+        default=[],
+        metavar="ID=START:GOAL[:PRIORITY[:SAFETY_RADIUS[:START_TIME]]]",
+        help=(
+            "Define a robot directly on the command line instead of looking it up "
+            "in a problems YAML -- solves straight against --map's .h5, no "
+            "companion .yaml required. Repeatable for multiple robots. START/GOAL "
+            "are each 'a,b', interpreted per --coordinate-format. "
+            "PRIORITY/SAFETY_RADIUS/START_TIME are optional (defaults: 1.0, 0.5, 0). "
+            "Example: --robot robot_0=0,0:9,9 --robot robot_1=5,5:0,0:2.0. "
+            "Mutually exclusive with --problem/--start/--goal."
+        ),
+    )
+    prob.add_argument(
+        "--start",
+        default=None,
+        metavar="ROW,COL or X,Y",
+        help=(
+            "Shorthand for a single robot's start position, paired with --goal -- "
+            "equivalent to '--robot robot_0=START:GOAL'. Mutually exclusive with --robot."
+        ),
+    )
+    prob.add_argument(
+        "--goal",
+        default=None,
+        metavar="ROW,COL or X,Y",
+        help="Shorthand for a single robot's goal position, paired with --start.",
+    )
+    prob.add_argument(
+        "--horizon",
+        "-T",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Time horizon override (only used with --robot/--start+--goal; the "
+            "problem YAML's own time_limit is used otherwise). If omitted, each "
+            "robot's horizon is computed automatically from its path length."
         ),
     )
     prob.add_argument(
@@ -502,6 +556,71 @@ def build_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 
+def resolve_h5_path(map_arg: str) -> str:
+    """Normalize --map (with or without .h5/.yaml extension) to its .h5 path."""
+    map_arg = str(map_arg)
+    if map_arg.endswith(".h5") or map_arg.endswith(".yaml"):
+        base_path = map_arg.rsplit(".", 1)[0]
+    else:
+        base_path = map_arg
+    return f"{base_path}.h5"
+
+
+def _parse_coord(token: str, context: str) -> tuple:
+    """Parse an 'a,b' token into a (float, float) tuple. Left in whatever
+    --coordinate-format's units; RobotConfig.resolve_coordinates() converts
+    matrix/cartesian/world and casts to int once the problem's grid is known."""
+    parts = token.split(",")
+    if len(parts) != 2:
+        raise ValueError(f"{context}: expected 'a,b', got '{token}'")
+    try:
+        return tuple(float(p) for p in parts)
+    except ValueError:
+        raise ValueError(f"{context}: expected numeric 'a,b', got '{token}'")
+
+
+def parse_robot_specs(raw: list[str], coordinate_format: str):
+    """
+    Parse --robot entries into a list of RobotConfig.
+    Entry format: 'ID=START:GOAL[:PRIORITY[:SAFETY_RADIUS[:START_TIME]]]'
+    """
+    from quantum.robotConfiguration import RobotConfig
+
+    robots = []
+    for entry in raw:
+        if "=" not in entry:
+            raise ValueError(
+                f"Invalid --robot entry '{entry}'. Expected 'ID=START:GOAL[:PRIORITY[:SAFETY_RADIUS[:START_TIME]]]'."
+            )
+        robot_id, rest = entry.split("=", 1)
+        robot_id = robot_id.strip()
+        parts = rest.split(":")
+        if len(parts) < 2:
+            raise ValueError(f"Invalid --robot entry '{entry}': needs at least START:GOAL.")
+
+        start_tok, goal_tok, extra = parts[0], parts[1], parts[2:]
+        if len(extra) > 3:
+            raise ValueError(
+                f"Invalid --robot entry '{entry}': too many fields "
+                f"(expected START:GOAL[:PRIORITY[:SAFETY_RADIUS[:START_TIME]]])."
+            )
+        try:
+            priority = float(extra[0]) if len(extra) > 0 else 1.0
+            safety_radius = float(extra[1]) if len(extra) > 1 else 0.5
+            start_time = int(extra[2]) if len(extra) > 2 else 0
+        except ValueError:
+            raise ValueError(f"Invalid --robot entry '{entry}': PRIORITY/SAFETY_RADIUS/START_TIME must be numeric.")
+
+        start = _parse_coord(start_tok, f"--robot '{entry}' start")
+        goal = _parse_coord(goal_tok, f"--robot '{entry}' goal")
+        robots.append(RobotConfig(
+            robot_id=robot_id, start=start, goal=goal,
+            priority=priority, safety_radius=safety_radius, start_time=start_time,
+            coordinate_format=coordinate_format,
+        ))
+    return robots
+
+
 def parse_window_limits(raw: list[str], robot_ids) -> dict:
     """
     Parse window limit entries into {robot_id: max_steps}.
@@ -802,18 +921,43 @@ def main():
     set_verbose_level(verbose_level)
     logger = get_logger()
 
+    # -- Explicit robots (bypass the problems YAML) --------------------------
+    if args.start is not None or args.goal is not None:
+        if args.robot:
+            parser.error("--start/--goal cannot be combined with --robot; use --robot robot_0=START:GOAL instead.")
+        if args.start is None or args.goal is None:
+            parser.error("--start and --goal must be given together.")
+        args.robot = [f"robot_0={args.start}:{args.goal}"]
+
     logger.minimal(f"qubo_cli starting | map={args.map} | problem={args.problem}")
 
     # -- Materials -----------------------------------------------------------
     materials_data = config_parser.load_config(args.materials)["materials"]
 
     # -- Problem -------------------------------------------------------------
-    problem = PathfindingProblem.from_map_config(
-        args.map,
-        problem_name=args.problem,
-        materials_data=materials_data,
-        coordinate_format=args.coordinate_format,
-    )
+    if args.robot:
+        h5_path = resolve_h5_path(args.map)
+        try:
+            robots = parse_robot_specs(args.robot, args.coordinate_format)
+        except (ValueError, OSError, KeyError) as e:
+            logger.minimal(f"[ERROR] {e}")
+            sys.exit(1)
+        logger.minimal(
+            f"Using {len(robots)} explicitly-specified robot(s) from {h5_path} -- --problem ignored"
+        )
+        problem = PathfindingProblem.from_h5(
+            h5_path,
+            robots=robots,
+            materials_data=materials_data,
+            T=args.horizon,
+        )
+    else:
+        problem = PathfindingProblem.from_map_config(
+            args.map,
+            problem_name=args.problem,
+            materials_data=materials_data,
+            coordinate_format=args.coordinate_format,
+        )
 
     # -- Penalties -----------------------------------------------------------
     if args.penalty_set not in config["penalty_sets"]:
