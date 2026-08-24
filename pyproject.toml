@@ -81,6 +81,7 @@ dev = [
     "pytest",
     "black",
     "flake8",
+    "httpx",  # fastapi_app/test_api.py's TestClient needs this (also requires the fastapi extra)
 ]
 
 visualizer = [

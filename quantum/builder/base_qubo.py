@@ -55,12 +55,41 @@ class BaseQUBO(ABC):
         self.logger = get_logger()  # Use global logger level
         # Populated by get_fixed_variables() before build(); keyed by (robot_id, t_window_relative)
         self._active_cells = None
+        self._warned_unrestricted_build = False
 
     # Subclasses must implement build to populate self.Q
     @abstractmethod
     def build(self, constraints_to_apply=None):
         """Build the QUBO dictionary for the current window and return it."""
         raise NotImplementedError
+
+    # Cells/nodes above which an unrestricted build is worth flagging — cheap
+    # on small synthetic maps, but apply_one_hot()'s per-timestep constraint
+    # loop is O(state_space²), so above this a silent full-grid/full-graph
+    # fallback turns a windowed solve into a multi-second-to-minutes stall.
+    _UNRESTRICTED_BUILD_WARN_THRESHOLD = 200
+
+    def _warn_if_unrestricted_build(self, state_space_size):
+        """
+        Log once (at `minimal`, so it's visible without high verbosity) when
+        build() is about to run over the full grid/graph instead of a
+        BFS-reduced window — i.e. _active_cells hasn't been populated yet.
+        Expected for the deliberate preprocess=False debug path; anywhere
+        else it means _prepare_window() didn't run first as it should have
+        (see update_problem()'s comment for the bug this once caused).
+        """
+        if (
+            self._active_cells is None
+            and not self._warned_unrestricted_build
+            and state_space_size > self._UNRESTRICTED_BUILD_WARN_THRESHOLD
+        ):
+            self._warned_unrestricted_build = True
+            self.logger.minimal(
+                f"⚠️  Building an unrestricted QUBO over all {state_space_size} "
+                "cells/nodes (no BFS-reduced window active). Expected only "
+                "under preprocess=False — otherwise _active_cells should "
+                "have been populated first, and this is an O(n²) footgun."
+            )
 
     # Shared: QUBO -> Ising mapping (identical across formats)
     def qubo_to_ising(self):
@@ -263,9 +292,17 @@ class BaseQUBO(ABC):
                 self.logger.standard(f"Window size increased from {self.t_max} to {new_t_max} after robots became inactive")
                 self.t_max = new_t_max
 
-            # Clear stale BFS data — solve() will repopulate before next build
+            # Clear stale BFS data — solve() will repopulate before next build.
+            # Deliberately NOT calling self.build() here: with _active_cells
+            # cleared, it would fall back to a full-grid build (_cells()'s
+            # unreduced path), which _prepare_window()'s own build() call
+            # immediately discards once it repopulates _active_cells — pure
+            # waste that's invisible on tiny synthetic maps but dominates
+            # runtime on real-sized grids. The preprocess=False raw loops
+            # (PennylaneSolver/DWaveSolver) that read builder.Q without going
+            # through _prepare_window() call builder.build() themselves right
+            # after update_problem() for this reason.
             self._active_cells = None
-            self.build()
 
     def reset_problem(self):
         """Reset windowing and restore initial start position if available."""

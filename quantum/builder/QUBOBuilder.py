@@ -710,6 +710,7 @@ class GridQUBOBuilder(BaseQUBO):
                         self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_swap
 
     def build(self, constraints_to_apply=None):
+        self._warn_if_unrestricted_build(len(self._all_grid_cells))
         if constraints_to_apply is None:
             penalty_to_constraint = {
                 "K_hot": "one_hot",

@@ -440,7 +440,13 @@ def plan_path(robot_id: str, request: PlanRequest):
                 problem, penalties=global_penalties_params["crash"], name="standard"
             )
         start_time = time.time()
-        builder.build()
+        # No builder.build() here: solver.solve() always runs with its
+        # preprocess=True default in this app (no preprocess flag is
+        # exposed), and QUBO builders' _prepare_window() rebuilds after BFS
+        # reduction populates _active_cells anyway — a pre-build here would
+        # be a full-grid build, immediately discarded (see
+        # builder/base_qubo.py's _warn_if_unrestricted_build()). ILP builders
+        # rebuild themselves inside solve() regardless (see ILPSolver.solve()).
         solution = solver.solve(builder)
         planning_time = time.time() - start_time
         raw_path = solver.decode_path(solution["solution"], problem)
@@ -698,7 +704,8 @@ def plan_stateless(request: StatelessPlanRequest):
                 else QUBOBuilder(problem, penalties=penalties, name="v1_plan")
             )
         start_time = time.time()
-        builder.build()
+        # No builder.build() here — see the matching comment in the other
+        # /plan endpoint above for why it's unconditionally wasted work.
         solution = solver.solve(builder)
         planning_time = time.time() - start_time
 

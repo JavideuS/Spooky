@@ -44,6 +44,7 @@ class GraphQUBO(BaseQUBO):
 
     def build(self, constraints_to_apply=None):
         """Build the QUBO dictionary for graph-based pathfinding."""
+        self._warn_if_unrestricted_build(self.num_nodes)
         if constraints_to_apply is None:
             penalty_to_constraint = {
                 "K_hot": "one_hot",

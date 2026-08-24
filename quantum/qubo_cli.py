@@ -1039,8 +1039,12 @@ def main():
         timer = time.time()
         # ILP builders rebuild themselves inside solver.solve() (see
         # ILPSolver.solve()) so the preprocess flag always takes effect;
-        # pre-building here would just duplicate work and logging.
-        if not hasattr(builder, "local_index"):
+        # pre-building here would just duplicate work and logging. Same for
+        # QUBO builders under preprocess=True: _prepare_window() builds after
+        # BFS reduction populates _active_cells, so a pre-build here would be
+        # a full-grid build immediately discarded. Only preprocess=False
+        # needs it, since that path reads builder.Q directly.
+        if not hasattr(builder, "local_index") and args.no_preprocess:
             builder.build()
         solution = solver.solve(builder, preprocess=not args.no_preprocess)
         # Use p (the grid-only/graph-only problem actually passed to the

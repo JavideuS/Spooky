@@ -87,9 +87,12 @@ class BenchmarkRunner:
             # ILP builders rebuild themselves inside solver.solve() so the
             # preprocess flag always takes effect (see ILPSolver.solve());
             # pre-building here would just be redundant work and duplicate
-            # logging. QUBO builders still need this: their preprocess=False
-            # path reads builder.Q directly without calling build() itself.
-            if not hasattr(self.builder, "local_index"):
+            # logging. QUBO builders' preprocess=False path reads builder.Q
+            # directly without calling build() itself, so it still needs this.
+            # preprocess=True doesn't: _prepare_window() builds after BFS
+            # reduction populates _active_cells, so a pre-build here would be
+            # a full-grid build that gets immediately discarded.
+            if not hasattr(self.builder, "local_index") and not self.preprocess:
                 self.builder.build()
             build_duration = time.time() - build_start
 

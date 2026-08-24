@@ -70,6 +70,10 @@ class DWaveSolver(BaseSolver):
                     robot_paths, builder.problem
                 )
                 builder.update_problem(robot_paths)
+                # update_problem() no longer rebuilds Q itself; this raw
+                # preprocess=False loop reads builder.Q directly, so it must
+                # rebuild here.
+                builder.build()
 
             return {
                 "solution": best_sample,

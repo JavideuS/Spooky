@@ -406,6 +406,10 @@ class PennylaneSolver(BaseSolver):
                 if not wires:
                     previous_T = builder.current_T
                     builder.update_problem({})
+                    # update_problem() no longer rebuilds Q itself (see its
+                    # docstring/comment); this raw preprocess=False loop reads
+                    # builder.Q directly, so it must rebuild here.
+                    builder.build()
                     if builder.current_T <= previous_T:
                         self.logger.minimal(
                             "Warning: empty window that cannot advance "
@@ -501,6 +505,10 @@ class PennylaneSolver(BaseSolver):
                         robot_paths, builder.problem
                     )
                     builder.update_problem(robot_paths)
+                    # update_problem() no longer rebuilds Q itself; this raw
+                    # preprocess=False loop reads builder.Q directly, so it
+                    # must rebuild here.
+                    builder.build()
                 except Exception as e:
                     self.logger.minimal(
                         f"Warning: could not decode window {builder.iter} "
