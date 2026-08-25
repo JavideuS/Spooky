@@ -15,6 +15,7 @@ import pytest
 
 from quantum.benchmark.analysis.aggregate import (
     compute_energy_diagnostics,
+    compute_failure_causes,
     compute_energy_excess,
     compute_optimality_gap,
     compute_success_rate,
@@ -676,3 +677,54 @@ def test_exact_solvers_are_not_treated_as_skipped():
     out = compute_energy_excess(df)
     assert out["energy_excess"].tolist() == [0.0, pytest.approx(2.0)]
     assert compute_energy_diagnostics(df).iloc[0]["n_solver_skipped"] == 0
+
+
+def test_load_sweep_finds_artifacts_after_the_sweep_is_moved(synthetic_sweep, tmp_path):
+    """index.json records the path each benchmark JSON had when the sweep ran.
+    Filing a finished sweep somewhere else (results/sweeps/CML/<id>/) makes
+    every one of those paths stale, and aggregation used to die on the first
+    entry."""
+    import shutil
+
+    moved = tmp_path / "archive" / "CML" / synthetic_sweep.name
+    moved.parent.mkdir(parents=True)
+    shutil.copytree(synthetic_sweep, moved)
+    shutil.rmtree(synthetic_sweep)  # originals are now definitively gone
+
+    df = load_sweep(moved)
+    assert len(df) == 4
+    assert set(df["solver_name"]) == {"ilp_ref", "test_solver"}
+    assert len(load_robot_statistics(moved)) == 3
+
+
+def test_failure_causes_separate_preprocessing_from_sampling():
+    """The first question about any failing cell: did pre-processing pin the
+    robots into the conflict, or did the solver sample a bad bitstring? Only
+    the second is fixable by tuning the solver."""
+    rows = [
+        {"instance_map": "m", "problem_name": "three_robots", "solver_name": "sa",
+         "preprocess": True, "valid": False, "invalid_cause": "pre_processing"},
+        {"instance_map": "m", "problem_name": "three_robots", "solver_name": "sa",
+         "preprocess": True, "valid": False, "invalid_cause": "pre_processing"},
+        {"instance_map": "m", "problem_name": "three_robots", "solver_name": "sa",
+         "preprocess": True, "valid": False, "invalid_cause": "solver_sampling"},
+        {"instance_map": "m", "problem_name": "three_robots", "solver_name": "sa",
+         "preprocess": True, "valid": True, "invalid_cause": None},
+    ]
+    out = compute_failure_causes(pd.DataFrame(rows))
+    assert len(out) == 2                      # the valid run contributes nothing
+    top = out.iloc[0]
+    assert top["invalid_cause"] == "pre_processing"
+    assert top["n_runs"] == 2
+    assert out["n_runs"].sum() == 3
+
+
+def test_failure_causes_empty_when_nothing_failed():
+    df = pd.DataFrame([
+        {"instance_map": "m", "problem_name": "p", "solver_name": "s",
+         "preprocess": True, "valid": True, "invalid_cause": None}
+    ])
+    out = compute_failure_causes(df)
+    assert out.empty
+    assert list(out.columns) == ["instance_map", "problem_name", "solver_name",
+                                 "preprocess", "invalid_cause", "n_runs"]

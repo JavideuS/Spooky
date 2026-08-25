@@ -38,6 +38,28 @@ def _robot_efficiency_summary(solution_statistics: Optional[Dict[str, Any]]) -> 
     return sum(efficiencies) / len(efficiencies), min(efficiencies)
 
 
+def _resolve_artifact(sweep_dir: Path, recorded: str) -> Path:
+    """Locate a benchmark JSON named in index.json.
+
+    The index records the path each artifact had when the sweep ran. Filing a
+    finished sweep somewhere else afterwards (results/sweeps/CML/<id>/, an
+    archive, another machine) invalidates every one of those paths, and the
+    whole aggregation then dies on the first entry. The layout inside a sweep
+    directory is stable — <sweep_dir>/<combination_dir>/<file> — so fall back
+    to that before giving up."""
+    recorded_path = Path(recorded)
+    if recorded_path.exists():
+        return recorded_path
+    relocated = sweep_dir / recorded_path.parent.name / recorded_path.name
+    if relocated.exists():
+        return relocated
+    raise FileNotFoundError(
+        f"{recorded} is missing, and so is {relocated} — index.json points "
+        f"outside {sweep_dir} and the artifact is not where a moved sweep "
+        "would have put it either."
+    )
+
+
 def load_sweep(sweep_dir: str) -> pd.DataFrame:
     """Long-format DataFrame, one row per individual solver run."""
     sweep_dir = Path(sweep_dir)
@@ -49,7 +71,9 @@ def load_sweep(sweep_dir: str) -> pd.DataFrame:
     for entry in index:
         if entry.get("dry_run") or not entry.get("benchmark_json"):
             continue
-        with open(entry["benchmark_json"], "r", encoding="utf-8") as f:
+        with open(
+            _resolve_artifact(sweep_dir, entry["benchmark_json"]), "r", encoding="utf-8"
+        ) as f:
             data = json.load(f)
 
         problem_meta = data["metadata"]["problem"]
@@ -81,6 +105,12 @@ def load_sweep(sweep_dir: str) -> pd.DataFrame:
                     "preprocess": entry["preprocess"],
                     "run_id": run.get("run_id"),
                     "valid": run.get("valid"),
+                    # "pre_processing" when BFS/diag fixing forced the
+                    # conflict before the solver ran, "solver_sampling" when
+                    # the solver actually returned a violating bitstring. The
+                    # difference decides whether to fix the formulation or the
+                    # sampler, so it belongs in the table, not only the JSON.
+                    "invalid_cause": (run.get("invalid_cause") or {}).get("origin"),
                     "energy": run.get("energy"),
                     "execution_time_sec": run.get("execution_time_sec"),
                     "num_windows": var_stats.get("num_windows"),
@@ -120,7 +150,9 @@ def load_robot_statistics(sweep_dir: str) -> pd.DataFrame:
     for entry in index:
         if entry.get("dry_run") or not entry.get("benchmark_json"):
             continue
-        with open(entry["benchmark_json"], "r", encoding="utf-8") as f:
+        with open(
+            _resolve_artifact(sweep_dir, entry["benchmark_json"]), "r", encoding="utf-8"
+        ) as f:
             data = json.load(f)
 
         for run in data["runs"]:
@@ -553,6 +585,47 @@ def compute_success_rate(df: pd.DataFrame) -> pd.DataFrame:
         .mean()
         .rename("success_rate")
         .reset_index()
+    )
+
+
+def compute_failure_causes(df: pd.DataFrame) -> pd.DataFrame:
+    """Invalid runs per (instance, solver, preprocess), split by what caused
+    them — the first question to ask of any failing cell.
+
+    pre_processing means BFS or diagonal fixing pinned the robots into a
+    conflict before the solver was invoked; no amount of solver tuning or
+    penalty reweighting can recover that, because the variables needed to
+    avoid it were already removed. solver_sampling means the solver returned
+    a bitstring that violates a penalty that was actually present, which is a
+    sampler or penalty-weight problem.
+
+    Empty (but correctly shaped) if the sweep recorded no invalid runs."""
+    columns = [
+        "instance_map",
+        "problem_name",
+        "solver_name",
+        "preprocess",
+        "invalid_cause",
+        "n_runs",
+    ]
+    if "invalid_cause" not in df.columns:
+        return pd.DataFrame(columns=columns)
+    invalid = df[~_valid_mask(df)]
+    if invalid.empty:
+        return pd.DataFrame(columns=columns)
+    return (
+        invalid.assign(
+            invalid_cause=invalid["invalid_cause"].fillna("not_recorded")
+        )
+        .groupby(
+            ["instance_map", "problem_name", "solver_name", "preprocess", "invalid_cause"],
+            dropna=False,
+        )
+        .size()
+        .rename("n_runs")
+        .reset_index()
+        .sort_values("n_runs", ascending=False)
+        .reset_index(drop=True)
     )
 
 
@@ -1009,12 +1082,14 @@ def aggregate_sweep(
     )
     statistical_tests = run_statistical_tests(runs_long)
     energy_diagnostics = compute_energy_diagnostics(runs_long)
+    failure_causes = compute_failure_causes(runs_long)
     robot_statistics_long = load_robot_statistics(sweep_dir)
 
     runs_long.to_csv(out / "runs_long.csv", index=False)
     summary_by_solver.to_csv(out / "summary_by_solver.csv", index=False)
     statistical_tests.to_csv(out / "statistical_tests.csv", index=False)
     energy_diagnostics.to_csv(out / "energy_diagnostics.csv", index=False)
+    failure_causes.to_csv(out / "failure_causes.csv", index=False)
     robot_statistics_long.to_csv(out / "robot_statistics_long.csv", index=False)
 
     return {
@@ -1022,5 +1097,6 @@ def aggregate_sweep(
         "summary_by_solver": summary_by_solver,
         "statistical_tests": statistical_tests,
         "energy_diagnostics": energy_diagnostics,
+        "failure_causes": failure_causes,
         "robot_statistics_long": robot_statistics_long,
     }
