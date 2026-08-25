@@ -4,6 +4,7 @@ from dimod import BinaryQuadraticModel
 # Optimized version is neal AnnealingSampler not dimod one (C++ based)
 from neal import SimulatedAnnealingSampler
 from .base_solver import BaseSolver
+from quantum.utils import preprocess as preprocess_modes
 
 
 class DWaveSolver(BaseSolver):
@@ -48,7 +49,13 @@ class DWaveSolver(BaseSolver):
         correction_count = 0
         import time as timing
 
-        if not preprocess:
+        # `preprocess` accepts the mode strings in quantum.utils.preprocess as
+        # well as the legacy booleans (True -> "full", False -> "raw").
+        mode = preprocess_modes.normalize(preprocess)
+        bfs_variant = preprocess_modes.bfs_variant(mode)
+        apply_numeric = preprocess_modes.applies_numeric_reduction(mode)
+
+        if not preprocess_modes.uses_windowed_pipeline(mode):
             # Simple loop — no variable reduction, no correction retries
             while (builder.total_t) > (builder.current_T):
                 Q = builder.Q
@@ -92,7 +99,7 @@ class DWaveSolver(BaseSolver):
 
             window_start = timing.time()
             fixed_vars, window_stat, is_preprocessed, window_forced_collisions = (
-                self._prepare_window(builder)
+                self._prepare_window(builder, bfs_variant, apply_numeric)
             )
             window_stats.append(window_stat)
             forced_collisions.extend(window_forced_collisions)

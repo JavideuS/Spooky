@@ -37,6 +37,7 @@ from quantum.benchmark.manifest import (
     record_resume_event,
 )
 from quantum.utils.logger import get_logger, set_verbose_level
+from quantum.utils import preprocess as preprocess_modes
 
 # Two independent flags must both be set before any hardware-gated solver
 # entry runs — see SweepRunner.__init__. Deliberately not a single boolean:
@@ -298,7 +299,9 @@ class SweepRunner:
             np.random.seed(self.global_seed)
 
         execution = self.config.get("execution", {})
-        preprocess_default = execution.get("preprocess_default", True)
+        preprocess_default = preprocess_modes.normalize(
+            execution.get("preprocess_default", True)
+        )
         fail_fast = execution.get("fail_fast", False)
 
         for instance in self.config["instances"]:
@@ -326,7 +329,12 @@ class SweepRunner:
                         continue
 
                     ablation = solver_cfg.get("ablation", {})
-                    preprocess_values = ablation.get("preprocess", [preprocess_default])
+                    # ablation entries may be mode strings or legacy bools;
+                    # normalize so index.json records one vocabulary
+                    preprocess_values = [
+                        preprocess_modes.normalize(v)
+                        for v in ablation.get("preprocess", [preprocess_default])
+                    ]
                     num_runs = solver_cfg.get("num_runs", 1)
 
                     for preprocess in preprocess_values:

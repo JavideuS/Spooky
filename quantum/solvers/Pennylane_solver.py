@@ -2,6 +2,7 @@ import os
 import pennylane as qml
 from pennylane import numpy as np
 from .base_solver import BaseSolver
+from quantum.utils import preprocess as preprocess_modes
 from quantum.hardware.ibm_session import IBMSessionManager
 import time
 
@@ -363,7 +364,13 @@ class PennylaneSolver(BaseSolver):
         best_sample = []
         best_energy = []
 
-        if not preprocess:
+        # `preprocess` accepts the mode strings in quantum.utils.preprocess as
+        # well as the legacy booleans (True -> "full", False -> "raw").
+        mode = preprocess_modes.normalize(preprocess)
+        bfs_variant = preprocess_modes.bfs_variant(mode)
+        apply_numeric = preprocess_modes.applies_numeric_reduction(mode)
+
+        if not preprocess_modes.uses_windowed_pipeline(mode):
             # Simple loop — no variable reduction, no correction retries
             # Build optimizer once for this run
             if self.optimizer_name == "GradientDescent":
@@ -551,7 +558,7 @@ class PennylaneSolver(BaseSolver):
                 break
 
             fixed_vars, window_stat, is_preprocessed, window_forced_collisions = (
-                self._prepare_window(builder)
+                self._prepare_window(builder, bfs_variant, apply_numeric)
             )
             window_stats.append(window_stat)
             forced_collisions.extend(window_forced_collisions)

@@ -45,6 +45,7 @@ from pathlib import Path
 
 from pennylane import numpy as np
 from quantum.solvers import SolverFactory
+from quantum.utils import preprocess as preprocess_modes
 from quantum.pathFormulation import PathfindingProblem, InfeasibleProblemError
 import quantum.config.parser as config_parser
 from quantum.builder import (
@@ -62,6 +63,22 @@ _HERE = Path(__file__).parent  # quantum/
 # ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
+
+
+def _resolve_preprocess(args) -> str:
+    """--preprocess wins; --no-preprocess is kept as an alias for 'raw'.
+
+    Both are accepted so existing scripts and docs keep working. Passing them
+    contradictorily is an error rather than a silent precedence rule."""
+    mode = getattr(args, "preprocess", None)
+    if mode is None:
+        return preprocess_modes.RAW if args.no_preprocess else preprocess_modes.FULL
+    if args.no_preprocess and mode != preprocess_modes.RAW:
+        raise SystemExit(
+            f"--no-preprocess conflicts with --preprocess {mode}. "
+            "--no-preprocess is an alias for --preprocess raw; pass only one."
+        )
+    return preprocess_modes.normalize(mode)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -301,6 +318,20 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Number of solver reads. Pass an integer or 'auto' "
             "(default: dwave=4, pennylane=auto)"
+        ),
+    )
+    sol.add_argument(
+        "--preprocess",
+        choices=list(preprocess_modes.MODES),
+        default=None,
+        help=(
+            "Pre-processing mode. 'full' (default) is aggressive BFS pruning "
+            "plus numerical variable fixing; 'bfs_aggressive' and 'bfs_safe' "
+            "keep the windowed loop and the chosen BFS but skip the numerical "
+            "stage; 'full_safe' is monotone BFS plus numerical; 'raw' is the "
+            "old --no-preprocess simple loop. bfs_safe/full_safe are the only "
+            "modes whose pruning cannot exclude a feasible solution, at "
+            "roughly 10-19x the variables. See quantum/utils/preprocess.py."
         ),
     )
     sol.add_argument(
@@ -1038,7 +1069,7 @@ def main():
             solver,
             num_runs=args.num_runs,
             level=args.benchmark_level,
-            preprocess=not args.no_preprocess,
+            preprocess=_resolve_preprocess(args),
         )
         runner.run_build()
 
@@ -1052,9 +1083,11 @@ def main():
         # BFS reduction populates _active_cells, so a pre-build here would be
         # a full-grid build immediately discarded. Only preprocess=False
         # needs it, since that path reads builder.Q directly.
-        if not hasattr(builder, "local_index") and args.no_preprocess:
+        if not hasattr(builder, "local_index") and not (
+            preprocess_modes.uses_windowed_pipeline(_resolve_preprocess(args))
+        ):
             builder.build()
-        solution = solver.solve(builder, preprocess=not args.no_preprocess)
+        solution = solver.solve(builder, preprocess=_resolve_preprocess(args))
         # Use p (the grid-only/graph-only problem actually passed to the
         # builder), not problem
         path = solver.decode_path(solution["solution"], p)

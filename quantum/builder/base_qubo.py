@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from quantum.utils import paths
 from quantum.utils.validation import is_valid_move
 from quantum.utils.logger import get_logger
+from quantum.utils import preprocess as preprocess_modes
 from collections import Counter
 
 
@@ -563,6 +564,41 @@ class BaseQUBO(ABC):
             dict[int, set[tuple[int, int]]]: {t: {(i, j), ...}} reachable positions per time step.
         """
         pass
+
+    @abstractmethod
+    def reachable_positions_safe(self, robot, start, start_time, end_time):
+        """
+        Monotone reachability: the set at t is the set at t-1 unioned with its
+        neighbours, so staying in place and revisiting are both allowed.
+
+        This is the same semantics as ILPBuilder.bfs_reachable_sets(), and it
+        is the only variant here that cannot exclude a feasible solution --
+        reachable_positions_aggressive() forces a brand-new cell every
+        timestep, which forbids the waiting that multi-robot yielding depends
+        on. Costs roughly 10-19x the variables; see quantum.utils.preprocess.
+
+        Returns:
+            dict[int, set[tuple[int, int]]]: {t: {(i, j), ...}} per time step.
+        """
+        pass
+
+    def reachable_for_window(
+        self, robot, start, start_time, end_time, variant=None
+    ):
+        """Dispatch to the reachability policy `variant` names.
+
+        The variant is a parameter rather than builder state so that both
+        halves of a pre-processing mode -- which BFS, and whether to run the
+        numerical stage -- arrive the same way, through
+        BaseSolver._prepare_window(). Storing one of them on the builder made
+        its behaviour depend on which solve() ran last.
+
+        Defaults to the aggressive policy so a builder driven directly (a
+        script, a test) behaves as it did before the modes existed.
+        """
+        if variant == preprocess_modes.BFS_VARIANT_SAFE:
+            return self.reachable_positions_safe(robot, start, start_time, end_time)
+        return self.reachable_positions_aggressive(robot, start, start_time, end_time)
 
     # Decided to refactor into multiple functions
     # Easier debugging and previous function had troubles with breaks and variable

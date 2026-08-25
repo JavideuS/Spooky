@@ -2,6 +2,7 @@ import inspect
 import pyomo.environ as pyo
 from typing import Any, Dict
 from .base_solver import BaseSolver
+from quantum.utils import preprocess as preprocess_modes
 
 
 class ILPSolver(BaseSolver):
@@ -69,7 +70,9 @@ class ILPSolver(BaseSolver):
         Returns:
             Dictionary containing solution, energy, and raw response
         """
-        builder.build(preprocess=preprocess)
+        # coerce the mode to the bool this builder expects; "raw" is
+        # truthy, so passing the mode through would prune in raw mode
+        builder.build(preprocess=preprocess_modes.applies_bfs_pruning(preprocess))
 
         pyomo_solver = pyo.SolverFactory(self.pyomo_solver_name)
         if "timelimit" in inspect.signature(pyomo_solver.solve).parameters:

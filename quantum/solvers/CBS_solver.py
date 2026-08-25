@@ -1,5 +1,6 @@
 from typing import Any, Dict
 from .base_solver import BaseSolver
+from quantum.utils import preprocess as preprocess_modes
 from .cbs_algorithm import ConflictBasedSearch
 
 
@@ -72,7 +73,9 @@ class CBSSolver(BaseSolver):
         Returns:
             Dictionary containing solution, energy, and raw response
         """
-        builder.build(preprocess=preprocess)
+        # coerce the mode to the bool this builder expects; "raw" is
+        # truthy, so passing the mode through would prune in raw mode
+        builder.build(preprocess=preprocess_modes.applies_bfs_pruning(preprocess))
 
         problem = builder.problem
         robot_nums = problem.get_robot_nums()

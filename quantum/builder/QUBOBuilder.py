@@ -854,6 +854,41 @@ class GridQUBOBuilder(BaseQUBO):
 
         return reachable
 
+    def reachable_positions_safe(self, robot, start, start_time, end_time):
+        """
+        Monotone reachability -- staying in place and revisiting are allowed.
+
+        Same semantics as ILPBuilder.bfs_reachable_sets(): the set at t is the
+        set at t-1 unioned with its neighbours, so it never excludes a cell the
+        robot could legitimately occupy. reachable_positions_aggressive()
+        forces a brand-new, never-revisited cell at every timestep, which
+        forbids waiting -- and waiting is how robots yield to each other, so
+        that pruning can make a solvable multi-robot instance unsolvable.
+
+        The set saturates once it covers the robot's connected component, so
+        this stops growing early rather than recomputing an unchanged set.
+        """
+        adjacency = self.problem.grid.adjacency
+        obstacles = set(self.problem.grid.obstacles or [])
+
+        current = {start}
+        reachable = {start_time: set(current)}
+        for t in range(start_time + 1, end_time):
+            grown = current | {
+                n
+                for cell in current
+                for n in adjacency.get(cell, [])
+                if n not in obstacles
+            }
+            if len(grown) == len(current):
+                # saturated: every later timestep has the same set
+                for rest in range(t, end_time):
+                    reachable[rest] = set(current)
+                break
+            current = grown
+            reachable[t] = set(current)
+        return reachable
+
     def reachable_positions_aggressive_v2(self, robot, start, start_time, end_time):
         """
         Compute reachable positions per time step without backtracking,
@@ -912,7 +947,7 @@ class GridQUBOBuilder(BaseQUBO):
 
         return reachable
 
-    def get_logical_variables(self):
+    def get_logical_variables(self, bfs_variant=None):
         """
         Returns (fixed_ones, active_cells):
         - fixed_ones: {flat_idx: 1} for variables known to be 1 (starts, instantaneous paths).
@@ -945,8 +980,8 @@ class GridQUBOBuilder(BaseQUBO):
             fixed_ones[start_idx] = 1
             self.logger.debug(start_idx, "fixed to 1 for robot", robot_id)
 
-            reachable = self.reachable_positions_aggressive(
-                robot, robot.current_position, start, end
+            reachable = self.reachable_for_window(
+                robot, robot.current_position, start, end, bfs_variant
             )
 
             if (e_i, e_j) in reachable.get(start + 1, set()):

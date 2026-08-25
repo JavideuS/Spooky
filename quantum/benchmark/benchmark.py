@@ -4,6 +4,7 @@ import heapq
 import json
 import time
 from quantum.utils.validation import is_valid_move, get_position_representation
+from quantum.utils import preprocess as preprocess_modes
 from quantum.utils.logger import get_logger
 
 
@@ -39,7 +40,8 @@ class BenchmarkRunner:
         self.penalty_set = qubobuilder.penalties
         self.solver = solver
         self.num_runs = num_runs
-        self.preprocess = preprocess
+        # accepts a mode string or a legacy bool; see quantum.utils.preprocess
+        self.preprocess = preprocess_modes.normalize(preprocess)
         self.level = max(1, min(3, level))  # Clamp to 1-3
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -92,7 +94,9 @@ class BenchmarkRunner:
             # preprocess=True doesn't: _prepare_window() builds after BFS
             # reduction populates _active_cells, so a pre-build here would be
             # a full-grid build that gets immediately discarded.
-            if not hasattr(self.builder, "local_index") and not self.preprocess:
+            if not hasattr(self.builder, "local_index") and not (
+                preprocess_modes.uses_windowed_pipeline(self.preprocess)
+            ):
                 self.builder.build()
             build_duration = time.time() - build_start
 

@@ -531,10 +531,19 @@ class BaseSolver(ABC):
 
         return forced_collisions
 
-    def _prepare_window(self, builder):
+    def _prepare_window(
+        self, builder, bfs_variant=None, apply_numeric_reduction=True
+    ):
         """
         Prepare a QUBO window: derive logical variables, build the sparse QUBO,
-        and apply diagonal reduction.
+        and (optionally) apply diagonal reduction.
+
+        apply_numeric_reduction=False keeps the BFS pruning and the windowed
+        correction loop but skips reduce_diag_fixed_vars_iterative(), which is
+        the stage that pins individual variables from their coefficients
+        without checking what other robots were pinned to. Separating it is
+        what makes `full` vs `bfs_aggressive` measurable -- see
+        quantum.utils.preprocess.
 
         Returns:
             (fixed_vars, window_stat, is_fully_preprocessed, forced_collisions)
@@ -547,7 +556,7 @@ class BaseSolver(ABC):
         import time as timing
 
         t0 = timing.time()
-        fixed_vars, active_cells = builder.get_logical_variables()
+        fixed_vars, active_cells = builder.get_logical_variables(bfs_variant)
         builder._active_cells = active_cells
         t1 = timing.time()
 
@@ -573,7 +582,11 @@ class BaseSolver(ABC):
 
         initial_vars = builder.get_num_wires()
         bfs_fixed = fixed_vars
-        diag_fixed = builder.reduce_diag_fixed_vars_iterative()
+        diag_fixed = (
+            builder.reduce_diag_fixed_vars_iterative()
+            if apply_numeric_reduction
+            else {}
+        )
         fixed_vars = {**bfs_fixed, **diag_fixed}
         t3 = timing.time()
 

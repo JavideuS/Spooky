@@ -96,7 +96,7 @@ class GraphQUBO(BaseQUBO):
             return self._active_cells.get((robot_id, t), [])
         return range(self.num_nodes)
 
-    def get_logical_variables(self):
+    def get_logical_variables(self, bfs_variant=None):
         """
         Returns (fixed_ones, active_cells):
         - fixed_ones: {flat_idx: 1} for variables known to be 1.
@@ -126,8 +126,8 @@ class GraphQUBO(BaseQUBO):
             fixed_ones[start_idx] = 1
             self.logger.debug(start_idx, "fixed to 1 for robot", robot_id)
 
-            reachable = self.reachable_positions_aggressive(
-                robot, start_node, start, end
+            reachable = self.reachable_for_window(
+                robot, start_node, start, end, bfs_variant
             )
 
             if goal_node in reachable.get(start + 1, set()):
@@ -750,6 +750,28 @@ class GraphQUBO(BaseQUBO):
                     reachable_at_time[t + 1].add(node_j)
 
         return reachable_at_time
+
+    def reachable_positions_safe(self, robot, start_node, start_time, end_time):
+        """
+        Monotone reachability over graph nodes -- staying put and revisiting
+        are both allowed. Graph counterpart of
+        GridQUBOBuilder.reachable_positions_safe(); see
+        quantum.utils.preprocess for why the aggressive variant can make a
+        solvable multi-robot instance unsolvable.
+        """
+        adjacency = self.problem.graph.adjacency
+
+        current = {start_node}
+        reachable = {start_time: set(current)}
+        for t in range(start_time + 1, end_time):
+            grown = current | {n for node in current for n in adjacency.get(node, [])}
+            if len(grown) == len(current):
+                for rest in range(t, end_time):
+                    reachable[rest] = set(current)
+                break
+            current = grown
+            reachable[t] = set(current)
+        return reachable
 
     def reachable_positions_aggressive(self, robot, start_node, start_time, end_time):
 
