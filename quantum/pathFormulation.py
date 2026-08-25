@@ -4,6 +4,11 @@ from quantum.robotConfiguration import RobotConfig
 from quantum.utils.logger import get_logger
 
 
+class InfeasibleProblemError(ValueError):
+    """A robot's start/goal is out of bounds, on an obstacle, an unknown
+    graph node, or leaves it no time to plan within the given horizon."""
+
+
 class PathfindingProblem:
 
     def __init__(self, robots, grid=None, graph=None, T=None, name="unnamed"):
@@ -41,6 +46,8 @@ class PathfindingProblem:
             resolution = self.grid.resolution if self.grid is not None else None
             robot.resolve_coordinates(num_rows, origin=origin, resolution=resolution)
 
+        self._validate_robot_positions()
+
         if T is None:
             T = self.calculate_timeline()
         else:
@@ -48,11 +55,49 @@ class PathfindingProblem:
             # still fits within the global horizon T for staggered starts.
             for robot in self.robots.values():
                 if robot.T is None:
-                    robot.T = T - robot.start_time
+                    remaining = T - robot.start_time
+                    if remaining <= 0:
+                        raise InfeasibleProblemError(
+                            f"Robot '{robot.robot_id}' start_time={robot.start_time} "
+                            f"leaves no time to plan within horizon T={T}."
+                        )
+                    robot.T = remaining
         self.T = T
         self.T = T
         self.name = name
         
+    def _validate_robot_positions(self):
+        """
+        Fail fast on an infeasible start/goal (out of bounds, on an
+        obstacle, or an unknown graph node) instead of letting it surface
+        later as a cryptic var_limit error, a silently-unsatisfiable QUBO,
+        or a failed benchmark run. Positions are matrix (row, col) tuples
+        (grid mode) or plain node ints (graph mode) by this point -- see
+        resolve_coordinates(). A tuple position is only meaningful with a
+        grid present, and an int node id only with a graph present -- see
+        get_graph_robot_current_goal() for how a tuple is later resolved to
+        a node id in "both"-format problems.
+        """
+        for robot in self.robots.values():
+            for label, pos in (("start", robot.start), ("goal", robot.goal)):
+                if isinstance(pos, (tuple, list)) and self.grid is not None:
+                    i, j = pos
+                    if not (0 <= i < self.grid.M and 0 <= j < self.grid.N):
+                        raise InfeasibleProblemError(
+                            f"Robot '{robot.robot_id}' {label} {pos} is out of bounds "
+                            f"for a {self.grid.M}x{self.grid.N} grid."
+                        )
+                    if (i, j) in self.grid.obstacles:
+                        raise InfeasibleProblemError(
+                            f"Robot '{robot.robot_id}' {label} {pos} is on an obstacle."
+                        )
+                elif isinstance(pos, int) and self.graph is not None:
+                    if not (0 <= pos < len(self.graph.nodes)):
+                        raise InfeasibleProblemError(
+                            f"Robot '{robot.robot_id}' {label} node id {pos} does not exist "
+                            f"in graph '{self.graph.name}' with {len(self.graph.nodes)} nodes."
+                        )
+
     @classmethod
     def general_init(cls, start, end, grid=None, graph=None, T=None, name="unnamed", coordinate_format="matrix"):
         # In this case we simply create a default robot configuration for single robot

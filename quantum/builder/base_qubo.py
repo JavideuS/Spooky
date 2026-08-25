@@ -53,9 +53,34 @@ class BaseQUBO(ABC):
         self.verbose_level = verbose_level
         # Initialize logger
         self.logger = get_logger()  # Use global logger level
+        self._warn_if_horizon_too_tight()
         # Populated by get_fixed_variables() before build(); keyed by (robot_id, t_window_relative)
         self._active_cells = None
         self._warned_unrestricted_build = False
+
+    def _warn_if_horizon_too_tight(self):
+        """
+        Heads-up only, not a hard error: unlike ILP/CBS -- which solve the
+        whole horizon in one shot and reject this outright, see
+        quantum.builder.ILPBuilder.validate_time_horizon() -- QUBO/QAOA
+        windowing means a robot's T below what a clean path needs is a
+        legitimate input, not just a mistake: it's exactly what you'd set
+        to study how windowed reduction/approximation degrades under a
+        tight budget. So just make sure it's a choice the caller is aware
+        of, rather than something that only shows up later as an
+        unreached-goal benchmark result.
+        """
+        if self.problem.grid is None:
+            return
+        for robot in self.problem.robots.values():
+            dist = self.problem.manhattan_distance(robot.start, robot.goal)
+            if robot.T - 1 < dist:
+                self.logger.minimal(
+                    f"[WARNING] Robot '{robot.robot_id}' has T={robot.T} "
+                    f"(={robot.T - 1} moves) but needs at least {dist} "
+                    f"(Manhattan distance) to reach its goal from its start -- "
+                    f"this horizon may not be enough."
+                )
 
     # Subclasses must implement build to populate self.Q
     @abstractmethod

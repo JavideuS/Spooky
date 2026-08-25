@@ -45,7 +45,7 @@ from pathlib import Path
 
 from pennylane import numpy as np
 from quantum.solvers import SolverFactory
-from quantum.pathFormulation import PathfindingProblem
+from quantum.pathFormulation import PathfindingProblem, InfeasibleProblemError
 import quantum.config.parser as config_parser
 from quantum.builder import (
     QUBOBuilder, GraphQUBO, GridILPBuilder, GraphILPBuilder,
@@ -945,19 +945,27 @@ def main():
         logger.minimal(
             f"Using {len(robots)} explicitly-specified robot(s) from {h5_path} -- --problem ignored"
         )
-        problem = PathfindingProblem.from_h5(
-            h5_path,
-            robots=robots,
-            materials_data=materials_data,
-            T=args.horizon,
-        )
+        try:
+            problem = PathfindingProblem.from_h5(
+                h5_path,
+                robots=robots,
+                materials_data=materials_data,
+                T=args.horizon,
+            )
+        except InfeasibleProblemError as e:
+            logger.minimal(f"[ERROR] {e}")
+            sys.exit(1)
     else:
-        problem = PathfindingProblem.from_map_config(
-            args.map,
-            problem_name=args.problem,
-            materials_data=materials_data,
-            coordinate_format=args.coordinate_format,
-        )
+        try:
+            problem = PathfindingProblem.from_map_config(
+                args.map,
+                problem_name=args.problem,
+                materials_data=materials_data,
+                coordinate_format=args.coordinate_format,
+            )
+        except InfeasibleProblemError as e:
+            logger.minimal(f"[ERROR] {e}")
+            sys.exit(1)
 
     # -- Penalties -----------------------------------------------------------
     if args.penalty_set not in config["penalty_sets"]:

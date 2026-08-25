@@ -1,6 +1,6 @@
 import networkx as nx
 from quantum.utils.logger import get_logger
-from quantum.builder.ILPBuilder import bfs_reachable_sets, reverse_adjacency
+from quantum.builder.ILPBuilder import bfs_reachable_sets, reverse_adjacency, validate_time_horizon
 
 
 class BaseCBSBuilder:
@@ -13,6 +13,7 @@ class BaseCBSBuilder:
     """
 
     def __init__(self, problem, name="cbs", verbose_level=2):
+        validate_time_horizon(problem)
         self.problem = problem
         self.name = name
         self.graph = None

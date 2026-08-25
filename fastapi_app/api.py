@@ -485,6 +485,8 @@ def plan_path(robot_id: str, request: PlanRequest):
             response.solver_details = solver.to_dict()
 
         return response
+    except pathfinding.InfeasibleProblemError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         logger.exception(
             "Planning failed for robot_id=%s map_id=%s request=%s",
@@ -771,6 +773,8 @@ def plan_stateless(request: StatelessPlanRequest):
             response.figure = json.loads(fig.to_json())
 
         return response
+    except pathfinding.InfeasibleProblemError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         logger.exception(
             "Planning failed for map_id=%s solver=%s request=%s",

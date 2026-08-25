@@ -1,5 +1,33 @@
 import pyomo.environ as pyo
 from quantum.utils.logger import get_logger
+from quantum.pathFormulation import InfeasibleProblemError
+
+
+def validate_time_horizon(problem):
+    """
+    Hard-reject a robot whose horizon can't possibly fit a path to goal,
+    for exact solvers only (ILP, CBS). They solve the whole horizon in one
+    shot -- unlike QUBO's windowed builders, there's no partial/reduced
+    result to fall back on and no post-hoc benchmark validity check worth
+    running first, so an infeasible horizon here is a hard error, not a
+    warning (see BaseILPBuilder/BaseCBSBuilder docstrings: both search
+    exactly `robot.T - 1` moves from start via bfs_reachable_sets()).
+
+    Grid-mode only: Manhattan distance is an exact admissible lower bound
+    on moves-to-goal there. Graph mode has no equivalent cheap bound
+    (edge topology isn't Euclidean), so it's left unchecked here -- same
+    reasoning as PathfindingProblem not doing full BFS reachability.
+    """
+    if problem.grid is None:
+        return
+    for robot in problem.robots.values():
+        dist = problem.manhattan_distance(robot.start, robot.goal)
+        if robot.T - 1 < dist:
+            raise InfeasibleProblemError(
+                f"Robot '{robot.robot_id}' has T={robot.T} (={robot.T - 1} moves) "
+                f"but needs at least {dist} (Manhattan distance) to reach its "
+                f"goal from its start -- no path can exist in this horizon."
+            )
 
 
 def bfs_reachable_sets(reachable, start, max_steps):
@@ -52,6 +80,7 @@ class BaseILPBuilder:
     """
 
     def __init__(self, problem, name="ilp", verbose_level=2):
+        validate_time_horizon(problem)
         self.problem = problem
         self.name = name
         self.model = None
