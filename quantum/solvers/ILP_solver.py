@@ -75,20 +75,56 @@ class ILPSolver(BaseSolver):
         builder.build(preprocess=preprocess_modes.applies_bfs_pruning(preprocess))
 
         pyomo_solver = pyo.SolverFactory(self.pyomo_solver_name)
-        if "timelimit" in inspect.signature(pyomo_solver.solve).parameters:
+        solve_params = inspect.signature(pyomo_solver.solve).parameters
+        solve_kwargs = {}
+        if "timelimit" in solve_params:
             # APPSI-backed solvers (appsi_highs, appsi_cbc, ...) — Pyomo's
             # LegacySolverInterface.solve() replaces self.config with a fresh
             # default config on every call and only reads time_limit from
             # this kwarg, so setting pyomo_solver.config.time_limit ahead of
             # time (the obvious-looking approach) is silently discarded.
-            results = pyomo_solver.solve(builder.model, timelimit=self.time_limit)
+            solve_kwargs["timelimit"] = self.time_limit
         else:
             # Plain legacy plugin backends (cbc, glpk, ...) — no shared
             # kwarg; option name varies by solver (cbc wants 'seconds',
             # glpk wants 'tmlim'). 'time_limit' covers the common case but
             # isn't universal for every possible backend.
             pyomo_solver.options["time_limit"] = self.time_limit
-            results = pyomo_solver.solve(builder.model)
+
+        # Load the solution ourselves rather than letting solve() do it. When
+        # the time limit fires before HiGHS has any incumbent there is nothing
+        # to load, and the default load_solutions=True raises a RuntimeError
+        # that kills the whole run -- so a timeout, which is an ordinary
+        # censored result, would abort a sweep instead of being recorded.
+        defers_loading = "load_solutions" in solve_params
+        if defers_loading:
+            solve_kwargs["load_solutions"] = False
+
+        results = pyomo_solver.solve(builder.model, **solve_kwargs)
+        termination = str(results.solver.termination_condition)
+
+        if defers_loading:
+            try:
+                builder.model.solutions.load_from(results)
+            except (RuntimeError, ValueError, AttributeError, IndexError) as exc:
+                self.logger.minimal(
+                    f"ILP returned no loadable solution ({termination}): {exc}. "
+                    "Reporting an empty path rather than raising -- validation "
+                    "will mark the run invalid and termination_condition "
+                    "records why."
+                )
+                vars_per_time = builder.vars_per_time
+                total = vars_per_time * builder.problem.T * builder.problem.num_robots
+                return {
+                    "solution": {idx: 0 for idx in range(total)},
+                    "energy": float("inf"),
+                    "raw_response": results,
+                    "metadata": {
+                        "termination_condition": termination,
+                        "solver_config": self.to_dict(),
+                        "window_stats": [],
+                    },
+                }
 
         problem = builder.problem
         robot_nums = problem.get_robot_nums()
