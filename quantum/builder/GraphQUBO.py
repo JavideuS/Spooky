@@ -773,30 +773,54 @@ class GraphQUBO(BaseQUBO):
             reachable[t] = set(current)
         return reachable
 
-    def reachable_positions_aggressive(self, robot, start_node, start_time, end_time):
-
+    def reachable_positions_aggressive(
+        self, robot, start_node, start_time, end_time, blocked=None, allow_wait_at=None
+    ):
+        """
+        blocked: optional {t: {node_id, ...}} of nodes to treat as
+        temporary/dynamic obstacles at that specific timestep only -- see
+        QUBOBuilder.GridQUBOBuilder.reachable_positions_aggressive for why.
+        allow_wait_at: optional set of timesteps at which the robot may stay
+        at its current node(s) instead of the walk ending early when
+        blocking/no-revisit leaves no forward candidates -- see
+        QUBOBuilder.GridQUBOBuilder.reachable_positions_aggressive.
+        """
         goal_node = self.problem.get_graph_robot_current_goal(robot.robot_id)[1]
         reachable_at_time = {start_time: {start_node}}
         visited = {start_node}  # Prevent revisiting previously reached nodes
+        blocked = blocked or {}
+        allow_wait_at = allow_wait_at or set()
 
         # Match QUBOBuilder loop range: start at start_time + 1, end at end_time
         for t in range(start_time + 1, end_time):
             prev_layer = reachable_at_time[t - 1]
             curr_layer = set()
+            blocked_at_t = blocked.get(t, set())
 
             for node_i in prev_layer:
                 for node_j, _ in self.graph.adjacency.get(node_i, []):
                     # Only expand to new nodes not yet visited
-                    if node_j not in visited:
+                    if node_j not in visited and node_j not in blocked_at_t:
                         curr_layer.add(node_j)
                         visited.add(node_j)
-            # Stop early if no new nodes are reachable
-            if not curr_layer:
-                break
 
             # To make sure goal is always reachable (and not conflict with goal lock)
-            if goal_node in visited:
+            if goal_node in visited and goal_node not in blocked_at_t:
                 curr_layer.add(goal_node)
+
+            if not curr_layer:
+                # See QUBOBuilder.GridQUBOBuilder.reachable_positions_aggressive:
+                # the "stay" node must still respect blocked_at_t, or a node
+                # blocked for being a confirmed collision gets re-offered
+                # identically on every retry.
+                stay_layer = (
+                    set(prev_layer) - blocked_at_t if t in allow_wait_at else set()
+                )
+                if stay_layer:
+                    curr_layer = stay_layer
+                else:
+                    # Stop early if no new nodes are reachable
+                    break
 
             reachable_at_time[t] = curr_layer
 

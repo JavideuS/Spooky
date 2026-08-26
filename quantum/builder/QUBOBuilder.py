@@ -809,7 +809,9 @@ class GridQUBOBuilder(BaseQUBO):
 
         return reachable
 
-    def reachable_positions_aggressive(self, robot, start, start_time, end_time):
+    def reachable_positions_aggressive(
+        self, robot, start, start_time, end_time, blocked=None, allow_wait_at=None
+    ):
         """
         Compute reachable positions per time step without backtracking.
         That means once a cell is reached, it won't be revisited in future time steps.
@@ -818,6 +820,19 @@ class GridQUBOBuilder(BaseQUBO):
             robot: Robot object with current_position.
             start_time (int): starting time step.
             end_time (int): ending time step (exclusive).
+            blocked: optional {t: {(i, j), ...}} of cells to treat as
+                temporary/dynamic obstacles at that specific timestep only --
+                used when recalculating around a detected collision, so the
+                colliding cell can't be re-derived here and handed back as
+                "the only option" again. Unlike `obstacles`, this is scoped
+                to one timestep, not the whole grid for all time.
+            allow_wait_at: optional set of timesteps at which, if blocking
+                and "no revisit" leave zero forward candidates, the robot is
+                allowed to stay at wherever it already was instead of
+                terminating the walk early -- a one-step, targeted opt-in to
+                reachable_positions_safe()'s semantics, used as the fallback
+                when dynamic-obstacle rerouting alone finds no escape. Normal
+                aggressive (no-revisit) expansion resumes at the next step.
 
         Returns:
             dict[int, set[tuple[int, int]]]: {t: {(i, j), ...}} reachable positions per time step.
@@ -826,6 +841,8 @@ class GridQUBOBuilder(BaseQUBO):
         goal = robot.goal
         adjacency = self.problem.grid.adjacency  # adjacency map without obstacles
         obstacles = set(self.problem.grid.obstacles or [])
+        blocked = blocked or {}
+        allow_wait_at = allow_wait_at or set()
 
         reachable = {start_time: {start}}
         visited = {start}  # <- prevent backtracking / revisiting
@@ -834,24 +851,45 @@ class GridQUBOBuilder(BaseQUBO):
         for t in range(start_time + 1, end_time):
             prev_layer = reachable[t - 1]
             curr_layer = set()
+            blocked_at_t = blocked.get(t, set())
 
             for i, j in prev_layer:
                 for ni, nj in adjacency.get((i, j), []):
-                    if (ni, nj) not in obstacles and (ni, nj) not in visited:
+                    if (
+                        (ni, nj) not in obstacles
+                        and (ni, nj) not in visited
+                        and (ni, nj) not in blocked_at_t
+                    ):
                         curr_layer.add((ni, nj))
                         visited.add((ni, nj))  # mark as seen globally
 
             # Always include goal once reachable — robot may stay there indefinitely.
             # This must come before the empty check so late timesteps get {goal} instead of {}.
-            if goal in visited:
+            if goal in visited and goal not in blocked_at_t:
                 curr_layer.add(goal)
 
-            # Stop only if goal hasn't been reached yet and no new cells found
             if not curr_layer:
-                break
+                # Nowhere new to go this step -- stay put rather than ending
+                # the walk here, then resume normal aggressive expansion
+                # from the same cells next step. Still respects blocked_at_t:
+                # if the "stay" cell is itself a confirmed collision (another
+                # robot is fixed there too), offering it again would just
+                # get rejected identically on every retry -- exclude it like
+                # any other blocked cell instead of looping on it.
+                stay_layer = (
+                    set(prev_layer) - blocked_at_t if t in allow_wait_at else set()
+                )
+                if stay_layer:
+                    curr_layer = stay_layer
+                else:
+                    # Stop only if goal hasn't been reached yet and no new
+                    # cells found (and waiting wasn't offered/didn't help).
+                    break
 
             reachable[t] = curr_layer
-
+        self.logger.debug(
+            f"Reachable positions for robot {robot.robot_id}: {reachable}"
+        )
         return reachable
 
     def reachable_positions_safe(self, robot, start, start_time, end_time):
