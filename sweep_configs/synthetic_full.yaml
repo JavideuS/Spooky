@@ -1,0 +1,129 @@
+# Full synthetic benchmark: every synthetic map/problem pair, all four
+# classical backends. Provenance for a given run lives in that sweep's
+# manifest.json (config, git SHA, package versions) -- this file records only
+# choices that are not recoverable from it.
+#
+#   spooky-sweep --config sweep_configs/synthetic_full.yaml --dry-run
+#   spooky-sweep --config sweep_configs/synthetic_full.yaml
+#   python -m quantum.benchmark.analysis.run_aggregate -d results/sweeps/<id>
+#
+# Excluded on purpose:
+#   5x5/obs5x5_hard three_robots  robot_2's goal (4,2) is on an obstacle --
+#                                 the map is malformed, not the solver.
+#   100x100, 1000x1000            no backend finishes a single run inside the
+#                                 timeout, SA included.
+#
+# run_timeout_sec bounds one (instance x solver x ablation) run. The
+# per-solver time_limits are not enough on their own:
+#   ilp   time_limit only bounds the HiGHS solve, not Pyomo model
+#         construction -- 50x50/no_obs baseline takes ~83s wall with
+#         --time-limit 10, nearly all of it building the model.
+#   cbs   honours its own time_limit and is fast here (0.15s on that map).
+#   sa, qaoa   no time bound of any kind exists.
+# A timed-out run lands in manifest.json as a failure instead of blocking the
+# sweep. Best-effort -- SIGALRM cannot interrupt a call already inside a C
+# extension.
+
+sweep:
+  id: null # auto-generated sweep_<timestamp>_<hex8> if omitted
+  seed: 42
+  enable_hardware: false
+  output_root: results/sweeps
+
+instances:
+
+  # 2x2
+  - map: quantum/maps/synthetic/2x2/no_obs2x2
+    problems: [baseline]
+    builder: grid
+
+  # 3x2
+  - map: quantum/maps/synthetic/3x2/no_obs3x2
+    problems: [baseline]
+    builder: grid
+
+  # 3x3
+  - map: quantum/maps/synthetic/3x3/no_obs3x3
+    problems: [baseline]
+    builder: grid
+  - map: quantum/maps/synthetic/3x3/no_obs3x3_elev
+    problems: [baseline]
+    builder: grid
+  - map: quantum/maps/synthetic/3x3/no_obs3x3_ter
+    problems: [baseline]
+    builder: grid
+  - map: quantum/maps/synthetic/3x3/no_obs3x3ter_alt
+    problems: [baseline]
+    builder: grid
+  - map: quantum/maps/synthetic/3x3/obs3x3_standard
+    problems: [baseline]
+    builder: grid
+
+  # 5x5
+  - map: quantum/maps/synthetic/5x5/no_obs5x5
+    problems: [baseline, easyv3]
+    builder: grid
+  - map: quantum/maps/synthetic/5x5/obs5x5_easy
+    problems: [baseline, two_robots, three_robots, four_robots_corners]
+    builder: grid
+  - map: quantum/maps/synthetic/5x5/obs5x5_hard
+    problems: [baseline, hard, hard_alt, two_robots, five_robots]
+    builder: grid
+  - map: quantum/maps/synthetic/5x5/obs5x5_medium
+    problems: [baseline, easy, two_robots, three_robots]
+    builder: grid
+
+  # 10x10
+  - map: quantum/maps/synthetic/10x10/no_obs10x10
+    problems: [baseline, two_robots]
+    builder: grid
+  - map: quantum/maps/synthetic/10x10/obs10x10_easy
+    problems: [baseline, two_robots, four_robots, six_robots]
+    builder: grid
+  - map: quantum/maps/synthetic/10x10/obs10x10_hard
+    problems: [baseline, two_robots, four_robots, six_robots, ten_robots]
+    builder: grid
+  - map: quantum/maps/synthetic/10x10/obs10x10_medium
+    problems: [baseline, two_robots, four_robots, eight_robots]
+    builder: grid
+
+  # 50x50
+  - map: quantum/maps/synthetic/50x50/no_obs50x50
+    problems: [baseline, two_robots, four_robots, six_robots]
+    builder: grid
+  - map: quantum/maps/synthetic/50x50/obs50x50_medium
+    problems: [baseline, two_robots, four_robots]
+    builder: grid
+
+solvers:
+  - name: ilp_highs
+    backend: ilp
+    params: { time_limit: 120 }
+    num_runs: 1 # deterministic
+
+  - name: cbs
+    backend: cbs
+    params: { node_limit: 5000, time_limit: 120 }
+    num_runs: 1 # deterministic
+
+  - name: sa_neal
+    backend: dwave
+    params: { normalize_scale: 4, num_reads: 4 }
+    penalty_set: crash
+    num_runs: 10 # stochastic
+
+  - name: qaoa_sim
+    backend: pennylane
+    params:
+      device: lightning.qubit
+      normalize_scale: 1.0
+      layers: 2
+      optimizer: QNG
+      opt_steps: 30
+    penalty_set: crash
+    num_runs: 10 # stochastic
+
+execution:
+  run_timeout_sec: 300
+  preprocess_default: full
+  fail_fast: false

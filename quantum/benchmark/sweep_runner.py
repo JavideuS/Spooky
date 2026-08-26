@@ -10,6 +10,8 @@ ad hoc runs).
 """
 
 import json
+import contextlib
+import signal
 import traceback
 import uuid
 from datetime import datetime
@@ -66,6 +68,36 @@ class SweepConfigError(ValueError):
     """Raised by SweepRunner.load() on any config problem — validation
     happens entirely before any compute, so a typo doesn't surface 20
     minutes into a sweep."""
+
+
+class RunTimeout(Exception):
+    """A single (instance x solver x ablation) run exceeded run_timeout_sec."""
+
+
+@contextlib.contextmanager
+def _run_timeout(seconds):
+    """Abort a run that overruns, so one hung combination cannot block a sweep.
+
+    Uses SIGALRM, which only fires between Python bytecodes: a long call inside
+    a C extension (neal's sampler, lightning's statevector) is not interrupted
+    until it returns. That still covers the cases seen here, where the overrun
+    is in the Python-side BFS/QUBO build on large grids -- but it is a
+    best-effort bound, not a hard one, so a run can exceed it.
+    """
+    if not seconds or not hasattr(signal, "SIGALRM"):
+        yield
+        return
+
+    def _fire(signum, frame):
+        raise RunTimeout(f"exceeded run_timeout_sec={seconds}")
+
+    previous = signal.signal(signal.SIGALRM, _fire)
+    signal.alarm(int(seconds))
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 class SweepRunner:
@@ -299,6 +331,7 @@ class SweepRunner:
             np.random.seed(self.global_seed)
 
         execution = self.config.get("execution", {})
+        self.run_timeout_sec = execution.get("run_timeout_sec")
         preprocess_default = preprocess_modes.normalize(
             execution.get("preprocess_default", True)
         )
@@ -447,7 +480,8 @@ class SweepRunner:
                 level=2,
                 preprocess=preprocess,
             )
-            runner.run_build()  # unchanged — writes its own benchmark_*.json into run_dir
+            with _run_timeout(self.run_timeout_sec):
+                runner.run_build()  # writes its own benchmark_*.json into run_dir
 
             json_files = sorted(run_dir.glob("benchmark_*.json"))
             json_path = str(json_files[-1]) if json_files else None
