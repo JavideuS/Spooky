@@ -574,6 +574,9 @@ class PennylaneSolver(BaseSolver):
                 )
                 best_sample.append(full_sol)
                 best_energy.append(0.0)
+                correction_count = self._handle_correction_backoff(
+                    builder, full_sol, invalid_moves, correction_count
+                )
                 continue
 
             if self.norm_scale != 0:
@@ -895,35 +898,9 @@ class PennylaneSolver(BaseSolver):
             best_energy.append(energies[best_idx])
 
             # Check if correction is needed due to invalid moves
-            if invalid_moves:
-                correction_count += 1
-                self.logger.standard(
-                    f"🔄 Correction attempt {correction_count}/{self.max_corrections} for current window"
-                )
-
-                if correction_count >= self.max_corrections:
-                    self.logger.minimal(
-                        f"⚠️  Max corrections ({self.max_corrections}) exceeded at t={builder.current_T}. "
-                        f"Keeping last result (invalid moves for robots {list(invalid_moves.keys())})."
-                    )
-
-                    # CRITICAL: Force builder to advance to next window to avoid infinite loop
-                    # Decode the path from the invalid solution and update the problem
-                    path = self.decode_path(
-                        full_sol, builder.problem, t_offset=builder.current_T
-                    )
-                    robot_paths = self.get_robot_paths(path)
-                    robot_paths = self._resolve_duplicate_timesteps(
-                        robot_paths, builder.problem
-                    )
-                    # Note: We skip _resolve_invalid_moves since we already know there are invalid moves
-                    # and we want to accept them to move forward
-                    builder.update_problem(robot_paths)
-
-                    correction_count = 0
-                # else: next loop iteration calls _prepare_window to rebuild from scratch
-            else:
-                correction_count = 0
+            correction_count = self._handle_correction_backoff(
+                builder, full_sol, invalid_moves, correction_count
+            )
 
             self.logger.debug(f"Best energy this iteration: {energies[best_idx]}")
             self.logger.debug(f"Best sample: {samples[best_idx]}")

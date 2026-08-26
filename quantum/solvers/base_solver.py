@@ -806,3 +806,47 @@ class BaseSolver(ABC):
 
         builder.update_problem(robot_paths)
         return full_sol, invalid_moves
+
+    def _handle_correction_backoff(self, builder, full_sol, invalid_moves, correction_count):
+        """
+        Track repeated invalid-move corrections for the current window and
+        force it forward once max_corrections is exceeded, instead of
+        retrying it forever.
+
+        _handle_iteration_result() deliberately skips update_problem() when
+        invalid_moves is non-empty, so the next attempt rebuilds the same
+        window from scratch (see its docstring). That's fine when the retry
+        can actually turn up a different result -- but nothing else advances
+        builder.current_T, so a window that reproduces the same invalid move
+        on every attempt (whether it went through the actual solver or was
+        fully pre-processed by diag-fixing) never terminates on its own.
+        Call this after every _handle_iteration_result(), in both the
+        solved and the "fully pre-processed, skip the solver" paths, so the
+        same escalation applies regardless of which one produced the result.
+
+        Returns the updated correction_count (0 once either no correction
+        was needed, or the window was just forced forward).
+        """
+        if not invalid_moves:
+            return 0
+
+        correction_count += 1
+        self.logger.standard(
+            f"🔄 Correction attempt {correction_count}/{self.max_corrections} for current window"
+        )
+        if correction_count >= self.max_corrections:
+            self.logger.minimal(
+                f"⚠️  Max corrections ({self.max_corrections}) exceeded at t={builder.current_T}. "
+                f"Keeping last result (invalid moves for robots {list(invalid_moves.keys())})."
+            )
+            # Force the window forward despite the invalid moves: decode
+            # the last (invalid) result and update_problem() with it
+            # directly, skipping _resolve_invalid_moves since we already
+            # know it's invalid and want to accept it anyway to make progress.
+            path = self.decode_path(full_sol, builder.problem, t_offset=builder.current_T)
+            robot_paths = self.get_robot_paths(path)
+            robot_paths = self._resolve_duplicate_timesteps(robot_paths, builder.problem)
+            builder.update_problem(robot_paths)
+            return 0
+        # else: next loop iteration calls _prepare_window to rebuild from scratch
+        return correction_count

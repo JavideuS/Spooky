@@ -118,6 +118,9 @@ class DWaveSolver(BaseSolver):
                 )
                 best_sample.append(full_sol)
                 best_energy.append(0.0)
+                correction_count = self._handle_correction_backoff(
+                    builder, full_sol, invalid_moves, correction_count
+                )
                 continue
 
             if self.norm_scale != 0:
@@ -141,29 +144,9 @@ class DWaveSolver(BaseSolver):
             best_sample.append(full_sol)
             best_energy.append(response.first.energy)
 
-            if invalid_moves:
-                correction_count += 1
-                self.logger.standard(
-                    f"🔄 Correction attempt {correction_count}/{self.max_corrections} for current window"
-                )
-
-                if correction_count >= self.max_corrections:
-                    self.logger.minimal(
-                        f"⚠️  Max corrections ({self.max_corrections}) exceeded at t={builder.current_T}. "
-                        f"Keeping last result (invalid moves for robots {list(invalid_moves.keys())})."
-                    )
-                    path = self.decode_path(
-                        full_sol, builder.problem, t_offset=builder.current_T
-                    )
-                    robot_paths = self.get_robot_paths(path)
-                    robot_paths = self._resolve_duplicate_timesteps(
-                        robot_paths, builder.problem
-                    )
-                    builder.update_problem(robot_paths)
-                    correction_count = 0
-                # else: next loop iteration calls _prepare_window to rebuild from scratch
-            else:
-                correction_count = 0
+            correction_count = self._handle_correction_backoff(
+                builder, full_sol, invalid_moves, correction_count
+            )
 
         final_solution = self.build_solution_from_robot_paths(builder.problem)
 
