@@ -15,6 +15,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from quantum.benchmark.analysis.aggregate import _valid_mask
+from quantum.utils import preprocess as preprocess_modes
 from quantum.visualizer import QuantumRoboticsVisualizer
 
 _PALETTE = QuantumRoboticsVisualizer.ROBOT_PALETTE
@@ -82,7 +83,10 @@ def _save(fig: go.Figure, output_dir: str, name: str) -> None:
 
 
 def plot_scaling(
-    df: pd.DataFrame, x: str = "num_robots", output_dir: Optional[str] = None, ci_z: float = 1.96
+    df: pd.DataFrame,
+    x: str = "num_robots",
+    output_dir: Optional[str] = None,
+    ci_z: float = 1.96,
 ) -> go.Figure:
     """Mean wall-clock time vs. problem scale, one line per (solver,
     grid_size), with error bars showing an approximate 95% CI of the mean
@@ -159,14 +163,18 @@ def plot_scaling(
     return fig
 
 
-def plot_success_rate_bars(df: pd.DataFrame, output_dir: Optional[str] = None) -> go.Figure:
+def plot_success_rate_bars(
+    df: pd.DataFrame, output_dir: Optional[str] = None
+) -> go.Figure:
     summary = (
         df.assign(valid=_valid_mask(df))
         .groupby(["instance_map", "problem_name", "solver_name"])["valid"]
         .mean()
         .reset_index()
     )
-    summary["instance"] = summary["instance_map"].str.split("/").str[-1] + "/" + summary["problem_name"]
+    summary["instance"] = (
+        summary["instance_map"].str.split("/").str[-1] + "/" + summary["problem_name"]
+    )
     colors = _solver_colors(summary["solver_name"])
 
     fig = go.Figure()
@@ -192,7 +200,7 @@ def plot_success_rate_bars(df: pd.DataFrame, output_dir: Optional[str] = None) -
             **_AXIS_THEME,
             title="Success rate",
             tickformat=".0%",
-            range=[0, 1.05],      # explicit cap: full-success bars get breathing room
+            range=[0, 1.05],  # explicit cap: full-success bars get breathing room
         ),
     )
     if output_dir:
@@ -239,8 +247,8 @@ def plot_energy_excess(
                 marker=dict(color=colors[solver_name], size=5, opacity=0.6),
                 line=dict(color=colors[solver_name]),
                 boxpoints=boxpoints,
-                jitter=0.4,           # spread raw points so they don't stack
-                pointpos=-1.8,        # offset points to the left of the box
+                jitter=0.4,  # spread raw points so they don't stack
+                pointpos=-1.8,  # offset points to the left of the box
                 hovertemplate=f"{solver_name}<br>excess=%{{y:.4g}}<extra></extra>",
             )
         )
@@ -314,14 +322,27 @@ def plot_path_efficiency(
     return fig
 
 
-def plot_variable_reduction(df: pd.DataFrame, output_dir: Optional[str] = None) -> go.Figure:
+def plot_variable_reduction(
+    df: pd.DataFrame, output_dir: Optional[str] = None
+) -> go.Figure:
+    """Mean variable reduction per (instance, solver), over runs that actually
+    pre-processed.
+
+    `preprocess` is a mode string since the modes landed (raw / bfs_aggressive
+    / bfs_safe / full / full_safe)
+    """
+    reduced = df["preprocess"].map(preprocess_modes.uses_windowed_pipeline)
     summary = (
-        df[df["preprocess"] & df["average_reduction_ratio"].notna()]
-        .groupby(["instance_map", "problem_name", "solver_name"])["average_reduction_ratio"]
+        df[reduced & df["average_reduction_ratio"].notna()]
+        .groupby(["instance_map", "problem_name", "solver_name"])[
+            "average_reduction_ratio"
+        ]
         .mean()
         .reset_index()
     )
-    summary["instance"] = summary["instance_map"].str.split("/").str[-1] + "/" + summary["problem_name"]
+    summary["instance"] = (
+        summary["instance_map"].str.split("/").str[-1] + "/" + summary["problem_name"]
+    )
     colors = _solver_colors(summary["solver_name"])
 
     fig = go.Figure()
@@ -351,7 +372,7 @@ def plot_variable_reduction(df: pd.DataFrame, output_dir: Optional[str] = None) 
             **_AXIS_THEME,
             title="Reduction ratio",
             tickformat=".0%",
-            range=[0, 1.1],       # headroom for the text labels above bars
+            range=[0, 1.1],  # headroom for the text labels above bars
         ),
     )
     if output_dir:

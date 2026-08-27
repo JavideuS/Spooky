@@ -728,3 +728,35 @@ def test_failure_causes_empty_when_nothing_failed():
     assert out.empty
     assert list(out.columns) == ["instance_map", "problem_name", "solver_name",
                                  "preprocess", "invalid_cause", "n_runs"]
+
+
+def test_path_efficiency_ignores_goal_parking():
+    """An optimal planner must not be scored below 1.0 for sitting at its
+    goal while the horizon runs on.
+
+    ILP and CBS plan the whole horizon and park at the goal for the
+    remainder; charging them for those steps made them read 0.75 for a
+    provably optimal path while a sampler that stopped on arrival read 1.0.
+    Across an 863-run sweep that inverted the whole comparison -- exact
+    solvers averaged 0.50 against the QUBO backends' 0.75.
+    """
+    from quantum.utils.paths import clip_path_at_goal
+
+    goal = (2, 2)
+    arrival = [(0, 0, 0), (1, 1, 1), goal + (2,)]
+    parked = arrival + [goal + (t,) for t in range(3, 9)]
+    assert len(clip_path_at_goal(parked, goal)) == len(arrival)
+
+    # a robot that leaves the goal and comes back keeps its whole path
+    detour = arrival + [(1, 2, 3), goal + (4,)]
+    assert len(clip_path_at_goal(detour, goal)) == len(detour)
+
+
+def test_censored_terminations_cover_the_ilp_timeout():
+    """maxTimeLimit is what Pyomo/HiGHS reports when ILP's time_limit fires,
+    and it now reaches runs_long as a real row rather than a crash -- so the
+    paired tests must recognise it as censored."""
+    from quantum.benchmark.analysis.aggregate import _CENSORED_TERMINATIONS
+
+    assert "maxTimeLimit" in _CENSORED_TERMINATIONS
+    assert "time_limit_exceeded" in _CENSORED_TERMINATIONS
