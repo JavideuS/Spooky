@@ -1,122 +1,27 @@
-# Preprocessing ablation, 3x3 only — the companion to classical_test.yaml.
+# Pre-processing ablation — the control for classical_test.yaml.
 #
-# classical_test.yaml runs the QUBO backends with preprocess=true because
-# that is the only setting that executes at 5x5. That leaves an unanswered
-# question: how much of the result is the sampler, and how much is the BFS
-# pre-processing in solve_qubo_smart()? This config answers it on the one
-# problem size where preprocess=false actually runs.
+# classical_test.yaml answers "how do the backends compare". This answers
+# "how much of that was the solver and how much was pre-processing", by
+# running every backend across the pre-processing modes instead of one
+# setting. Run it first: it is far cheaper and it says how much of the
+# comparison is worth reading.
 #
 #   spooky-sweep --config sweep_configs/classical_test_ablation.yaml
 #
-# Pairs with classical_test.yaml. The difference:
-#
-# Since the pre-processing modes landed, this config ablates over them
-# directly instead of a true/false flag. What each mode isolates:
-#
-#   bfs_aggressive  windowed loop, non-backtracking BFS, no numerical fixing
-#   bfs_safe        windowed loop, monotone BFS (waiting + revisiting allowed),
-#                   no numerical fixing. The only pruning that cannot exclude a
-#                   feasible solution, so the only mode where QUBO-vs-ILP is
-#                   like-for-like -- ILP/CBS use these exact semantics via
-#                   bfs_reachable_sets(). Measured at ~2.4x the variables on
-#                   5x5/two_robots (28 -> 66 in window 0), 10-19x over a full
-#                   horizon.
-#   full            aggressive BFS + numerical (the old preprocess: true)
-#
-# The two comparisons this buys:
+# What the modes isolate (quantum/utils/preprocess.py has the full table):
 #   bfs_safe vs bfs_aggressive   is aggressive pruning costing correct answers
-#   full vs bfs_aggressive       what numerical fixing is actually worth
+#   full     vs bfs_aggressive   what numerical fixing is worth
+#   raw                          the old preprocess=false -- a different loop,
+#                                not "the same one with reductions off", so
+#                                it is on sa_neal only and attributes nothing
 #
-# `raw` (the old preprocess: false) is deliberately absent. It is not "the
-# same pipeline with reductions off" -- it is a separate simpler loop with no
-# correction retries and no forced-collision flagging, so it differs in three
-# ways at once and no result can be attributed to any of them. It also scored
-# 0 valid on everything except 3x3/no_obs across 130 runs in the CML sweep.
+# Instance scope: the 3x3s are single-robot, so they cannot test bfs_safe at
+# all -- it exists to preserve waiting, and waiting only matters when robots
+# yield. The 5x5 multi-robot pairs are what exercise it.
 #
-# full_safe (monotone BFS + numerical) is not in the default matrix either,
-# but it is a real configuration rather than a no-op variant of bfs_safe:
-# numerical fixing stays fully active under safe BFS, because its
-# unique-minimum-coefficient trigger does not depend on the reachable set
-# collapsing to one cell (measured firing on 60-100% of timestep groups under
-# either BFS; window 0 of 5x5/two_robots reduces 66 -> 0 under full_safe, the
-# same total wipeout as full's 28 -> 0). Add it once the numerical pass checks
-# what other robots were pinned to -- until then it carries the same
-# forced-collision bug as full.
-#
-#   classical_test     the comparison. 14 instance/problem pairs across 3x3
-#                      and 5x5, all four backends, ~476 runs. Answers "how do
-#                      the backends compare".
-#   this file          the control. Same four backends, but 2 instances at
-#                      3x3 only and every backend running BOTH preprocess
-#                      arms, ~48 runs. Answers "how much of that comparison
-#                      was the solver, and how much was BFS".
-#
-# Run this one first: it is far cheaper, and it tells you how much of the
-# comparison's output is worth reading.
-#
-# ---------------------------------------------------------------------------
-# Why 3x3 only, and why qaoa_sim carries a var_limit
-# ---------------------------------------------------------------------------
-# Measured 2026-08-23, crash penalty set, lightning.gpu:
-#
-#   3x3 no_obs, preprocess=false, default var_limit -> std::bad_alloc
-#       (no reduction, so the window is all 108 variables -> 2^108 state)
-#   3x3 no_obs, preprocess=false, var_limit=20 -> runs. ~15s/run on
-#       lightning.gpu, ~160s/run on lightning.qubit, and returns an INVALID
-#       solution every time. That is a measurement, not a failure: unaided
-#       QAOA does not solve even a 3x3 here.
-#   5x5 easy/two_robots, preprocess=false, var_limit=52 -> custatevec error
-#       (52 qubits is a 2^52 statevector; a genuine limit, not tunable)
-#
-# NOTE: an earlier WireError here ("wires 375-449 not found on device") was a
-# bug in the solver, not a simulator limit, and was fixed alongside this
-# config. What remains at 5x5 is real qubit count. 5x5 single-robot at
-# var_limit=26 has NOT been retried since that fix and may well work now —
-# worth checking before assuming 3x3 is the ceiling.
-#
-# var_limit must also stay >= cells-per-timestep-per-robot (9 for a 3x3), or
-# a single timestep cannot fit in a window at all.
-#
-# sa_neal's preprocess=false path was broken until 2026-08-23: it referenced
-# a nonexistent problem.start, and passed a coordinate tuple to
-# update_problem(), which wants {robot_num: segment}. Both arms run now, and
-# neal handles a full unreduced 108-variable window in ~0.02s, so this is the
-# cheapest and most informative arm of the ablation.
-#
-# Runtime shape: 2 instance/problem pairs.
-#   ilp/cbs  2 x 2 ablations x 1 run  =  8 runs
-#   sa       2 x 2 ablations x 10     = 40 runs (~0.02s each)
-#   qaoa     2 x 2 ablations x 10     = 40 runs. The 20 preprocess=false
-#            runs dominate at ~160s each on lightning.qubit (~55 min);
-#            switch the device to lightning.gpu for ~15s each (~5 min).
-#            The 20 preprocess=true runs are ~10ms each.
-#
-# What the ablation showed, measured with sa_neal at 10 runs per cell on
-# 2026-08-23 (3x3 as in this config, plus 5x5 instances run separately since
-# SA is fast enough to afford them):
-#
-#   instance                   pre=true   pre=false   reduction   final vars
-#   no_obs3x3/baseline           10/10      10/10        0.56          7
-#   obs3x3_standard/baseline     10/10       0/10        0.60          6
-#   obs5x5_easy/baseline         10/10       0/10        1.00          0
-#   obs5x5_easy/two_robots       10/10       0/10        0.94          5
-#   obs5x5_hard/baseline         10/10       0/10        1.00          0
-#   obs5x5_hard/two_robots       10/10       0/10        1.00          0
-#   obs5x5_hard/three_robots      0/10       0/10        1.00          0
-#
-# The only instance the sampler solves on its own is the 3x3 with no
-# obstacles. On four of the seven, final vars is 0 with preprocessing on --
-# the solver was never invoked at all, BFS produced the whole path, and the
-# recorded energy is the 0.0 sentinel. So a comparison table reading
-# "SA: 100% on 5x5" is reporting BFS. aggregate.py catches this without
-# anyone having to notice: n_solver_skipped and median_reduction_ratio in
-# energy_diagnostics.csv, with a note on the affected rows.
-#
-# qaoa_sim has NOT been measured this way since the solver fixes landed. An
-# earlier attempt produced "0/8 valid at 160s per run", but that was the
-# silent-early-exit bug (only window 0 was ever solved), not a property of
-# QAOA -- do not cite it. The one honest post-fix data point is a single
-# 3x3/no_obs CLI run: all windows, 28.5s, invalid.
+# qaoa_sim carries var_limit 20 so its pruning-only modes fit a simulator.
+# That cap is what makes them runnable at all -- at the default var_limit the
+# same runs die with bad_alloc on both lightning devices.
 
 sweep:
   id: null # auto-generated sweep_<timestamp>_<hex8> if omitted
@@ -130,6 +35,23 @@ instances:
     builder: grid
   - map: quantum/maps/synthetic/3x3/obs3x3_standard
     problems: [baseline]
+    builder: grid
+
+  # Multi-robot: bfs_safe exists to preserve waiting, and waiting only
+  # matters when robots yield to each other -- the 3x3s above are all
+  # single-robot and cannot test it. obs5x5_easy/three_robots is also the
+  # regression case for the diag-fixing collision fix (was 0/10).
+  # qaoa_sim cannot run the pruning-only modes here: 5x5 multi-robot windows
+  # exceed the simulator on both lightning.qubit and lightning.gpu, so its
+  # bfs_* rows fail with bad_alloc in a few seconds and only `full` reports.
+  - map: quantum/maps/synthetic/5x5/obs5x5_easy
+    problems: [two_robots, three_robots]
+    builder: grid
+  - map: quantum/maps/synthetic/5x5/obs5x5_medium
+    problems: [three_robots]
+    builder: grid
+  - map: quantum/maps/synthetic/5x5/obs5x5_hard
+    problems: [two_robots]
     builder: grid
 
 solvers:
@@ -183,5 +105,6 @@ solvers:
     ablation: { preprocess: [bfs_aggressive, bfs_safe, full] }
 
 execution:
+  run_timeout_sec: 300
   preprocess_default: true
   fail_fast: false

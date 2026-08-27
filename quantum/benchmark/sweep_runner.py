@@ -74,17 +74,29 @@ class RunTimeout(Exception):
     """A single (instance x solver x ablation) run exceeded run_timeout_sec."""
 
 
+# How often to re-raise after the initial deadline. A single one-shot alarm
+# gets exactly one chance to land, and it can land somewhere the exception is
+# discarded -- observed in a sweep where SIGALRM arrived inside a garbage
+# collection callback ("Exception ignored in: <function _xla_gc_callback>"),
+# so the run carried on past its deadline and had to be killed by hand.
+_TIMEOUT_RETRY_SECONDS = 5
+
+
 @contextlib.contextmanager
 def _run_timeout(seconds):
     """Abort a run that overruns, so one hung combination cannot block a sweep.
 
-    Uses SIGALRM, which only fires between Python bytecodes: a long call inside
-    a C extension (neal's sampler, lightning's statevector) is not interrupted
-    until it returns. That still covers the cases seen here, where the overrun
-    is in the Python-side BFS/QUBO build on large grids -- but it is a
-    best-effort bound, not a hard one, so a run can exceed it.
+    Uses a repeating SIGALRM. Signals are only delivered between Python
+    bytecodes, so a call already inside a C extension (neal's sampler,
+    lightning's statevector) is not interrupted until it returns -- and even
+    once delivered, an exception raised in a context that swallows it (a GC
+    callback, a __del__) is lost. Re-arming every _TIMEOUT_RETRY_SECONDS means
+    a swallowed delivery is retried rather than being the only attempt.
+
+    Still best-effort: a run can overshoot its deadline, and one that never
+    returns to interpretable Python cannot be stopped this way at all.
     """
-    if not seconds or not hasattr(signal, "SIGALRM"):
+    if not seconds or not hasattr(signal, "setitimer"):
         yield
         return
 
@@ -92,11 +104,13 @@ def _run_timeout(seconds):
         raise RunTimeout(f"exceeded run_timeout_sec={seconds}")
 
     previous = signal.signal(signal.SIGALRM, _fire)
-    signal.alarm(int(seconds))
+    # (initial delay, repeat interval) -- the repeat is what makes this
+    # survive a swallowed delivery
+    signal.setitimer(signal.ITIMER_REAL, float(seconds), _TIMEOUT_RETRY_SECONDS)
     try:
         yield
     finally:
-        signal.alarm(0)
+        signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
 
 
@@ -323,9 +337,12 @@ class SweepRunner:
         self._persist()
 
         if self.global_seed is not None:
-            # Best effort only — covers numpy's global RNG (e.g. PennyLane's
-            # default.qubit shot sampling falls back to it), but Dwave has its
-            # own seed
+            # Seeds numpy's global RNG once so anything drawn at
+            # problem/builder/solver construction is reproducible. Per-run
+            # solver randomness (QAOA angles, neal seed) is handled
+            # separately: BenchmarkRunner re-seeds from global_seed + run_id
+            # each run (see BenchmarkRunner._reseed_run), so the num_runs
+            # loop actually varies instead of replaying one fixed init.
             import numpy as np
 
             np.random.seed(self.global_seed)
@@ -479,6 +496,12 @@ class SweepRunner:
                 output_dir=str(run_dir),
                 level=2,
                 preprocess=preprocess,
+                # Per-run reseed: run k re-draws the solver's random init from
+                # global_seed + k, so the num_runs loop varies instead of
+                # replaying one fixed init. Same base across combos => paired
+                # inits (run k identical everywhere), which is the comparison
+                # we want. None => entropy per run, still logged.
+                seed=self.global_seed,
             )
             with _run_timeout(self.run_timeout_sec):
                 runner.run_build()  # writes its own benchmark_*.json into run_dir
