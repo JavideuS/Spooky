@@ -517,6 +517,18 @@ def build_parser() -> argparse.ArgumentParser:
             "1=Summary only, 2=+Paths, 3=+Raw bits (default: 2)"
         ),
     )
+    run.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Base seed for --benchmark. Run k uses seed N+k, re-seeding the "
+            "RNG and re-drawing the solver's random init (QAOA angles / neal "
+            "seed) so runs differ but stay reproducible; each run's run_seed "
+            "is saved. Omit for entropy-seeded runs (still logged)."
+        ),
+    )
 
     # ---- Visualization -----------------------------------------------------
     viz_g = parser.add_argument_group("Visualization (single-solve mode only)")
@@ -1070,6 +1082,7 @@ def main():
             num_runs=args.num_runs,
             level=args.benchmark_level,
             preprocess=_resolve_preprocess(args),
+            seed=args.seed,
         )
         runner.run_build()
 

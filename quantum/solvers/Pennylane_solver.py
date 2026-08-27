@@ -33,6 +33,7 @@ class PennylaneSolver(BaseSolver):
         threads=None,
         use_session=True,
         session_max_time=None,
+        device_seed=None,
         **kwargs,
     ):
         """
@@ -98,6 +99,15 @@ class PennylaneSolver(BaseSolver):
         self.params = params if params is not None else np.random.rand(layers, 2)
         self.optimizer_steps = opt_steps  # Number of optimization steps
         self.shots = num_reads  # Number of shots for sampling
+        # Seed forwarded to qml.device() for the simulator backends
+        # (default.qubit / lightning.qubit / lightning.gpu). None leaves the
+        # device's own default in place. IMPORTANT for benchmarking: the
+        # Lightning devices seed their internal sampler RNG once per process
+        # and ignore np.random.seed() thereafter, so without setting this
+        # every run in a benchmark draws shots from the same process-wide
+        # stream and the whole run lands in one basin. BenchmarkRunner sets
+        # this per run (see BenchmarkRunner._reseed_run).
+        self.device_seed = device_seed
 
     def get_shots(self, num_qubits):
         if self.shots == "auto":
@@ -434,7 +444,7 @@ class PennylaneSolver(BaseSolver):
 
                 ansatz_circuit = self.create_ansatz(wires, qaoa_layer)
                 shots = self.get_shots(len(wires))
-                dev = qml.device(self.dev, wires=wires)
+                dev = qml.device(self.dev, wires=wires, seed=self.device_seed)
 
                 @qml.set_shots(shots)
                 @qml.qnode(dev)
@@ -667,7 +677,7 @@ class PennylaneSolver(BaseSolver):
                 dev = None
             else:
                 dev_start = time.time()
-                dev = qml.device(self.dev, wires=circuit_wires)
+                dev = qml.device(self.dev, wires=circuit_wires, seed=self.device_seed)
                 dev_time = time.time() - dev_start
                 self.logger.debug(f"✓ Device initialized in {dev_time:.2f}s")
                 self.logger.debug("=" * 60)

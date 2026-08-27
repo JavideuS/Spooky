@@ -1038,7 +1038,14 @@ class GridQUBOBuilder(BaseQUBO):
             else:
                 active_cells[(robot_id, start)] = [(s_i, s_j)]
                 for t in range(start + 1, end):
-                    active_cells[(robot_id, t)] = list(reachable.get(t, {(e_i, e_j)}))
+                    # sorted(), not list(): reachable.get(t, ...) is a set, and
+                    # its iteration order depends on PYTHONHASHSEED. That order
+                    # flows into Q insertion order and the diagonal fixer's
+                    # candidate order, so an unsorted list here makes a
+                    # corridor-yield tie between two robots resolve differently
+                    # per process — the whole windowed solve then lands on a
+                    # valid or invalid path purely by hash seed.
+                    active_cells[(robot_id, t)] = sorted(reachable.get(t, {(e_i, e_j)}))
 
         return fixed_ones, active_cells
 

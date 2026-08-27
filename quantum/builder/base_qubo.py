@@ -270,8 +270,14 @@ class BaseQUBO(ABC):
                 # Only include robots that are still active (haven't reached goal)
                 if self.problem.robots[robot_id].active:
                     active_robots.add(robot_id)
+        # (-priority, robot_id): descending priority, then robot_id as a total
+        # tiebreak. Sorting on priority alone left equal-priority robots in
+        # active_robots' set-iteration order, which is PYTHONHASHSEED-dependent
+        # -- so the diagonal fixer processed them in a different order per
+        # process, the first robot won any shared corridor, and the whole
+        # windowed solve came out valid or invalid purely by hash seed.
         return sorted(
-            active_robots, key=lambda x: self.problem.robots[x].priority, reverse=True
+            active_robots, key=lambda x: (-self.problem.robots[x].priority, x)
         )
 
     def get_active_robots_per_timestep_in_window(self):
@@ -1102,7 +1108,10 @@ class BaseQUBO(ABC):
                 if t_check < curr_t:
                     continue
                 if set(self._active_cells.get((robot_id, t_check), [])) != positions:
-                    self._active_cells[(robot_id, t_check)] = list(positions)
+                    # sorted(), not list(): a set's iteration order is
+                    # PYTHONHASHSEED-dependent and would make BFS recalculation
+                    # reroute differently per process.
+                    self._active_cells[(robot_id, t_check)] = sorted(positions)
                     rebuilt = True
 
             if rebuilt:
@@ -1187,7 +1196,9 @@ class BaseQUBO(ABC):
         """Get existing or unfix variables for reachable positions."""
         reachable_vars = []
 
-        for pos in reachable_positions:
+        # sorted(): reachable_positions is a set; a stable order keeps the fix
+        # decisions below independent of PYTHONHASHSEED.
+        for pos in sorted(reachable_positions):
             # Calculate variable index for this position
             if type == "grid":
                 i_pos, j_pos = pos

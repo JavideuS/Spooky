@@ -2,7 +2,9 @@ from pathlib import Path
 from datetime import datetime
 import heapq
 import json
+import random
 import time
+import numpy as np
 from quantum.utils.validation import is_valid_move, get_position_representation
 from quantum.utils import preprocess as preprocess_modes
 from quantum.utils.logger import get_logger
@@ -17,6 +19,7 @@ class BenchmarkRunner:
         output_dir="results/benchmarks",
         level=2,
         preprocess=True,
+        seed=None,
     ):
         """
         Run benchmark on a given solver and problem.
@@ -34,12 +37,21 @@ class BenchmarkRunner:
                 each solver's own variable-reduction step (BFS reachability
                 pruning for both QUBO and ILP, plus diagonal fixing/windowing
                 for QUBO specifically).
+            seed (int | None): Base seed for per-run RNG. Each run derives
+                run_seed = seed + run_id, re-seeds numpy's global RNG with it,
+                and re-draws the solver's stochastic starting state (PennyLane
+                QAOA angles / D-Wave neal seed) so the num_runs loop actually
+                samples different starting points instead of replaying one
+                fixed init. run_seed is stored on every run so any single run
+                can be reproduced. None: a fresh entropy-based run_seed per
+                run, still logged.
         """
         self.builder = qubobuilder
         self.problem = qubobuilder.problem
         self.penalty_set = qubobuilder.penalties
         self.solver = solver
         self.num_runs = num_runs
+        self.seed = seed
         # accepts a mode string or a legacy bool; see quantum.utils.preprocess
         self.preprocess = preprocess_modes.normalize(preprocess)
         self.level = max(1, min(3, level))  # Clamp to 1-3
@@ -55,10 +67,50 @@ class BenchmarkRunner:
                 "penalty_set": self.penalty_set,
                 "benchmark_level": self.level,
                 "num_runs": num_runs,
+                "base_seed": seed,
                 "timestamp": datetime.now().isoformat(),
             },
             "runs": [],
         }
+
+    def _reseed_run(self, run_id):
+        """Pick this run's seed, re-seed numpy's global RNG with it, and
+        re-draw the solver's stochastic starting state so each run of the
+        num_runs loop explores a different init rather than replaying one.
+
+        Returns the run_seed so the caller can record it on the run.
+        """
+        if self.seed is not None:
+            run_seed = self.seed + run_id
+        else:
+            run_seed = random.Random().randrange(2**32)
+
+        np.random.seed(run_seed)
+
+        # PennyLane QAOA: re-draw the layer angles (shape (layers, 2)).
+        # optimization=False replays these verbatim, so without this every
+        # run samples the identical circuit.
+        if hasattr(self.solver, "p") and hasattr(self.solver, "params"):
+            self.solver.params = np.random.rand(self.solver.p, 2)
+
+        # PennyLane simulator devices: the Lightning backends seed their
+        # sampler RNG once per process and ignore np.random.seed() after
+        # that, so every run of a benchmark would otherwise draw shots from
+        # one process-wide stream and the whole run would land in a single
+        # basin (valid-or-invalid as a block, flipping only between
+        # processes). Forwarding a per-run seed into qml.device() makes each
+        # run an independent, reproducible draw.
+        if hasattr(self.solver, "device_seed"):
+            self.solver.device_seed = run_seed
+
+        # D-Wave/neal: a fixed .seed anneals identically every run; bump it
+        # per run but keep it derived from run_seed so the run stays
+        # reproducible. Leave it alone when it was never set (None ==
+        # non-deterministic by choice).
+        if getattr(self.solver, "seed", None) is not None:
+            self.solver.seed = run_seed
+
+        return run_seed
 
     def run_build(self):
         """Run the benchmark multiple times and store results"""
@@ -85,6 +137,7 @@ class BenchmarkRunner:
         # Run multiple trials
         for run_id in range(1, self.num_runs + 1):
             self.builder.reset_problem()
+            run_seed = self._reseed_run(run_id)
             build_start = time.time()
             # ILP builders rebuild themselves inside solver.solve() so the
             # preprocess flag always takes effect (see ILPSolver.solve());
@@ -134,6 +187,7 @@ class BenchmarkRunner:
             # Build result based on level
             result = {
                 "run_id": run_id,
+                "run_seed": run_seed,
                 "timestamp": datetime.now().isoformat(),
                 "valid": validation["valid"],
                 "energy": total_energy,
@@ -180,7 +234,9 @@ class BenchmarkRunner:
             billed_usage_values = [
                 e["billed_usage"]["usage"]
                 for e in qpu_time_estimates
-                if e and e.get("billed_usage") and e["billed_usage"].get("usage") is not None
+                if e
+                and e.get("billed_usage")
+                and e["billed_usage"].get("usage") is not None
             ]
             if billed_usage_values:
                 result["billed_usage_sec"] = sum(billed_usage_values)
