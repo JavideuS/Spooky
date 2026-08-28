@@ -32,6 +32,7 @@ from config_api import (
     global_solver_configs,
     global_penalties_params,
 )
+from analysis_api import router as analysis_router, BENCHMARKS_DIR, _sweep_dir_map
 from typing import Dict, Optional
 import datetime
 import os
@@ -118,6 +119,15 @@ async def lifespan(app: FastAPI):
             f"Map registry loaded ({len(maps_conf.get('maps') or {})} entries, lazy-loaded on first use)."
         )
 
+        try:
+            n_sweeps = len(_sweep_dir_map())
+            print(
+                f"Benchmark analysis: {n_sweeps} sweep(s) discovered under {BENCHMARKS_DIR} "
+                "(aggregated lazily on first request)."
+            )
+        except Exception as e:  # never let a bad benchmarks dir block startup
+            print(f"Benchmark analysis: discovery skipped ({e}).")
+
         yield  # Application is ready to handle requests
     finally:
         # Cleanup if needed
@@ -126,6 +136,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(analysis_router)
 
 
 @app.middleware("http")

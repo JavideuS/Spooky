@@ -332,16 +332,127 @@
   .error-banner.visible { display: block; }
 
   select[data-recommended="true"] { border-color: var(--accent); }
+
+  /* ---- View switcher (Planner / Benchmarks) ---- */
+  .view-switch { display: flex; gap: 2px; background: var(--surface-2); border-radius: 6px; padding: 2px; margin-left: auto; }
+  .view-switch button {
+    background: none; border: none; color: var(--text-dim);
+    padding: 6px 14px; border-radius: 5px; font-size: 12px; cursor: pointer;
+    font-family: inherit;
+  }
+  .view-switch button.active { background: var(--accent); color: var(--accent-text); }
+  [hidden] { display: none !important; }
+
+  /* ---- Benchmarks view ---- */
+  .bench {
+    padding: 20px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    max-width: 1200px;
+  }
+  .bench-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: flex-end;
+  }
+  .bench-controls .field-group { min-width: 150px; }
+  .bench-controls select { min-width: 150px; }
+  .provenance { font-size: 11.5px; color: var(--text-dim); }
+  .provenance code { color: var(--text); }
+
+  .bench-section-title {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.09em;
+    color: var(--text-dim); font-weight: 600;
+    border-bottom: 1px solid var(--border); padding-bottom: 5px;
+  }
+
+  .verdict {
+    background: var(--accent-soft);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  table.bench-table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  table.bench-table th, table.bench-table td {
+    text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--border);
+    font-variant-numeric: tabular-nums;
+  }
+  table.bench-table th:first-child, table.bench-table td:first-child { text-align: left; }
+  table.bench-table th {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-dim); font-weight: 600;
+  }
+  table.bench-table tr.top-solver td { color: var(--accent); font-weight: 600; }
+  table.bench-table tr.row-degraded td:nth-child(4) { color: var(--error); font-weight: 600; }
+  .cause-pre { color: var(--badge-dwave); }
+  .cause-sampling { color: var(--error); }
+
+  /* ---- Performance score bars ---- */
+  .perf-strip { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+  .perf-head {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--text-dim); font-weight: 600;
+  }
+  .perf-head span { text-transform: none; letter-spacing: 0; font-weight: 400; }
+  .perf-row {
+    display: grid; grid-template-columns: 96px 1fr 40px;
+    align-items: center; gap: 10px; font-size: 12.5px;
+  }
+  .perf-label {
+    color: var(--text); font-variant-numeric: tabular-nums;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .perf-bar {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 999px; height: 14px; overflow: hidden;
+  }
+  .perf-fill { height: 100%; border-radius: 999px; transition: width 0.3s ease; }
+  .perf-num { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-dim); }
+
+  .thumb-strip { display: flex; gap: 10px; flex-wrap: wrap; }
+  .thumb {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 8px; width: 172px;
+    overflow: hidden;
+  }
+  .thumb .thumb-plot { width: 156px; height: 156px; }
+  .thumb .thumb-label { font-size: 10.5px; color: var(--text-dim); margin-top: 4px; word-break: break-word; }
+
+  .plot-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+    gap: 16px;
+  }
+  .plot-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 12px;
+  }
+  .plot-card .plot-caption {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--text-dim); margin-bottom: 8px;
+  }
+  .plot-card .plot-body { height: 340px; }
+  .plot-card .plot-body .placeholder { color: var(--text-dim); font-size: 12px; padding: 10px; }
+  .bench-empty { color: var(--text-dim); font-size: 13px; padding: 20px 0; }
 </style>
 </head>
 <body>
 
 <header>
   <h1>SPOOKY<span>·</span>PLANNER</h1>
-  <div class="subtitle">Quantum-classical MAPF demo — hits /v1/plan directly</div>
+  <div class="subtitle" id="headerSubtitle">Quantum-classical MAPF demo — hits /v1/plan directly</div>
+  <div class="view-switch">
+    <button type="button" id="viewBtnPlanner" class="active">Planner</button>
+    <button type="button" id="viewBtnBenchmarks">Benchmarks</button>
+  </div>
 </header>
 
-<div class="layout">
+<div class="layout" id="viewPlanner">
 
   <div class="viz-panel">
     <div class="viz-toolbar">
@@ -427,6 +538,56 @@
     <button class="plan-btn" id="planBtn" type="button">Plan path</button>
 
   </aside>
+
+</div>
+
+<div class="bench" id="viewBenchmarks" hidden>
+
+  <div class="bench-controls">
+    <div class="field-group">
+      <div class="eyebrow">Sweep</div>
+      <select id="benchSweepSelect"></select>
+    </div>
+    <div class="field-group">
+      <div class="eyebrow">Grid size</div>
+      <select id="benchGridSelect"><option value="">any</option></select>
+    </div>
+    <div class="field-group">
+      <div class="eyebrow">Robots</div>
+      <select id="benchRobotsSelect"><option value="">any</option></select>
+    </div>
+    <div class="field-group">
+      <div class="eyebrow">Problem</div>
+      <select id="benchProblemSelect"><option value="">any</option></select>
+    </div>
+  </div>
+
+  <div class="provenance" id="benchProvenance"></div>
+
+  <div id="benchBody" hidden>
+    <div class="bench-section-title">Selected instance class</div>
+    <div class="verdict" id="benchVerdict" style="margin-top:12px;"></div>
+    <div class="perf-strip" id="benchPerf"></div>
+    <div style="overflow-x:auto; margin-top:16px;">
+      <table class="bench-table" id="benchSolverTable"></table>
+    </div>
+
+    <div class="bench-section-title" style="margin-top:22px;">Maps in this selection</div>
+    <div class="thumb-strip" id="benchThumbs" style="margin-top:12px;"></div>
+
+    <div class="bench-section-title" style="margin-top:22px;">Plots</div>
+    <div class="plot-grid" id="benchPlots" style="margin-top:12px;"></div>
+
+    <div class="bench-section-title" style="margin-top:22px;">Per-map breakdown</div>
+    <div class="info-line" style="margin-top:4px;">
+      One row per (map, problem, solver). <span class="cause-pre">pre_processing</span> = BFS/diagonal
+      fixing pinned a conflict before the solver ran; <span class="cause-sampling">solver_sampling</span>
+      = the solver returned a constraint-violating result.
+    </div>
+    <div style="overflow-x:auto; margin-top:12px;" id="benchByInstance"></div>
+  </div>
+
+  <div class="bench-empty" id="benchEmpty" hidden>No published sweeps found.</div>
 
 </div>
 
@@ -1013,6 +1174,422 @@
 
   renderRobotRows();
   Promise.all([loadMaps(), loadSolvers(), loadPenaltySets()]).then(syncJsonFromForm);
+})();
+</script>
+
+<script>
+// ---- Benchmarks view: reads the read-only /v1/analysis/* endpoints ----
+(function () {
+  "use strict";
+
+  const el = (id) => document.getElementById(id);
+  const esc = (s) =>
+    String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  const PLOTS = [
+    ["scaling", "Solve time vs. problem scale"],
+    ["success_rate", "Success rate by instance"],
+    ["path_efficiency", "Per-robot path efficiency"],
+    ["energy_excess", "Energy excess over each config's best (raw units, not cross-comparable)"],
+    ["variable_reduction", "Variable reduction from BFS preprocessing"],
+  ];
+
+  const bench = {
+    loaded: false,       // reference data fetched once on first open
+    instances: [],       // /instances payload for the current sweep
+    plotLayout: null,    // shared Plotly layout tweaks for theme
+  };
+
+  // Plotly's default light theme clashes with the dark UI; nudge paper/plot
+  // backgrounds to transparent and let the surrounding card show through.
+  const PLOTLY_CONFIG = { responsive: true, displayModeBar: false };
+  function themedLayout(layout) {
+    return Object.assign({}, layout, {
+      paper_bgcolor: "rgba(0,0,0,0)",
+      plot_bgcolor: "rgba(0,0,0,0)",
+      font: Object.assign({}, layout && layout.font, {
+        color: getComputedStyle(document.body).getPropertyValue("--text-dim").trim() || "#8791a8",
+      }),
+      margin: { t: 30, b: 45, l: 55, r: 20 },
+    });
+  }
+
+  // ---- View switching ----
+
+  function showView(which) {
+    const planner = which === "planner";
+    el("viewPlanner").hidden = !planner;
+    el("viewBenchmarks").hidden = planner;
+    el("viewBtnPlanner").classList.toggle("active", planner);
+    el("viewBtnBenchmarks").classList.toggle("active", !planner);
+    el("headerSubtitle").textContent = planner
+      ? "Quantum-classical MAPF demo — hits /v1/plan directly"
+      : "Benchmark sweeps — reads /v1/analysis/* (no solving)";
+    if (!planner && !bench.loaded) loadSweeps();
+  }
+  el("viewBtnPlanner").addEventListener("click", () => showView("planner"));
+  el("viewBtnBenchmarks").addEventListener("click", () => showView("benchmarks"));
+
+  // ---- Load sweep catalog ----
+
+  async function loadSweeps() {
+    bench.loaded = true;
+    let data;
+    try {
+      const res = await fetch("/v1/analysis/sweeps");
+      data = await res.json();
+    } catch (err) {
+      el("benchProvenance").textContent = `Failed to load sweeps: ${err.message || err}`;
+      return;
+    }
+    const select = el("benchSweepSelect");
+    select.innerHTML = "";
+    (data.sweeps || []).forEach((s) => {
+      const opt = document.createElement("option");
+      opt.value = s.sweep_id;
+      const date = (s.start_time || "").slice(0, 10);
+      opt.textContent = `${s.sweep_id}  (${date}, ${s.n_completed} runs)`;
+      select.appendChild(opt);
+    });
+    const hasSweeps = select.options.length > 0;
+    el("benchBody").hidden = !hasSweeps;
+    el("benchEmpty").hidden = hasSweeps;
+    if (hasSweeps) {
+      select.selectedIndex = 0;
+      onSweepChange();
+    }
+  }
+
+  async function onSweepChange() {
+    const sweepId = el("benchSweepSelect").value;
+    if (!sweepId) return;
+
+    // Provenance + instance combos, in parallel.
+    const [meta, instances] = await Promise.all([
+      fetch(`/v1/analysis/sweeps/${encodeURIComponent(sweepId)}`).then((r) => r.json()),
+      fetch(`/v1/analysis/sweeps/${encodeURIComponent(sweepId)}/instances`).then((r) => r.json()),
+    ]);
+
+    const commit = (meta.git_commit || "").slice(0, 8);
+    el("benchProvenance").innerHTML =
+      `Generated from <code>spooky@${esc(commit || "?")}</code>` +
+      (meta.git_dirty ? " (dirty tree)" : "") +
+      ` · ${esc((meta.start_time || "").slice(0, 16).replace("T", " "))}` +
+      ` · ${esc((meta.solvers || []).join(", "))}`;
+
+    bench.instances = instances.instances || [];
+    populateFilters();
+    applySelection(); // also renders the per-map table and the plots
+  }
+  el("benchSweepSelect").addEventListener("change", onSweepChange);
+
+  // ---- Filters (grid size / robots / problem), derived from /instances ----
+
+  function populateFilters() {
+    const uniq = (key) =>
+      [...new Set(bench.instances.map((i) => i[key]).filter((v) => v !== null && v !== undefined))]
+        .sort((a, b) => (typeof a === "number" ? a - b : String(a).localeCompare(String(b))));
+    fillSelect("benchGridSelect", uniq("grid_size"));
+    fillSelect("benchRobotsSelect", uniq("num_robots"));
+    fillSelect("benchProblemSelect", uniq("problem_name"));
+  }
+  function fillSelect(id, values) {
+    const select = el(id);
+    const prev = select.value;
+    select.innerHTML = '<option value="">any</option>';
+    values.forEach((v) => {
+      const opt = document.createElement("option");
+      opt.value = v;
+      opt.textContent = v;
+      select.appendChild(opt);
+    });
+    if ([...select.options].some((o) => o.value === prev)) select.value = prev;
+  }
+  ["benchGridSelect", "benchRobotsSelect", "benchProblemSelect"].forEach((id) =>
+    el(id).addEventListener("change", applySelection)
+  );
+
+  function currentFilter() {
+    return {
+      grid_size: el("benchGridSelect").value,
+      num_robots: el("benchRobotsSelect").value,
+      problem: el("benchProblemSelect").value,
+    };
+  }
+
+  async function applySelection() {
+    const sweepId = el("benchSweepSelect").value;
+    const f = currentFilter();
+    const params = new URLSearchParams();
+    if (f.grid_size) params.set("grid_size", f.grid_size);
+    if (f.num_robots) params.set("num_robots", f.num_robots);
+    if (f.problem) params.set("problem", f.problem);
+
+    renderThumbs(f);
+
+    let data;
+    try {
+      const res = await fetch(
+        `/v1/analysis/sweeps/${encodeURIComponent(sweepId)}/recommend?${params.toString()}`
+      );
+      data = await res.json();
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+    } catch (err) {
+      el("benchVerdict").textContent = String(err.message || err);
+      el("benchPerf").innerHTML = "";
+      el("benchSolverTable").innerHTML = "";
+      return;
+    }
+    el("benchVerdict").textContent = data.verdict || "—";
+    renderPerf(data.solvers || []);
+    renderSolverTable(data.solvers || []);
+    renderByInstance(sweepId, params);
+    renderPlots(sweepId, params);
+  }
+
+  // ---- Performance score bars ----
+  // A single 0–100 number per solver: 50% success rate, 30% mean path
+  // efficiency, 20% speed relative to the fastest solver in the selection.
+  // Terms with no data (e.g. path efficiency on a level<2 sweep) are dropped
+  // and the remaining weights renormalized. Bar length is score / best score,
+  // so the leader's bar is always full.
+  const PERF_PALETTE = ["#7c8cff", "#f0616b", "#4fd1a5", "#e8a33d", "#b98cf2", "#4fc3f7"];
+
+  function perfScore(s, fastest) {
+    const terms = [];
+    if (s.success_rate != null) terms.push([0.5, s.success_rate]);
+    if (s.mean_path_efficiency != null) terms.push([0.3, Math.min(1, s.mean_path_efficiency)]);
+    if (s.mean_time_sec != null && fastest != null && s.mean_time_sec > 0) {
+      terms.push([0.2, fastest / s.mean_time_sec]);
+    }
+    const wsum = terms.reduce((a, [w]) => a + w, 0) || 1;
+    return (100 * terms.reduce((a, [w, v]) => a + w * v, 0)) / wsum;
+  }
+
+  function renderPerf(solvers) {
+    const box = el("benchPerf");
+    if (!solvers.length) {
+      box.innerHTML = "";
+      return;
+    }
+    const times = solvers.map((s) => s.mean_time_sec).filter((v) => v != null && v > 0);
+    const fastest = times.length ? Math.min(...times) : null;
+    const scored = solvers
+      .map((s, i) => ({ solver: s.solver, score: perfScore(s, fastest), color: PERF_PALETTE[i % PERF_PALETTE.length] }))
+      .sort((a, b) => b.score - a.score);
+    const best = scored[0].score || 1;
+    box.innerHTML =
+      '<div class="perf-head">Performance score ' +
+      "<span>· 0–100 · 50% success / 30% path efficiency / 20% relative speed</span></div>" +
+      scored
+        .map(
+          (s) => `
+        <div class="perf-row">
+          <div class="perf-label">${esc(s.solver)}</div>
+          <div class="perf-bar"><div class="perf-fill" style="width:${(
+            (100 * s.score) / best
+          ).toFixed(1)}%; background:${s.color};"></div></div>
+          <div class="perf-num">${s.score.toFixed(0)}</div>
+        </div>`
+        )
+        .join("");
+  }
+
+  function renderSolverTable(solvers) {
+    const pct = (v) => (v == null ? "—" : `${(v * 100).toFixed(0)}%`);
+    const secs = (v) => (v == null ? "—" : v < 0.01 ? v.toExponential(1) : v.toPrecision(3));
+    const rows = solvers
+      .map(
+        (s, idx) => `
+        <tr class="${idx === 0 ? "top-solver" : ""}">
+          <td>${esc(s.solver)}</td>
+          <td>${esc(s.backend)}</td>
+          <td>${pct(s.success_rate)}</td>
+          <td>${secs(s.mean_time_sec)}</td>
+          <td>${secs(s.median_time_sec)}</td>
+          <td>${pct(s.mean_path_efficiency)}</td>
+          <td>${s.n_instances}</td>
+          <td>${s.n_runs}</td>
+        </tr>`
+      )
+      .join("");
+    el("benchSolverTable").innerHTML =
+      `<thead><tr>
+         <th>Solver</th><th>Backend</th><th>Success</th><th>Mean t</th><th>Median t</th>
+         <th>Path eff.</th><th>Instances</th><th>Runs</th>
+       </tr></thead><tbody>${rows}</tbody>`;
+  }
+
+  // ---- Per-map breakdown: which (map, problem, solver) cells fail, and why ----
+
+  function renderByInstance(sweepId, params) {
+    const box = el("benchByInstance");
+    box.innerHTML = '<div class="bench-empty">loading…</div>';
+    fetch(
+      `/v1/analysis/sweeps/${encodeURIComponent(sweepId)}/by-instance` +
+        (params && params.toString() ? `?${params.toString()}` : "")
+    )
+      .then(async (r) => {
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.detail || r.statusText);
+        return j;
+      })
+      .then((j) => {
+        const secs = (v) => (v == null ? "—" : v < 0.01 ? v.toExponential(1) : v.toPrecision(3));
+        const causeText = (causes) => {
+          const parts = Object.entries(causes || {});
+          if (!parts.length) return "";
+          return parts
+            .map(([k, n]) => {
+              const cls =
+                k === "pre_processing" ? "cause-pre" : k === "solver_sampling" ? "cause-sampling" : "";
+              return `<span class="${cls}">${esc(k)}&nbsp;×${n}</span>`;
+            })
+            .join(", ");
+        };
+        const rows = j.rows
+          .map(
+            (r) => `
+          <tr class="${r.success_rate < 1 ? "row-degraded" : ""}">
+            <td>${esc(r.map)}</td>
+            <td>${esc(r.problem_name)}</td>
+            <td>${esc(r.solver)}</td>
+            <td>${(r.success_rate * 100).toFixed(0)}%</td>
+            <td>${r.n_valid}/${r.n_runs}</td>
+            <td>${secs(r.mean_time_sec)}</td>
+            <td style="text-align:left;">${causeText(r.failure_causes)}</td>
+          </tr>`
+          )
+          .join("");
+        box.innerHTML =
+          `<table class="bench-table">
+             <thead><tr>
+               <th>Map</th><th>Problem</th><th>Solver</th><th>Success</th>
+               <th>Valid/Runs</th><th>Mean t</th><th style="text-align:left;">Failure cause</th>
+             </tr></thead><tbody>${rows}</tbody>
+           </table>`;
+      })
+      .catch((err) => {
+        box.innerHTML = `<div class="bench-empty">${esc(String(err.message || err))}</div>`;
+      });
+  }
+
+  // ---- Map thumbnails for the current selection ----
+
+  function renderThumbs(f) {
+    const seen = new Set();
+    const matches = bench.instances.filter((i) => {
+      if (f.grid_size && i.grid_size !== f.grid_size) return false;
+      if (f.num_robots && String(i.num_robots) !== f.num_robots) return false;
+      if (f.problem && i.problem_name !== f.problem) return false;
+      if (!i.map_id || seen.has(i.map_id)) return false;
+      seen.add(i.map_id);
+      return true;
+    });
+    const strip = el("benchThumbs");
+    strip.innerHTML = "";
+    if (!matches.length) {
+      strip.innerHTML = '<div class="bench-empty">No curated map preview for this selection.</div>';
+      return;
+    }
+    matches.slice(0, 12).forEach((i) => {
+      const card = document.createElement("div");
+      card.className = "thumb";
+      const plotDiv = document.createElement("div");
+      plotDiv.className = "thumb-plot";
+      card.appendChild(plotDiv);
+      const label = document.createElement("div");
+      label.className = "thumb-label";
+      label.textContent = `${i.map_id}`;
+      card.appendChild(label);
+      strip.appendChild(card);
+      fetch(`/v1/maps/${encodeURIComponent(i.map_id)}/preview?embed=json`)
+        .then((r) => r.json())
+        .then((fig) => {
+          // Don't reuse the preview's traces. Its obstacles are Scatter
+          // markers sized for a ~700px figure — shrunk to a thumbnail they
+          // blob together and overlap — and the grid is drawn as layout
+          // shapes that don't rescale cleanly. Rebuild as a heatmap: one
+          // z-cell per grid cell, so cells always tile exactly at any size.
+          const obs =
+            (fig.data || []).find((t) => t.name === "Obstacles") || { x: [], y: [] };
+          const xr = ((fig.layout || {}).xaxis || {}).range || [-0.5, 0.5];
+          const yr = ((fig.layout || {}).yaxis || {}).range || [-0.5, 0.5];
+          const cols = Math.max(1, Math.round(Math.max(xr[0], xr[1]) + 0.5));
+          const rows = Math.max(1, Math.round(Math.max(yr[0], yr[1]) + 0.5));
+          const z = Array.from({ length: rows }, () => new Array(cols).fill(0));
+          (obs.x || []).forEach((cx, k) => {
+            const c = Math.round(cx);
+            const r = Math.round(obs.y[k]);
+            if (r >= 0 && r < rows && c >= 0 && c < cols) z[r][c] = 1;
+          });
+          Plotly.newPlot(
+            plotDiv,
+            [
+              {
+                type: "heatmap",
+                z: z,
+                xgap: 1.5,
+                ygap: 1.5,
+                colorscale: [[0, "#ffffff"], [1, "#1a1a2e"]],
+                zmin: 0,
+                zmax: 1,
+                showscale: false,
+                hoverinfo: "skip",
+              },
+            ],
+            {
+              width: 156,
+              height: 156,
+              margin: { t: 2, b: 2, l: 2, r: 2 },
+              paper_bgcolor: "#ffffff",
+              plot_bgcolor: "#c9c9c9", // shows through the xgap/ygap as grid lines
+              xaxis: { visible: false, fixedrange: true, range: [-0.5, cols - 0.5] },
+              // descending range => row 0 at the top (matrix convention)
+              yaxis: { visible: false, fixedrange: true, range: [rows - 0.5, -0.5] },
+            },
+            { staticPlot: true, displayModeBar: false }
+          );
+        })
+        .catch(() => {
+          plotDiv.innerHTML = '<div class="placeholder">preview failed</div>';
+        });
+    });
+  }
+
+  // ---- Plots. Every plot except "scaling" honours the instance-class
+  // filter (params); scaling is always whole-sweep (its x-axis IS the scale).
+
+  function renderPlots(sweepId, params) {
+    const grid = el("benchPlots");
+    const qs = params && params.toString();
+    grid.innerHTML = "";
+    PLOTS.forEach(([name, caption]) => {
+      const filtered = name !== "scaling" && qs;
+      const suffix = name === "scaling" ? " · whole sweep" : filtered ? " · filtered" : "";
+      const card = document.createElement("div");
+      card.className = "plot-card";
+      card.innerHTML = `<div class="plot-caption">${esc(caption)}${suffix}</div><div class="plot-body"><div class="placeholder">loading…</div></div>`;
+      grid.appendChild(card);
+      const body = card.querySelector(".plot-body");
+      const url =
+        `/v1/analysis/sweeps/${encodeURIComponent(sweepId)}/plots/${name}` +
+        (filtered ? `?${qs}` : "");
+      fetch(url)
+        .then(async (r) => {
+          const j = await r.json();
+          if (!r.ok) throw new Error(j.detail || r.statusText);
+          return j;
+        })
+        .then((fig) => {
+          body.innerHTML = "";
+          Plotly.newPlot(body, fig.data, themedLayout(fig.layout), PLOTLY_CONFIG);
+        })
+        .catch((err) => {
+          body.innerHTML = `<div class="placeholder">${esc(String(err.message || err))}</div>`;
+        });
+    });
+  }
 })();
 </script>
 

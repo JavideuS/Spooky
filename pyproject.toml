@@ -95,6 +95,13 @@ fastapi = [
     "uvicorn",
     "python-multipart",  # required by FastAPI's UploadFile form parsing
     "dash",
+    # fastapi_app/analysis_api.py serves aggregated benchmark sweeps: it calls
+    # quantum.benchmark.analysis (pandas + scipy) and renders its Plotly
+    # figures. Mirrors the benchmark + visualizer extras rather than assuming
+    # they're installed alongside.
+    "pandas",
+    "scipy",
+    "plotly",
 ]
 
 paper = [
