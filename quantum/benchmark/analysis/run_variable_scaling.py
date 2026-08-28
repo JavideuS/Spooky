@@ -13,6 +13,9 @@ Usage:
 
   python -m quantum.benchmark.analysis.run_variable_scaling \
       --map quantum/maps/synthetic/10x10/obs10x10_hard --problem four_robots
+
+  python -m quantum.benchmark.analysis.run_variable_scaling \
+      --sweep-dir results/sweeps/<sweep_id>
 """
 
 import argparse
@@ -25,8 +28,10 @@ from quantum.benchmark.analysis.variable_scaling import (
     DEFAULT_MODES,
     instances_from_sweep_config,
     measure_scaling,
+    penalty_set_from_config,
     relative_to_naive,
     relative_to_raw,
+    sweep_config_from_dir,
     write_csv,
 )
 from quantum.config import parser as config_parser
@@ -44,6 +49,16 @@ def main():
     source.add_argument(
         "--config", help="Sweep config whose instances/problems to measure."
     )
+    source.add_argument(
+        "--sweep-dir",
+        "-d",
+        help=(
+            "Finished sweep whose instances to measure, read from its "
+            "manifest.json. Defaults the penalty set to the one that sweep's "
+            "QUBO solvers used, and writes the CSV into its analysis/ "
+            "directory -- same addressing as run_aggregate and run_plots."
+        ),
+    )
     source.add_argument("--map", help="Single map path (use with --problem).")
     parser.add_argument("--problem", help="Problem name, required with --map.")
     parser.add_argument(
@@ -54,7 +69,12 @@ def main():
         help=f"Defaults to {list(DEFAULT_MODES)}.",
     )
     parser.add_argument(
-        "--penalty-set", default="crash", help="Penalty set name from config.yaml."
+        "--penalty-set",
+        default=None,
+        help=(
+            "Penalty set name from config.yaml. Defaults to the sweep's own "
+            "with --sweep-dir, otherwise 'crash'."
+        ),
     )
     parser.add_argument(
         "--var-limit",
@@ -91,26 +111,32 @@ def main():
     # verbose_level=0 does not silence it -- this does
     set_verbose_level(args.verbose)
 
+    penalty_set = args.penalty_set
+    if args.sweep_dir:
+        config = sweep_config_from_dir(args.sweep_dir)
+        instances = instances_from_sweep_config(config)
+        penalty_set = penalty_set or penalty_set_from_config(config)
+    elif args.config:
+        with open(args.config, "r", encoding="utf-8") as f:
+            instances = instances_from_sweep_config(yaml.safe_load(f))
+    else:
+        instances = [(args.map, args.problem)]
+    penalty_set = penalty_set or "crash"
+
     penalty_sets = config_parser.load_config(
         str(_CONFIG_YAML), sections=["penalty_sets"]
     ).get("penalty_sets", {})
-    if args.penalty_set not in penalty_sets:
+    if penalty_set not in penalty_sets:
         print(
-            f"[scaling] penalty set '{args.penalty_set}' not in {_CONFIG_YAML}. "
+            f"[scaling] penalty set '{penalty_set}' not in {_CONFIG_YAML}. "
             f"Available: {sorted(penalty_sets)}",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    if args.config:
-        with open(args.config, "r", encoding="utf-8") as f:
-            instances = instances_from_sweep_config(yaml.safe_load(f))
-    else:
-        instances = [(args.map, args.problem)]
-
     df = measure_scaling(
         instances,
-        penalty_sets[args.penalty_set],
+        penalty_sets[penalty_set],
         args.modes,
         args.var_limit,
         measure_full_horizon=not args.no_full_horizon,
@@ -150,8 +176,11 @@ def main():
             file=sys.stderr,
         )
 
-    if args.output:
-        print(f"[scaling] wrote {write_csv(df, args.output)}")
+    output = args.output
+    if output is None and args.sweep_dir:
+        output = str(Path(args.sweep_dir) / "analysis" / "variable_scaling.csv")
+    if output:
+        print(f"[scaling] wrote {write_csv(df, output)}")
 
 
 if __name__ == "__main__":

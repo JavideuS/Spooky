@@ -7,6 +7,7 @@ solver, so they stay fast and cannot fail on qubit limits -- which is the
 whole reason the module exists.
 """
 
+import pandas as pd
 import pytest
 
 from quantum.benchmark.analysis.variable_scaling import (
@@ -264,3 +265,61 @@ def test_naive_gain_is_measured_against_raw_full_horizon():
     assert safe["naive_gain"] == pytest.approx(
         naive / safe["total_window_variables"]
     )
+
+
+def test_an_oversized_window_is_skipped_not_built():
+    """`raw` at 50x50 is cells x robots x t_max -- 30,000 variables for four
+    robots, and the QUBO build is quadratic in pairwise terms. Building it
+    stalled the whole table with no output; it is now reported as a skip."""
+    rows = measure_instance(
+        "quantum/maps/synthetic/50x50/no_obs50x50",
+        "four_robots",
+        PENALTIES,
+        (pm.RAW, pm.BFS_AGGRESSIVE),
+        measure_full_horizon=False,
+    )
+    by_mode = {r["preprocess"]: r for r in rows}
+    assert "exceeds" in by_mode[pm.RAW]["error"]
+    # the pruned mode on the same instance stays tiny and is measured
+    assert by_mode[pm.BFS_AGGRESSIVE]["error"] is None
+    assert by_mode[pm.BFS_AGGRESSIVE]["window_variables"] < 100
+
+
+def test_error_rows_carry_the_full_schema():
+    """relative_to_raw() reads window_variables. A narrower error row made it
+    KeyError as soon as every mode for an instance failed -- which is exactly
+    what a large map produces."""
+    rows = measure_instance(
+        "quantum/maps/synthetic/5x5/obs5x5_hard",  # malformed: goal on obstacle
+        "three_robots",
+        PENALTIES,
+        (pm.RAW, pm.BFS_SAFE),
+    )
+    assert all(r["error"] is not None for r in rows)
+    df = relative_to_naive(relative_to_raw(pd.DataFrame(rows)))
+    assert "window_variables" in df.columns
+    assert df["window_variables"].isna().all()
+
+
+def test_sweep_dir_addressing_matches_the_other_analysis_clis():
+    """run_aggregate/run_plots/run_report all take --sweep-dir; this one took
+    only --config or --map, so pointing it at a finished sweep meant
+    remembering which config produced it."""
+    from quantum.benchmark.analysis.variable_scaling import (
+        penalty_set_from_config,
+    )
+
+    config = {
+        "instances": [{"map": "m", "problems": ["p1", "p2"]}],
+        "solvers": [
+            {"name": "ilp", "penalty_set": None},
+            {"name": "sa", "penalty_set": "crash"},
+            {"name": "qaoa", "penalty_set": "crash"},
+        ],
+    }
+    assert instances_from_sweep_config(config) == [("m", "p1"), ("m", "p2")]
+    # ILP/CBS record None and must not confuse the majority
+    assert penalty_set_from_config(config) == "crash"
+    # genuinely ambiguous configs get no default rather than a wrong one
+    config["solvers"][1]["penalty_set"] = "swap"
+    assert penalty_set_from_config(config) is None

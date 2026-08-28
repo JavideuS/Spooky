@@ -68,6 +68,7 @@ Every function here is plain and independently importable; see
 run_variable_scaling.py for the CLI wrapper.
 """
 
+import json
 import math
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -85,6 +86,18 @@ from quantum.utils import preprocess as preprocess_modes
 # var_limit large enough that max_window_size() spans any horizon, giving the
 # single un-windowed QUBO that windowing is measured against
 _UNWINDOWED_VAR_LIMIT = 10**9
+
+# Above this many variables in one window the build stops being cheap: it is
+# quadratic in pairwise penalty terms, and `raw` at 50x50 is
+# cells x robots x t_max -- 15,000 variables and 11s for two robots, far worse
+# for six. Every pruned mode stays in the dozens on the same instance, so this
+# only trips `raw`, whose size is the very thing being reported. Recorded as a
+# skip rather than built.
+_MAX_WINDOW_VARIABLES = 20_000
+
+# The un-windowed build is the one step that scales with the whole problem
+# rather than a window, so it gets its own, larger bound.
+_FULL_HORIZON_MAX_ENCODED = 200_000
 
 DEFAULT_MODES: Tuple[str, ...] = (
     preprocess_modes.RAW,
@@ -115,6 +128,23 @@ def _build_for_mode(problem, penalties, mode, var_limit=None):
     if variant is not None:
         _, active_cells = builder.get_logical_variables(variant)
         builder._active_cells = active_cells
+        projected = sum(len(cells) for cells in active_cells.values())
+    else:
+        # `raw` prunes nothing, so the window is every cell for every active
+        # robot at every step of it
+        cells = (
+            problem.grid.M * problem.grid.N
+            if problem.get_format_type() != "graph"
+            else len(problem.graph.nodes)
+        )
+        projected = cells * problem.num_robots * builder.max_window_size()
+
+    if projected > _MAX_WINDOW_VARIABLES:
+        raise ValueError(
+            f"projected window of {projected:,} variables exceeds "
+            f"{_MAX_WINDOW_VARIABLES:,}; the build is quadratic in pairwise "
+            "terms, so this is skipped rather than run"
+        )
 
     builder.build()
     before = builder.get_num_wires()
@@ -157,6 +187,21 @@ def measure_instance(
                     "instance_map": map_path,
                     "problem_name": problem_name,
                     "preprocess": mode,
+                    # Same columns as a successful row, all empty. A narrower
+                    # schema made relative_to_raw() raise KeyError on
+                    # window_variables as soon as every mode for an instance
+                    # failed.
+                    "num_robots": None,
+                    "horizon": None,
+                    "window_max_steps": None,
+                    "num_windows": None,
+                    "encoded_variables": None,
+                    "window_variables": None,
+                    "window_variables_after_numeric": None,
+                    "total_window_variables": None,
+                    "full_horizon_variables": None,
+                    "windowing_gain": None,
+                    "fraction_of_encoding": None,
                     "error": f"{type(exc).__name__}: {exc}",
                 }
             )
@@ -166,7 +211,7 @@ def measure_instance(
         window_steps = builder.max_window_size()
 
         full_horizon = None
-        if measure_full_horizon:
+        if measure_full_horizon and encoded <= _FULL_HORIZON_MAX_ENCODED:
             try:
                 # var_limit high enough that max_window_size() spans the whole
                 # horizon, i.e. one un-windowed QUBO. Cheap even at 10x10
@@ -258,6 +303,34 @@ def instances_from_sweep_config(config: Dict[str, Any]) -> List[Tuple[str, str]]
         for problem_name in entry.get("problems", []) or []:
             pairs.append((entry["map"], problem_name))
     return pairs
+
+
+def sweep_config_from_dir(sweep_dir: str) -> Dict[str, Any]:
+    """The resolved config a finished sweep ran, from its manifest.
+
+    Lets the scaling table be pointed at a sweep the same way run_aggregate,
+    run_plots and run_report are, rather than requiring the caller to
+    remember which config produced it -- and it measures what that sweep
+    actually ran, including any edits made since.
+    """
+    manifest = Path(sweep_dir) / "manifest.json"
+    with open(manifest, "r", encoding="utf-8") as f:
+        return json.load(f).get("sweep_config", {}) or {}
+
+
+def penalty_set_from_config(config: Dict[str, Any]) -> Optional[str]:
+    """The penalty set the config's QUBO solvers used, if they agree.
+
+    ILP and CBS record None (they have no penalty weights), so those are
+    ignored. Returns None when the QUBO solvers disagree, since one scaling
+    table cannot represent two different Hamiltonians.
+    """
+    named = {
+        solver.get("penalty_set")
+        for solver in config.get("solvers", []) or []
+        if solver.get("penalty_set")
+    }
+    return named.pop() if len(named) == 1 else None
 
 
 def relative_to_raw(df: pd.DataFrame) -> pd.DataFrame:
