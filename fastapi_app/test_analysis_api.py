@@ -60,6 +60,45 @@ def test_plots_return_plotly_json():
         )
 
 
+def test_by_instance_and_filtered_plot():
+    sweep_id = _first_sweep_id()
+    with TestClient(app) as client:
+        grids = client.get("/v1/analysis/sweeps").json()["sweeps"][0]["grid_sizes"]
+        assert grids, "sweep has no grid sizes"
+        grid = grids[0]
+
+        rows = client.get(
+            f"/v1/analysis/sweeps/{sweep_id}/by-instance?grid_size={grid}"
+        )
+        assert rows.status_code == 200, rows.text
+        body = rows.json()
+        assert body["row_count"] == len(body["rows"]) > 0
+        for row in body["rows"]:
+            assert row["grid_size"] == grid
+            assert 0.0 <= row["success_rate"] <= 1.0
+            assert isinstance(row["failure_causes"], dict)
+
+        # a filterable plot honours grid_size; scaling ignores it (still 200)
+        assert (
+            client.get(
+                f"/v1/analysis/sweeps/{sweep_id}/plots/success_rate?grid_size={grid}"
+            ).status_code
+            == 200
+        )
+        assert (
+            client.get(
+                f"/v1/analysis/sweeps/{sweep_id}/plots/scaling?grid_size={grid}"
+            ).status_code
+            == 200
+        )
+        assert (
+            client.get(
+                f"/v1/analysis/sweeps/{sweep_id}/by-instance?grid_size=999x999"
+            ).status_code
+            == 404
+        )
+
+
 def test_unknown_sweep_404():
     with TestClient(app) as client:
         assert (

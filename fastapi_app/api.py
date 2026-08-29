@@ -32,7 +32,7 @@ from config_api import (
     global_solver_configs,
     global_penalties_params,
 )
-from analysis_api import router as analysis_router, BENCHMARKS_DIR, _sweep_dir_map
+from analysis_api import router as analysis_router, benchmarks_dir, _sweep_dir_map
 from typing import Dict, Optional
 import datetime
 import os
@@ -120,12 +120,15 @@ async def lifespan(app: FastAPI):
         )
 
         try:
+            # Resolves the source (downloads the HF dataset when
+            # SPOOKY_BENCHMARKS_REPO is set) and scans it once, up front.
+            source = benchmarks_dir()
             n_sweeps = len(_sweep_dir_map())
             print(
-                f"Benchmark analysis: {n_sweeps} sweep(s) discovered under {BENCHMARKS_DIR} "
+                f"Benchmark analysis: {n_sweeps} sweep(s) discovered under {source} "
                 "(aggregated lazily on first request)."
             )
-        except Exception as e:  # never let a bad benchmarks dir block startup
+        except Exception as e:  # never let a bad benchmarks source block startup
             print(f"Benchmark analysis: discovery skipped ({e}).")
 
         yield  # Application is ready to handle requests

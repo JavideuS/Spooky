@@ -3,17 +3,18 @@ Read-only analysis API: serves aggregated benchmark-sweep results — tables,
 Plotly figures, and a per-instance-class solver recommendation — for the
 demo's "Benchmarks" tab.
 
-Data source is a directory of sweep dirs: SPOOKY_BENCHMARKS_DIR, default
-<repo>/results/sweeps. Each sweep dir is one produced by
-quantum.benchmark.sweep_runner (index.json + manifest.json + per-combo
-benchmark JSONs). Nested layouts (results/sweeps/CML/<id>/) are discovered
-recursively.
+Data source (see benchmarks_dir() below): a Hugging Face dataset via
+SPOOKY_BENCHMARKS_REPO (snapshot_download'd at startup — the deployed-Space
+path), or a local directory via SPOOKY_BENCHMARKS_DIR (default
+<repo>/results/sweeps). Either way it's walked recursively for sweep dirs —
+index.json + manifest.json + either analysis/*.csv (what publish.py ships)
+or the raw per-combo benchmark JSONs.
 
-Nothing here runs a sweep or a solve. aggregate_sweep() is recomputed from
-the raw benchmark JSONs on the first request per sweep and cached in-process
-for the lifetime of the process; the CSVs it writes as a side effect go to a
-scratch cache dir, never back into the (possibly read-only, e.g. a Hugging
-Face dataset snapshot) source tree.
+Nothing here runs a sweep or a solve. Per sweep, _tables() reads the shipped
+analysis/*.csv when present, otherwise re-aggregates from the raw benchmark
+JSONs; either result is cached in-process. Any CSVs aggregate_sweep() writes
+as a side effect go to a scratch cache dir, never back into the (read-only)
+snapshot.
 """
 
 from __future__ import annotations
@@ -42,13 +43,52 @@ logger = logging.getLogger("spooky.api.analysis")
 
 QUANTUM_ROOT = Path(quantum.__file__).resolve().parent
 
-# Where published sweep dirs live. Local dev: the repo's results/sweeps. In a
-# deployed Space this points at the huggingface_hub snapshot_download cache.
-BENCHMARKS_DIR = Path(
+# Two ways to point at the published sweeps:
+#   SPOOKY_BENCHMARKS_REPO   a Hugging Face dataset id — snapshot_download'd
+#                            into the huggingface_hub cache at startup (this
+#                            is the deployed-Space path). SPOOKY_BENCHMARKS_-
+#                            REVISION optionally pins it to a commit/tag.
+#   SPOOKY_BENCHMARKS_DIR    a local directory (local dev / an explicit
+#                            override). Default: the repo's results/sweeps.
+# The repo wins when both are set. Never the installed package dir — that's
+# read-only in a container and wiped on reinstall (see registry.MAP_CACHE_ROOT).
+_BENCHMARKS_REPO = os.environ.get("SPOOKY_BENCHMARKS_REPO") or None
+_BENCHMARKS_REVISION = os.environ.get("SPOOKY_BENCHMARKS_REVISION") or None
+_BENCHMARKS_LOCAL_DIR = Path(
     os.environ.get(
         "SPOOKY_BENCHMARKS_DIR", str(QUANTUM_ROOT.parent / "results" / "sweeps")
     )
 ).expanduser()
+
+
+@lru_cache(maxsize=1)
+def benchmarks_dir() -> Path:
+    """The directory sweep discovery walks. Downloads the HF dataset on first
+    call when SPOOKY_BENCHMARKS_REPO is set, else returns the local dir.
+    Cleared by GET /v1/analysis/sweeps?refresh=true, so a re-call re-syncs."""
+    if not _BENCHMARKS_REPO:
+        return _BENCHMARKS_LOCAL_DIR
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError as exc:  # pragma: no cover - deploy misconfig
+        raise RuntimeError(
+            "SPOOKY_BENCHMARKS_REPO is set but huggingface_hub is not installed "
+            "— add it to the image, or use SPOOKY_BENCHMARKS_DIR instead."
+        ) from exc
+    local = snapshot_download(
+        repo_id=_BENCHMARKS_REPO,
+        repo_type="dataset",
+        revision=_BENCHMARKS_REVISION,
+        allow_patterns=["sweeps/**", "published.json"],
+    )
+    logger.info(
+        "Benchmark dataset %s@%s -> %s",
+        _BENCHMARKS_REPO,
+        _BENCHMARKS_REVISION or "HEAD",
+        local,
+    )
+    return Path(local)
+
 
 # aggregate_sweep() writes CSVs; send them here so a read-only source tree
 # (an HF snapshot) still works. Mirrors registry.MAP_CACHE_ROOT.
@@ -72,10 +112,11 @@ _tables_cache: Dict[str, Dict[str, pd.DataFrame]] = {}
 
 
 def _iter_sweep_dirs() -> List[Path]:
-    if not BENCHMARKS_DIR.exists():
+    root = benchmarks_dir()
+    if not root.exists():
         return []
     found = []
-    for index_path in BENCHMARKS_DIR.rglob("index.json"):
+    for index_path in root.rglob("index.json"):
         sweep_dir = index_path.parent
         if (sweep_dir / "manifest.json").exists():
             found.append(sweep_dir)
@@ -141,17 +182,56 @@ def _catalog_entry(sweep_dir: Path) -> Dict[str, Any]:
 # --------------------------------------------------------------------------
 
 
+# The six DataFrames aggregate_sweep() returns / writes to <sweep>/analysis/.
+_TABLE_FILES = {
+    "runs_long": "runs_long.csv",
+    "summary_by_solver": "summary_by_solver.csv",
+    "statistical_tests": "statistical_tests.csv",
+    "energy_diagnostics": "energy_diagnostics.csv",
+    "failure_causes": "failure_causes.csv",
+    "robot_statistics_long": "robot_statistics_long.csv",
+}
+
+
+def _load_precomputed(analysis_dir: Path) -> Optional[Dict[str, pd.DataFrame]]:
+    """Read aggregate_sweep()'s CSVs straight from <sweep>/analysis/ when
+    they're there. This is what quantum.benchmark.analysis.publish ships to
+    the HF dataset — the raw per-combo benchmark JSONs stay on the machine
+    that ran the sweep, so on the Space there is nothing to re-aggregate.
+
+    Returns None if runs_long.csv is missing, so the caller falls back to
+    aggregating from raw (a bare local sweep dir that was never run through
+    run_report). A stale CSV set is possible if a sweep dir is re-run in
+    place without re-running the aggregation — GET /sweeps?refresh=true drops
+    the cache once the CSVs are regenerated."""
+    runs_csv = analysis_dir / _TABLE_FILES["runs_long"]
+    if not runs_csv.exists():
+        return None
+    tables: Dict[str, pd.DataFrame] = {}
+    for key, fname in _TABLE_FILES.items():
+        path = analysis_dir / fname
+        if path.exists() and path.stat().st_size > 0:
+            tables[key] = pd.read_csv(path)
+        else:
+            tables[key] = pd.DataFrame()
+    return tables
+
+
 def _tables(sweep_id: str) -> Dict[str, pd.DataFrame]:
     if sweep_id not in _tables_cache:
         sweep_dir = _resolve_sweep_dir(sweep_id)
-        try:
-            _tables_cache[sweep_id] = aggregate_sweep(
-                str(sweep_dir), output_dir=str(_CACHE_ROOT / sweep_id)
-            )
-        except FileNotFoundError as exc:
-            raise HTTPException(422, f"Sweep {sweep_id} is incomplete: {exc}")
-        except ValueError as exc:
-            raise HTTPException(422, f"Sweep {sweep_id} has no usable runs: {exc}")
+        precomputed = _load_precomputed(sweep_dir / "analysis")
+        if precomputed is not None:
+            _tables_cache[sweep_id] = precomputed
+        else:
+            try:
+                _tables_cache[sweep_id] = aggregate_sweep(
+                    str(sweep_dir), output_dir=str(_CACHE_ROOT / sweep_id)
+                )
+            except FileNotFoundError as exc:
+                raise HTTPException(422, f"Sweep {sweep_id} is incomplete: {exc}")
+            except ValueError as exc:
+                raise HTTPException(422, f"Sweep {sweep_id} has no usable runs: {exc}")
     return _tables_cache[sweep_id]
 
 
@@ -195,16 +275,18 @@ def _filter_runs(
 
 @router.get("/sweeps")
 def list_sweeps(refresh: bool = False):
-    """Catalog of every discoverable sweep, newest first. refresh=true
-    re-scans SPOOKY_BENCHMARKS_DIR and drops the aggregation cache — use it
-    after dropping new sweep data in without restarting the process."""
+    """Catalog of every discoverable sweep, newest first. refresh=true drops
+    the caches and re-resolves the source — re-running snapshot_download when
+    SPOOKY_BENCHMARKS_REPO is set (picks up newly published sweeps), or
+    re-scanning the local dir otherwise."""
     if refresh:
+        benchmarks_dir.cache_clear()
         _sweep_dir_map.cache_clear()
         _tables_cache.clear()
     entries = [_catalog_entry(d) for d in _sweep_dir_map().values()]
     entries.sort(key=lambda e: e.get("start_time") or "", reverse=True)
     return {
-        "benchmarks_dir": str(BENCHMARKS_DIR),
+        "benchmarks_dir": str(benchmarks_dir()),
         "sweep_count": len(entries),
         "sweeps": entries,
     }

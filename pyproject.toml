@@ -98,10 +98,12 @@ fastapi = [
     # fastapi_app/analysis_api.py serves aggregated benchmark sweeps: it calls
     # quantum.benchmark.analysis (pandas + scipy) and renders its Plotly
     # figures. Mirrors the benchmark + visualizer extras rather than assuming
-    # they're installed alongside.
+    # they're installed alongside. huggingface_hub is for its
+    # SPOOKY_BENCHMARKS_REPO path (snapshot_download the published sweeps).
     "pandas",
     "scipy",
     "plotly",
+    "huggingface_hub",
 ]
 
 paper = [
@@ -119,14 +121,21 @@ benchmark = [
     "scipy",
 ]
 
+# quantum/benchmark/analysis/publish.py — pushes aggregated sweeps to a
+# Hugging Face dataset the FastAPI Space then serves.
+publish = [
+    "spooky[benchmark]",
+    "huggingface_hub",
+]
+
 all = [
-    "spooky[gpu,dwave,ibm,iqm,jupyter,dev,visualizer,fastapi,paper,ros,classical,benchmark]",
+    "spooky[gpu,dwave,ibm,iqm,jupyter,dev,visualizer,fastapi,paper,ros,classical,benchmark,publish]",
 ]
 
 # PennyLane ships no CUDA/lightning-gpu wheels for Windows, so this mirrors
 # "all" minus the gpu extra.
 windows = [
-    "spooky[dwave,ibm,iqm,jupyter,dev,visualizer,fastapi,paper,ros,classical,benchmark]",
+    "spooky[dwave,ibm,iqm,jupyter,dev,visualizer,fastapi,paper,ros,classical,benchmark,publish]",
 ]
 
 [project.urls]
