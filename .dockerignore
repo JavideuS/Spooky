@@ -9,6 +9,7 @@ env
 
 # Not needed by the FastAPI service
 results/
+quantum/results/
 quantum/paper/
 quantum/tfg_proves/
 quantum/prueba/

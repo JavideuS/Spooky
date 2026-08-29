@@ -38,6 +38,13 @@ USER spooky
 
 WORKDIR /app/fastapi_app
 
+# The Benchmarks tab reads published sweeps from this HF dataset
+#Unset this to fall back to a local
+# SPOOKY_BENCHMARKS_DIR for local dev. SPOOKY_BENCHMARKS_REVISION optionally
+# pins it to a commit for a stable demo.
+ENV SPOOKY_BENCHMARKS_REPO=JavideuS/Spooky-benchmark
+# ENV SPOOKY_BENCHMARKS_REVISION=<commit-sha>
+
 # HF Spaces' Docker SDK expects the app on port 7860 by default.
 EXPOSE 7860
 
