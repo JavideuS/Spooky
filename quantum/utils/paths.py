@@ -1,4 +1,19 @@
+import os
+from pathlib import Path
 from typing import Dict, Any, List, Tuple
+
+# One place for all benchmark / sweep / calibration output, anchored to the
+# repo root so it lands in the same directory no matter which working
+# directory a script was launched from (a solver script run from quantum/
+# used to drop a second results/ there). Override with SPOOKY_RESULTS_DIR for
+# a non-editable install where quantum/ isn't inside the repo checkout.
+#   paths.py -> quantum/utils/ -> quantum/ -> repo root
+RESULTS_DIR = Path(
+    os.environ.get(
+        "SPOOKY_RESULTS_DIR", str(Path(__file__).resolve().parents[2] / "results")
+    )
+)
+
 
 def merge_paths(old_path: List[Tuple[int, int, int]], new_path: List[Tuple[int, int, int]]) -> List[Tuple[int, int, int]]:
         """

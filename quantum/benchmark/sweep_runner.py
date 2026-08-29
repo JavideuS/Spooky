@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 import quantum.config.parser as config_parser
+from quantum.utils.paths import RESULTS_DIR
 from quantum.pathFormulation import PathfindingProblem
 from quantum.solvers import SolverFactory
 from quantum.builder import (
@@ -144,7 +145,9 @@ class SweepRunner:
 
         self.config: Dict[str, Any] = {}
         self.sweep_id = ""
-        self.output_dir = Path("results/sweeps")
+        self.output_dir = (
+            RESULTS_DIR / "sweeps"
+        )  # replaced with output_root/<id> in load()
         self.index: List[Dict[str, Any]] = []
         self.manifest: Dict[str, Any] = {}
         self._penalty_sets: Dict[str, Any] = {}
@@ -193,7 +196,15 @@ class SweepRunner:
             self.config = yaml.safe_load(f)
 
         sweep_meta = self.config.get("sweep", {})
-        output_root = Path(sweep_meta.get("output_root", "results/sweeps"))
+        # sweep lands in the same place wherever it's launched from.
+        # Unset -> <repo>/results/sweeps.
+        configured_root = sweep_meta.get("output_root")
+        if configured_root:
+            output_root = Path(configured_root)
+            if not output_root.is_absolute():
+                output_root = RESULTS_DIR.parent / output_root
+        else:
+            output_root = RESULTS_DIR / "sweeps"
 
         # Resolve auto-resume: scan output_root for the latest incomplete
         # sweep whose stored config matches this one — never a different

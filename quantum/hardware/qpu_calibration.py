@@ -25,8 +25,11 @@ against real accumulated data rather than staying frozen at that.
 import json
 from pathlib import Path
 
-DEFAULT_PATH = Path("results") / "qpu_calibration.json"
-IBM_USAGE_LOG_PATH = Path("results") / "ibm_usage_log.json"
+from quantum.utils.paths import RESULTS_DIR
+
+# Repo-root results/ (not cwd-relative) so the calibration logs stay in one place
+DEFAULT_PATH = RESULTS_DIR / "qpu_calibration.json"
+IBM_USAGE_LOG_PATH = RESULTS_DIR / "ibm_usage_log.json"
 
 
 def record_execution(

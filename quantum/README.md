@@ -46,6 +46,10 @@ python qubo_cli.py --map maps/synthetic/10x10/no_obs10x10 --problem two_robots -
 
 Run `python qubo_cli.py --help` to see all available options.
 
+`--benchmark` results, and the sweep/analysis tooling under `benchmark/`,
+always write to `<repo>/results/` (`benchmarks/`, `sweeps/`) no matter which
+directory you launch from — set `SPOOKY_RESULTS_DIR` to relocate it.
+
 ### Using the Script (`qubo.py`)
 
 1. **Configure**: Edit `config/config.yaml` to set your map and solver preferences.

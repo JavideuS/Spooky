@@ -5,7 +5,7 @@ import json
 import random
 import time
 
-from quantum.utils.paths import clip_path_at_goal
+from quantum.utils.paths import clip_path_at_goal, RESULTS_DIR
 import numpy as np
 from quantum.utils.validation import is_valid_move, get_position_representation
 from quantum.utils import preprocess as preprocess_modes
@@ -18,7 +18,7 @@ class BenchmarkRunner:
         qubobuilder,
         solver,
         num_runs=10,
-        output_dir="results/benchmarks",
+        output_dir=None,
         level=2,
         preprocess=True,
         seed=None,
@@ -30,7 +30,10 @@ class BenchmarkRunner:
             qubobuilder (QUBOBuilder): A fully initialized QUBO builder
             solver (QUBOSolver): A solver implementing `.solve(Q)`
             num_runs (int): Number of times to run the solver
-            output_dir (str): Where to save results
+            output_dir (str | Path | None): Where to save results. None (the
+                default) resolves to <repo>/results/benchmarks regardless of
+                the working directory the script was launched from (override
+                the repo root with SPOOKY_RESULTS_DIR).
             level (int): Benchmark verbosity level (1=Summary, 2=Paths, 3=Full)
                 - Level 1: Only statistics, timing, energy, validation pass/fail
                 - Level 2: Level 1 + robot paths and per-robot validation details
@@ -57,7 +60,9 @@ class BenchmarkRunner:
         # accepts a mode string or a legacy bool; see quantum.utils.preprocess
         self.preprocess = preprocess_modes.normalize(preprocess)
         self.level = max(1, min(3, level))  # Clamp to 1-3
-        self.output_dir = Path(output_dir)
+        self.output_dir = (
+            Path(output_dir) if output_dir is not None else RESULTS_DIR / "benchmarks"
+        )
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.logger = get_logger()  # Use global logger level
 
