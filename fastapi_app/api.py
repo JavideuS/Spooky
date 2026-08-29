@@ -10,7 +10,14 @@ import uvicorn
 import quantum.config.hdf5parser as h5parser
 import quantum.config.parser as config_parser
 from quantum import map
-from quantum.builder import QUBOBuilder, GraphQUBO, GridILPBuilder, GraphILPBuilder
+from quantum.builder import (
+    QUBOBuilder,
+    GraphQUBO,
+    GridILPBuilder,
+    GraphILPBuilder,
+    GridCBSBuilder,
+    GraphCBSBuilder,
+)
 from quantum.robotConfiguration import RobotConfig
 from quantum.visualizer import QuantumRoboticsVisualizer
 import quantum.pathFormulation as pathfinding
@@ -35,8 +42,43 @@ from config_api import (
 from analysis_api import router as analysis_router, benchmarks_dir, _sweep_dir_map
 from typing import Dict, Optional
 import datetime
+import math
 import os
 import time
+
+
+def _select_builder(solver, problem, fmt: str, penalties, name: str):
+    """Pick the builder matching the solver's backend, mirroring
+    qubo_cli.py's main(): ILP and CBS each get their own penalty-free
+    builder; every sampling backend (dwave, pennylane, …) gets a QUBO
+    builder. `fmt` is "grid" or "graph"."""
+    backend = solver.solver
+    if backend == "ilp":
+        cls = GraphILPBuilder if fmt == "graph" else GridILPBuilder
+        return cls(problem, name=name)
+    if backend == "cbs":
+        cls = GraphCBSBuilder if fmt == "graph" else GridCBSBuilder
+        return cls(problem, name=name)
+    if fmt == "graph":
+        return GraphQUBO(problem, penalties=penalties, name=name)
+    return QUBOBuilder(problem, penalties=penalties, name=name)
+
+
+def _reject_if_infeasible(cost, solution, solver_key):
+    """CBS reports energy=inf when it can't find a conflict-free plan within
+    its node/time budget (there is no best-incumbent fallback — see
+    CBSSolver.solve). A non-finite cost has no meaning in the response and
+    isn't valid JSON, so surface it as a 422 with the termination reason."""
+    if math.isfinite(cost):
+        return
+    reason = (solution.get("metadata") or {}).get("termination_condition", "unknown")
+    raise HTTPException(
+        422,
+        f"No feasible plan found (solver={solver_key}, termination={reason}). "
+        "For CBS, raise the map's time_limit / node_limit or check the "
+        "start/goal placement.",
+    )
+
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -447,12 +489,9 @@ def plan_path(robot_id: str, request: PlanRequest):
             coordinate_format=request.coordinate_format,
         )
         problem = pathfinding.PathfindingProblem(robot_config, grid=map_obj)
-        if solver.solver == "ilp":
-            builder = GridILPBuilder(problem, name="standard")
-        else:
-            builder = QUBOBuilder(
-                problem, penalties=global_penalties_params["crash"], name="standard"
-            )
+        builder = _select_builder(
+            solver, problem, "grid", global_penalties_params["crash"], "standard"
+        )
         start_time = time.time()
         # No builder.build() here: solver.solve() always runs with its
         # preprocess=True default in this app (no preprocess flag is
@@ -479,6 +518,7 @@ def plan_path(robot_id: str, request: PlanRequest):
         formatted_path = solver.format_output_path(raw_path, problem)
         decoded_path = [[i, j] for (i, j, t), _ in formatted_path]
         energy = float(solver.total_energy(solution))
+        _reject_if_infeasible(energy, solution, request.solver)
         print("Energy", energy)
         response = PlanResponse(
             path=decoded_path,
@@ -700,25 +740,17 @@ def plan_stateless(request: StatelessPlanRequest):
 
     # --- 5. Solve ---
     try:
-        is_ilp = solver.solver == "ilp"
         if request.format == "graph":
             problem = pathfinding.PathfindingProblem(
                 robot_configs, graph=env, T=request.T
-            )
-            builder = (
-                GraphILPBuilder(problem, name="v1_plan")
-                if is_ilp
-                else GraphQUBO(problem, penalties=penalties, name="v1_plan")
             )
         else:
             problem = pathfinding.PathfindingProblem(
                 robot_configs, grid=env, T=request.T
             )
-            builder = (
-                GridILPBuilder(problem, name="v1_plan")
-                if is_ilp
-                else QUBOBuilder(problem, penalties=penalties, name="v1_plan")
-            )
+        builder = _select_builder(
+            solver, problem, request.format, penalties, "v1_plan"
+        )
         start_time = time.time()
         # No builder.build() here — see the matching comment in the other
         # /plan endpoint above for why it's unconditionally wasted work.
@@ -754,9 +786,11 @@ def plan_stateless(request: StatelessPlanRequest):
             for robot_num, coords in formatted_robot_paths.items()
         ]
 
+        cost = float(solver.total_energy(solution))
+        _reject_if_infeasible(cost, solution, request.solver)
         response = StatelessPlanResponse(
             paths=paths,
-            cost=float(solver.total_energy(solution)),
+            cost=cost,
             map_id=request.map_id,
             solver_used=request.solver,
             metrics={

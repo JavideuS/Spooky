@@ -16,6 +16,8 @@ _defaults:
     device: "qiskit.iqm"
   ilp: &ilp_defaults
     backend: "ilp"
+  cbs: &cbs_defaults
+    backend: "cbs"
 
 # Main solver profiles
 solvers:
@@ -119,3 +121,7 @@ solvers:
       <<: *ilp_defaults
       description: "Exact classical MILP solver (Pyomo/HiGHS) — always finds the optimal solution, no windowing/sampling"
       tags: ["classical", "ilp", "exact", "no quantum"]
+    cbs:
+      <<: *cbs_defaults
+      description: "CBS algorithm for multi-agent pathfinding"
+      tags: ["classical", "cbs", "fast", "exact"]

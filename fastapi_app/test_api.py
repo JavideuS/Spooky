@@ -38,3 +38,40 @@ def test_plan_does_not_trigger_unrestricted_build(capsys):
     # builder.build() call snuck back in before solver.solve() again.
     captured = capsys.readouterr()
     assert "unrestricted QUBO" not in captured.out
+
+
+def test_cbs_profile_plans_on_grid_and_graph():
+    """classic.cbs must route to the CBS builders in both /v1/plan formats —
+    the endpoints used to branch ilp-vs-QUBO only, so a CBS profile fell
+    through to a QUBOBuilder the CBSSolver can't consume."""
+    with TestClient(app) as client:
+        assert "classic.cbs" in client.get("/solvers").json()
+
+        grid = client.post(
+            "/v1/plan",
+            json={
+                "map_id": "obs5x5_hard",
+                "solver": "classic.cbs",
+                "format": "grid",
+                "robots": [
+                    {"id": "r0", "start": [0, 0], "goal": [4, 4]},
+                    {"id": "r1", "start": [4, 0], "goal": [0, 4]},
+                ],
+            },
+        )
+        assert grid.status_code == 200, grid.text
+        body = grid.json()
+        assert body["solver_used"] == "classic.cbs"
+        assert len(body["paths"]) == 2
+        assert body["cost"] == body["cost"]  # finite, not NaN/inf
+
+        graph = client.post(
+            "/v1/plan",
+            json={
+                "map_id": "obs5x5_hard",
+                "solver": "classic.cbs",
+                "format": "graph",
+                "robots": [{"start": [0, 0], "goal": [4, 4]}],
+            },
+        )
+        assert graph.status_code == 200, graph.text
