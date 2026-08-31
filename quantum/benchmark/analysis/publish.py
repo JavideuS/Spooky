@@ -26,6 +26,10 @@ overwrites. published.json at the dataset root is the ledger.
 Auth: your cached `hf auth login` token, or --token / the HF_TOKEN env var.
 The dataset repo must already exist.
 
+The dataset card is not published from here — its canonical source is
+DATASET_CARD.md in this directory; copy it to the dataset repo's README.md
+by hand when it changes.
+
 Usage:
     python -m quantum.benchmark.analysis.publish --repo user/name \\
         results/sweeps/CML/sweep_A results/sweeps/CML/sweep_B

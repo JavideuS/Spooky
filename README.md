@@ -198,7 +198,17 @@ benchmark = BenchmarkRunner(
 results = benchmark.run_build()
 ```
 
-See [`quantum/benchmark/README.md`](quantum/benchmark/README.md) for benchmarking options.
+For the full `instance × solver × ablation` **sweep** matrix, run from the repo root:
+
+```bash
+spooky-sweep --config sweep_configs/classical_test.yaml
+python -m quantum.benchmark.analysis.run_report -d results/sweeps/<sweep_id>
+```
+
+See [`quantum/benchmark/README.md`](quantum/benchmark/README.md) for benchmarking
+options, the sweep workflow, the paired Wilcoxon methodology, and how to read
+the aggregated tables; [`quantum/benchmark/analysis/README.md`](quantum/benchmark/analysis/README.md)
+is the per-column reference for the CSV output.
 
 ## 🧪 Current Status & Roadmap
 
