@@ -119,18 +119,38 @@ def get_map(map_id: str, format: str = "grid"):
     return representation
 
 
+def _entry_summary(map_id: str, entry: MapEntry) -> dict:
+    grid = entry.grid
+    return {
+        "description": entry.description,
+        "loaded": entry.loaded,
+        "grid_size": f"{grid.M}x{grid.N}" if grid else None,
+        "has_grid": grid is not None,
+        "has_graph": entry.graph is not None,
+        "source": "uploaded" if entry.path is None else entry.path,
+        # Grid-only geo-metadata; None until the map is loaded / for graph-only maps.
+        "resolution": grid.resolution if grid else None,
+        "origin": list(grid.origin) if grid else None,
+    }
+
+
 def list_maps() -> Dict[str, dict]:
     return {
-        map_id: {
-            "description": entry.description,
-            "loaded": entry.loaded,
-            "grid_size": f"{entry.grid.M}x{entry.grid.N}" if entry.grid else None,
-            "has_grid": entry.grid is not None,
-            "has_graph": entry.graph is not None,
-            "source": "uploaded" if entry.path is None else entry.path,
-        }
-        for map_id, entry in _map_registry.items()
+        map_id: _entry_summary(map_id, entry) for map_id, entry in _map_registry.items()
     }
+
+
+def map_detail(map_id: str) -> dict:
+    """Ensure map_id is parsed, then return its full summary (adds `map_id` and
+    `materials` to `_entry_summary`). Raises KeyError for an unknown map_id."""
+    if map_id not in _map_registry:
+        raise KeyError(map_id)
+    entry = _map_registry[map_id]
+    _ensure_loaded(entry)
+    summary = _entry_summary(map_id, entry)
+    summary["map_id"] = map_id
+    summary["materials"] = list(entry.grid.materials) if entry.grid else []
+    return summary
 
 
 def get_solver(solver_key: str):

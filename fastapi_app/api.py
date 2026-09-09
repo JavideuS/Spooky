@@ -26,9 +26,11 @@ from profiles.robot import Robot, RegisterRobotRequest
 from profiles.models import (
     MapInfo,
     RobotMapsResponse,
+    RobotMapDetail,
     PlanRequest,
     PlanResponse,
     MapRegistryResponse,
+    RegisteredMapDetail,
     MapUploadResponse,
     StatelessPlanRequest,
     StatelessPlanResponse,
@@ -104,7 +106,7 @@ TEMPLATES = {
     "default": {},
     "mobile-robot": {"active_solver": "classic.ilp"},
     "quantum-agent": {"active_solver": "dwave.general"},
-    "research-qaoa": {"active_solver": "pennylane.qaoa_QNG"},
+    "research-qaoa": {"active_solver": "pennylane.train.qaoa_QNG"},
     "exact-planner": {"active_solver": "classic.ilp"},
 }
 
@@ -146,6 +148,19 @@ async def lifespan(app: FastAPI):
 
         load_solver_configs(solvers)
         print("Solver configurations loaded.")
+
+        # Catch stale TEMPLATES solver keys now, not as a confusing 400 on the
+        # first solver-less /robots/{id}/plan (register_robot also hard-rejects).
+        for _tname, _tcfg in TEMPLATES.items():
+            _skey = _tcfg.get("active_solver")
+            if _skey and _skey not in global_solver_configs:
+                logger.warning(
+                    "Template %r references unknown solver %r — a robot registered "
+                    "with it cannot plan until an explicit solver is passed. "
+                    "Valid keys: %s",
+                    _tname, _skey, sorted(global_solver_configs),
+                )
+
         _warm_start_gpu_devices()
 
         penalties_conf = config_parser.load_config(
@@ -225,14 +240,20 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     FastAPI's default 422 handler returns error details in the response body
     but logs nothing — so a malformed request looks silent in the console.
     Log the offending body alongside the field errors here.
+
+    Only read the body for JSON requests — same reasoning as log_requests:
+    calling request.body() on a multipart upload would force the whole file
+    into memory ahead of the streaming parser and log binary garbage. On a
+    multipart 422 the form stream is already consumed here anyway.
     """
-    body = await request.body()
+    is_json = request.headers.get("content-type", "").startswith("application/json")
+    body = await request.body() if is_json else b""
     logger.warning(
         "Validation error on %s %s: %s | body=%s",
         request.method,
         request.url.path,
         exc.errors(),
-        body.decode("utf-8", errors="replace")[:2000] if body else "<empty>",
+        body.decode("utf-8", errors="replace")[:2000] if body else "<not logged>",
     )
     return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
@@ -342,11 +363,14 @@ def list_robot_maps(robot_id: str) -> Dict[str, dict]:
 
     for map_id, map_obj in robot.maps.items():
         try:
-            # Extract metadata from your MapObject (adjust based on your class)
+            # map_obj is always a quantum.map.Grid (see upload_map) — M/N,
+            # resolution and origin are set unconditionally in Grid.__init__.
+            origin = getattr(map_obj, "origin", None)
             result[map_id] = MapInfo(
                 name=getattr(map_obj, "name", map_id),
-                grid_size=f"{getattr(map_obj, 'M', 'unknown')}x{getattr(map_obj, 'N', 'unknown')}",
-                resolution=getattr(map_obj, "resolution", "unknown"),
+                grid_size=f"{map_obj.M}x{map_obj.N}",
+                resolution=map_obj.resolution,
+                origin=list(origin) if origin is not None else None,
                 materials=getattr(map_obj, "materials", []),
                 loaded=True,
                 is_active=(map_id == robot.active_map),
@@ -357,7 +381,7 @@ def list_robot_maps(robot_id: str) -> Dict[str, dict]:
     return {"robot_id": robot_id, "map_count": len(result), "maps": result}
 
 
-@app.get("/robots/{robot_id}/maps/{map_id}")
+@app.get("/robots/{robot_id}/maps/{map_id}", response_model=RobotMapDetail)
 def get_robot_map_info(robot_id: str, map_id: str):
     """
     Get detailed info about a specific map for a robot.
@@ -379,6 +403,7 @@ def get_robot_map_info(robot_id: str, map_id: str):
         "name": getattr(map_obj, "name", map_id),
         "grid_size": [getattr(map_obj, "M", None), getattr(map_obj, "N", None)],
         "resolution": getattr(map_obj, "resolution", None),
+        "origin": list(getattr(map_obj, "origin", []) or []) or None,
         "materials": getattr(map_obj, "materials", []),
         "is_active": map_id == robot.active_map,
         # Optional: expose internal flags
@@ -441,7 +466,15 @@ def register_robot(request: RegisterRobotRequest):
     # Apply template defaults (if any)
     template_config = TEMPLATES[request.template]
     if "active_solver" in template_config:
-        robot.active_solver = template_config["active_solver"]
+        skey = template_config["active_solver"]
+        if skey not in global_solver_configs:
+            # Server-side misconfig, not a client error — fix TEMPLATES in api.py.
+            raise HTTPException(
+                500,
+                f"Template {request.template!r} is misconfigured: unknown solver "
+                f"{skey!r}. Valid keys: {sorted(global_solver_configs)}",
+            )
+        robot.active_solver = skey
 
     # Save
     robots[request.robot_id] = robot
@@ -481,17 +514,25 @@ def plan_path(robot_id: str, request: PlanRequest):
         solver = robot.get_solver(request.solver)  # None → uses active_solver
     except Exception as e:
         raise HTTPException(400, str(e))
+    solver_key = request.solver or robot.active_solver
 
-    # --- 3. Run planning ---
+    # --- 3. Resolve penalties ---
+    if request.penalty_set not in global_penalties_params:
+        raise HTTPException(
+            400,
+            f"Unknown penalty_set: {request.penalty_set}. "
+            f"Available: {list(global_penalties_params.keys())}",
+        )
+    penalties = global_penalties_params[request.penalty_set]
+
+    # --- 4. Run planning ---
     try:
         robot_config = RobotConfig(
             robot_id=robot_id, start=tuple(request.start), goal=tuple(request.goal),
             coordinate_format=request.coordinate_format,
         )
         problem = pathfinding.PathfindingProblem(robot_config, grid=map_obj)
-        builder = _select_builder(
-            solver, problem, "grid", global_penalties_params["crash"], "standard"
-        )
+        builder = _select_builder(solver, problem, "grid", penalties, "standard")
         start_time = time.time()
         # No builder.build() here: solver.solve() always runs with its
         # preprocess=True default in this app (no preprocess flag is
@@ -517,17 +558,29 @@ def plan_path(robot_id: str, request: PlanRequest):
             ]
         formatted_path = solver.format_output_path(raw_path, problem)
         decoded_path = [[i, j] for (i, j, t), _ in formatted_path]
+        # Matrix-native (row, col, t) — the discrete QUBO/grid cells, before the
+        # coordinate_format conversion that produces `decoded_path`.
+        discrete_path = [[i, j, t] for (i, j, t), _ in raw_path]
         energy = float(solver.total_energy(solution))
-        _reject_if_infeasible(energy, solution, request.solver)
-        print("Energy", energy)
+        _reject_if_infeasible(energy, solution, solver_key)
+        logger.info(
+            "POST /robots/%s/plan result | map=%s solver=%s cost=%s steps=%d "
+            "discrete[row,col,t]=%s %s=%s",
+            robot_id,
+            request.map_id,
+            solver_key,
+            energy,
+            len(decoded_path),
+            discrete_path,
+            request.coordinate_format,
+            decoded_path,
+        )
         response = PlanResponse(
             path=decoded_path,
             coordinate_format=request.coordinate_format,
             cost=energy,
-            # success=path["success"],
             map_id=request.map_id,
-            # solve_time_ms=path["solve_time_ms"],
-            solver_used=request.solver or robot.active_solver,
+            solver_used=solver_key,
             metrics={
                 "start": request.start,
                 "goal": request.goal,
@@ -554,9 +607,31 @@ def plan_path(robot_id: str, request: PlanRequest):
 
 @app.get("/v1/maps", response_model=MapRegistryResponse)
 def list_registered_maps():
-    """List every map_id in the registry (curated + runtime-uploaded), and whether it's loaded yet."""
+    """List every map_id in the registry (curated + runtime-uploaded), and whether it's loaded yet.
+
+    `resolution` / `origin` are grid-only and stay null until a map is loaded
+    (by a first preview/plan/detail request) — use GET /v1/maps/{map_id} to force
+    a load and read them.
+    """
     maps = registry.list_maps()
     return {"map_count": len(maps), "maps": maps}
+
+
+@app.get("/v1/maps/{map_id}", response_model=RegisteredMapDetail)
+def get_registered_map(map_id: str):
+    """
+    Introspect a single registered map, forcing a lazy load so resolution
+    (meters/cell), origin (world pose of grid cell [M-1, 0]), grid size, and
+    materials reflect the actual HDF5 contents. resolution/origin are grid-only
+    and come back null for a graph-only map. These are the values /v1/plan's
+    "world" coordinate_format converts against.
+    """
+    try:
+        return registry.map_detail(map_id)
+    except KeyError:
+        raise HTTPException(404, f"Unknown map_id: {map_id}")
+    except Exception as e:
+        raise HTTPException(400, f"Failed to load map '{map_id}': {e}")
 
 
 @app.get("/v1/maps/{map_id}/preview")
@@ -613,6 +688,11 @@ async def upload_registered_map(
     Stored in the same in-memory registry as the curated maps.yaml entries,
     but not persisted back to maps.yaml — it only lives for this process.
     Both grid and graph representations are parsed if present in the file.
+
+    `resolution` (m/cell) and `origin` in the response are read straight from the
+    HDF5 — the h5 (regenerated from its .yaml source) is the single source of
+    truth for a map's real-world frame, which is what /v1/plan's "world"
+    coordinate_format converts against.
     """
     try:
         file.file.seek(0)
@@ -642,6 +722,8 @@ async def upload_registered_map(
             map_id=map_id,
             grid_size=f"{grid.M}x{grid.N}" if grid else None,
             has_graph=graph is not None,
+            resolution=grid.resolution if grid else None,
+            origin=list(grid.origin) if grid else None,
         )
 
     except Exception as e:
@@ -788,6 +870,25 @@ def plan_stateless(request: StatelessPlanRequest):
 
         cost = float(solver.total_energy(solution))
         _reject_if_infeasible(cost, solution, request.solver)
+        # Matrix-native (row, col, t) — the discrete QUBO/grid cells, before the
+        # per-robot coordinate_format conversion that produces `paths`.
+        discrete_by_id = {
+            num_to_id.get(num, str(num)): [[i, j, t] for (i, j, t) in coords]
+            for num, coords in solver.get_robot_paths(response_path).items()
+        }
+        for p in paths:
+            logger.info(
+                "POST /v1/plan result | map=%s solver=%s cost=%s robot=%s "
+                "steps=%d discrete[row,col,t]=%s %s=%s",
+                request.map_id,
+                request.solver,
+                cost,
+                p.robot_id,
+                len(p.path),
+                discrete_by_id.get(p.robot_id, []),
+                p.coordinate_format,
+                p.path,
+            )
         response = StatelessPlanResponse(
             paths=paths,
             cost=cost,

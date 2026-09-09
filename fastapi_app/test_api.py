@@ -75,3 +75,32 @@ def test_cbs_profile_plans_on_grid_and_graph():
             },
         )
         assert graph.status_code == 200, graph.text
+
+
+def test_v1_map_detail_exposes_geo_metadata():
+    """GET /v1/maps/{map_id} forces a lazy load and surfaces the grid's
+    real-world frame — resolution (m/cell) + origin pose (x, y, yaw) — which is
+    what /v1/plan's "world" coordinate_format converts against. Pins the JSON
+    shape; synthetic maps carry the 1.0 / (0, 0, 0) defaults."""
+    with TestClient(app) as client:
+        r = client.get("/v1/maps/no_obs3x3")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["map_id"] == "no_obs3x3"
+        assert body["loaded"] is True
+        assert body["has_grid"] is True
+        assert isinstance(body["resolution"], (int, float))
+        assert isinstance(body["origin"], list) and len(body["origin"]) == 3
+
+        assert client.get("/v1/maps/does-not-exist").status_code == 404
+
+
+def test_v1_maps_list_carries_resolution_key_once_loaded():
+    """The list entry gains resolution/origin after the map is loaded (null
+    before) — GET /v1/maps/{map_id} above is what triggers that load."""
+    with TestClient(app) as client:
+        client.get("/v1/maps/no_obs3x3")  # force load
+        entry = client.get("/v1/maps").json()["maps"]["no_obs3x3"]
+        assert entry["loaded"] is True
+        assert entry["resolution"] == 1.0
+        assert entry["origin"] == [0.0, 0.0, 0.0]

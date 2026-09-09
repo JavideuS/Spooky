@@ -36,6 +36,48 @@ uvicorn api:app --reload
 whatever the container serves at `/`) — this app is a backend/demo service
 without its own landing page, so `/demo` is the closest thing to one.
 
+### From the terminal (curl)
+
+No client needed — everything the demo page does is plain HTTP. Full schema
+at `/docs`, or `curl $BASE/openapi.json`. Pipe responses through `jq`.
+
+```bash
+BASE=http://127.0.0.1:8000
+
+# what's available
+curl $BASE/v1/maps
+curl $BASE/solvers
+curl $BASE/v1/penalty-sets
+
+# stateless plan against a curated map (map + solver + robots in, paths out)
+curl -X POST $BASE/v1/plan -H 'content-type: application/json' -d '{
+  "map_id": "obs10x10_hard",
+  "solver": "dwave.general",
+  "format": "grid",
+  "penalty_set": "crash",
+  "robots": [
+    {"id": "kai", "start": [0, 0], "goal": [9, 9], "coordinate_format": "matrix"},
+    {"id": "jay", "start": [0, 9], "goal": [9, 0]}
+  ]
+}'
+# add "details": true for solver internals, "render": true for a Plotly figure
+
+# register your own HDF5 map at runtime (lives for this process only)
+curl -X POST $BASE/v1/maps/my_map \
+  -F file=@../quantum/maps/synthetic/10x10/obs10x10_hard.h5 \
+  -F materials_file=@../quantum/config/materials.yaml
+```
+
+The `my_map` path segment is the `map_id` the upload is stored under — pass
+that same string as `"map_id"` in a later `/v1/plan` (or `GET
+/v1/maps/my_map`, `/v1/maps/my_map/preview`) to plan on it. It appears in
+`GET /v1/maps` alongside the curated entries; re-uploading the same `map_id`
+replaces it.
+
+For the stateful `/robots/*` family: `POST /robots` to register, `POST
+/robots/{id}/maps/{map_id}` to upload into its namespace, then `POST
+/robots/{id}/plan`.
+
 ### Logging & debugging
 
 Every JSON request (`/v1/plan`, `/robots/{id}/plan`, ...) is logged to the
@@ -92,10 +134,19 @@ file, so requesting either one loads both.
   entries + runtime uploads), with `loaded: bool` and, once loaded,
   `has_grid` / `has_graph`. Before first load, `has_grid`/`has_graph` show
   `false` regardless of what the underlying file actually has — they only
-  reflect what's been parsed, not what's parseable.
+  reflect what's been parsed, not what's parseable. `resolution` (m/cell) and
+  `origin` ((x, y, yaw) world pose of grid cell `[M-1, 0]`) are grid-only and
+  stay `null` until the map is loaded.
+- `GET /v1/maps/{map_id}` — introspect one map, **forcing a lazy load** so
+  `grid_size`, `resolution`, `origin`, and `materials` reflect the real HDF5
+  contents. `resolution`/`origin` are `null` for a graph-only map. These are
+  the values `/v1/plan`'s `"world"` `coordinate_format` converts against.
 - `POST /v1/maps/{map_id}` — upload a new HDF5 (+ optional materials YAML) at
   runtime, added to the same in-memory registry. Not persisted back to
-  `maps.yaml` — it only lives for this process.
+  `maps.yaml` — it only lives for this process. The response echoes the map's
+  `resolution` / `origin` as read from the HDF5. A map's real-world frame is
+  set at map-build time in its `.yaml` source (regenerate the `.h5`) — that
+  file is the single source of truth `"world"` converts against.
 
 Solver instances are cached the same way (`registry.get_solver`), built once
 per solver key on first use and reused across `/v1/plan` calls.
@@ -111,8 +162,8 @@ whole new document). Grid-only — a graph-only map returns 400, since the
 visualizer has no graph rendering.
 
 `GET /v1/penalty-sets` lists the penalty_set names available to `/v1/plan`
-(from `../quantum/config/config.yaml`), with `crash` as the documented
-default.
+and `/robots/{id}/plan` (from `../quantum/config/config.yaml`), with `crash`
+as the documented default.
 
 ## Grid vs. graph (`/v1/plan`'s `format` field)
 
@@ -182,15 +233,16 @@ count to flip the axis.
 | `GET /solvers` | List configured solver profiles. |
 | `GET /v1/penalty-sets` | List penalty_set names available to `/v1/plan`. |
 | `GET /v1/maps` | List the map registry (curated + uploaded). |
+| `GET /v1/maps/{map_id}` | Introspect one map (forces a load): `grid_size`, `resolution`, `origin`, `materials`, `has_grid`/`has_graph`. |
 | `GET /v1/maps/{map_id}/preview` | Render the map's grid (obstacles/terrain) via Plotly. `?embed=html\|json&coordinate_format=matrix\|cartesian`. |
-| `POST /v1/maps/{map_id}` | Upload/register a map at runtime. |
+| `POST /v1/maps/{map_id}` | Upload/register a map at runtime. Response echoes `resolution` / `origin` from the HDF5. |
 | `POST /v1/plan` | Stateless plan: `robots: [{id?, start, goal, coordinate_format?, ...}, ...]` (one entry for single-robot, more for multi-robot), `format: "grid"\|"graph"`, `render: bool`. Returns `{paths: [{robot_id, path, coordinate_format}], cost, ..., figure?}`. |
 | `POST /robots` | Register a robot session. |
 | `GET /robots` / `GET /robots/{id}` | List / inspect robot sessions. |
 | `POST /robots/{id}/maps/{map_id}` | Upload a map into a robot's own namespace. |
 | `GET /robots/{id}/maps[/{map_id}]` | List / inspect a robot's maps. |
 | `DELETE /robots/{id}/maps/{map_id}` | Remove a map from a robot's namespace. |
-| `POST /robots/{id}/plan` | Stateful single-robot plan using the robot's active/uploaded map + solver. |
+| `POST /robots/{id}/plan` | Stateful single-robot plan using the robot's active/uploaded map + solver. Grid-only; optional `penalty_set` (default `crash`). |
 
 ## Demo page (`GET /demo`, `static/demo.html`)
 
