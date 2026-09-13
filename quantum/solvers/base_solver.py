@@ -440,8 +440,20 @@ class BaseSolver(ABC):
 
     def _flag_forced_collisions(self, builder, bfs_fixed, diag_fixed):
         """
-        Warn when pre-processing has fixed two robots onto the same cell at
-        the same absolute timestep, before K_crash/K_swap ever get a say.
+        Warn when pre-processing has fixed two robots into a conflicting
+        configuration before K_crash/K_trail ever get a say. Three shapes,
+        each mirroring one of is_solution_valid()'s checks in
+        quantum/benchmark/benchmark.py so BenchmarkRunner can cross-reference
+        a failure against this log as the root cause:
+        - "vertex": exact same cell, same time (the original check).
+        - "clearance": different cells, same time, within the pair's
+          clearance shell (same-time footprint overlap).
+        - "trailing": different cells, consecutive times, within the shell —
+          one robot's fixed position lands inside the other's shell one
+          step later.
+        Only pairs whose clearance shell is bigger than {(0,0)} are checked
+        for "clearance"/"trailing" (trivial pairs can only ever produce
+        "vertex", already covered).
 
         Two independent mechanisms fix variables ahead of solving:
         - bfs_fixed: get_logical_variables()'s aggressive BFS reachability
@@ -452,27 +464,34 @@ class BaseSolver(ABC):
           robot has only one reachable cell left at a timestep — then it's
           forced regardless of any penalty on it).
 
+        None of this makes pre-processing itself clearance-aware, it only
+        makes the after-the-fact accounting notice when the gap was
+        the actual cause, instead of misattributing the failure to the solver.
+
         Tagging which stage produced each fixed variable tells you which
         gap to close: a "bfs" collision means the two robots' independent
         aggressive-BFS paths crossed; a "diag" or mixed "bfs"/"diag"
         collision means a robot was left with a single forced cell that a
         penalty could see but couldn't stop.
 
-        Also checks fixed cells against robots that went inactive earlier,
-        but only at the exact timestep they finished (robot.path[-1]) — a
-        finished robot vacates its cell, it doesn't block it forever, so
-        this only catches a same-instant handoff collision: an active
-        robot forced into the same cell at the same t another robot was
-        still occupying when it stopped being tracked. Once a robot is
-        inactive it's dropped from every later window's variables entirely
-        (get_active_robot_in_window), so once only one robot is left
-        active, the same-window check above can never see this by itself.
+        Also checks fixed cells/shells against robots that went inactive
+        earlier, but only at the exact timestep they finished
+        (robot.path[-1]) — a finished robot vacates its cell, it doesn't
+        block it forever, so this only catches a same-instant handoff
+        conflict: an active robot forced into (or within clearance of) the
+        cell another robot was still occupying when it stopped being
+        tracked. Once a robot is inactive it's dropped from every later
+        window's variables entirely (get_active_robot_in_window), so once
+        only one robot is left active, the same-window checks above can
+        never see this by themselves.
 
         Returns:
-            list of {"cell": (i, j), "time": t, "robots": [...], "sources": [...],
-            "origin": "same_window" | "inactive_handoff"} — one entry per forced
-            collision found, so callers (e.g. BenchmarkRunner) can cross-reference
-            a run's reported conflicts against pre-processing as the root cause.
+            list of dicts, one entry per forced conflict found. "vertex"
+            entries: {"kind", "cell", "time", "robots", "sources", "origin"}.
+            "clearance"/"trailing" entries: {"kind", "cells" (a pair),
+            "time" (scalar for clearance, (t, t+1) for trailing), "robots",
+            "sources", "origin"}. "origin" is "same_window" or
+            "inactive_handoff" in both shapes.
         """
         source_by_idx = {idx: "bfs" for idx, v in bfs_fixed.items() if v == 1}
         for idx, v in diag_fixed.items():
@@ -482,31 +501,104 @@ class BaseSolver(ABC):
         robot_nums = builder.problem.get_robot_nums()
         num_to_id = {num: rid for rid, num in robot_nums.items()}
 
-        occupied = {}
+        occupied = {}  # (i, j, t) -> [(robot_id, source), ...] -- exact match
+        by_time = {}  # t -> [(robot_id, (i, j), source), ...] -- for the shell checks
         for idx, source in source_by_idx.items():
             i, j, t_window, robot_num = decode_position(idx, builder.problem)
-            key = (i, j, builder.current_T + t_window)
-            occupied.setdefault(key, []).append(
-                (num_to_id.get(robot_num, robot_num), source)
-            )
+            t = builder.current_T + t_window
+            rid = num_to_id.get(robot_num, robot_num)
+            occupied.setdefault((i, j, t), []).append((rid, source))
+            by_time.setdefault(t, []).append((rid, (i, j), source))
+
+        clearance_table = builder.problem.get_clearance_table()
+        _trivial = frozenset({(0, 0)})
 
         forced_collisions = []
 
         for (i, j, t), robot_sources in occupied.items():
             robots = {r for r, _ in robot_sources}
             if len(robots) > 1:
-                detail = ", ".join(f"{r} ({s})" for r, s in sorted(robot_sources, key=str))
+                detail = ", ".join(
+                    f"{r} ({s})" for r, s in sorted(robot_sources, key=str)
+                )
                 self.logger.standard(
                     f"⚠️  Pre-processing forced a collision at ({i}, {j}) t={t}: "
-                    f"{detail} — fixed before solving, bypasses K_crash/K_swap."
+                    f"{detail} — fixed before solving, bypasses K_crash/K_trail."
                 )
-                forced_collisions.append({
-                    "cell": (i, j),
-                    "time": t,
-                    "robots": sorted(robots, key=str),
-                    "sources": sorted(robot_sources, key=str),
-                    "origin": "same_window",
-                })
+                forced_collisions.append(
+                    {
+                        "kind": "vertex",
+                        "cell": (i, j),
+                        "time": t,
+                        "robots": sorted(robots, key=str),
+                        "sources": sorted(robot_sources, key=str),
+                        "origin": "same_window",
+                    }
+                )
+
+        # Clearance shell, same time: different cells, still too close.
+        for t, entries in by_time.items():
+            for x in range(len(entries)):
+                r1, c1, s1 = entries[x]
+                for y in range(x + 1, len(entries)):
+                    r2, c2, s2 = entries[y]
+                    if r1 == r2 or c1 == c2:
+                        continue  # same robot, or exact match already flagged above
+                    D = clearance_table.get((r1, r2))
+                    if not D or D == _trivial:
+                        continue
+                    off = (c1[0] - c2[0], c1[1] - c2[1])
+                    if off not in D:
+                        continue
+                    self.logger.standard(
+                        f"⚠️  Pre-processing forced a clearance violation: "
+                        f"{r1} ({s1}) at {c1} and {r2} ({s2}) at {c2}, t={t} — "
+                        f"fixed before solving, bypasses K_crash/K_trail."
+                    )
+                    forced_collisions.append(
+                        {
+                            "kind": "clearance",
+                            "cells": (c1, c2),
+                            "time": t,
+                            "robots": sorted({r1, r2}, key=str),
+                            "sources": sorted({(r1, s1), (r2, s2)}, key=str),
+                            "origin": "same_window",
+                        }
+                    )
+
+        # Clearance shell, consecutive times: one robot's fixed cell at t
+        # lands inside the other's shell at t+1 (both directions, since this
+        # ranges over every ordered (entries@t, entries@t+1) combination).
+        for t, entries in by_time.items():
+            next_entries = by_time.get(t + 1)
+            if not next_entries:
+                continue
+            for r1, c1, s1 in entries:
+                for r2, c2, s2 in next_entries:
+                    if r1 == r2:
+                        continue
+                    D = clearance_table.get((r1, r2))
+                    if not D or D == _trivial:
+                        continue
+                    off = (c1[0] - c2[0], c1[1] - c2[1])
+                    if off not in D:
+                        continue
+                    self.logger.standard(
+                        f"⚠️  Pre-processing forced a trailing violation: "
+                        f"{r1} ({s1}) at {c1} t={t} and {r2} ({s2}) arriving "
+                        f"{c2} t={t + 1} — fixed before solving, bypasses "
+                        f"K_crash/K_trail."
+                    )
+                    forced_collisions.append(
+                        {
+                            "kind": "trailing",
+                            "cells": (c1, c2),
+                            "time": (t, t + 1),
+                            "robots": sorted({r1, r2}, key=str),
+                            "sources": sorted({(r1, s1), (r2, s2)}, key=str),
+                            "origin": "same_window",
+                        }
+                    )
 
         for robot_id, robot in builder.problem.robots.items():
             if robot.active or not robot.path:
@@ -514,26 +606,60 @@ class BaseSolver(ABC):
             goal_i, goal_j, goal_t = robot.path[-1]
             robot_sources = occupied.get((goal_i, goal_j, goal_t))
             if robot_sources:
-                mover = ", ".join(f"{r} ({s})" for r, s in sorted(robot_sources, key=str))
+                mover = ", ".join(
+                    f"{r} ({s})" for r, s in sorted(robot_sources, key=str)
+                )
                 self.logger.standard(
                     f"⚠️  Pre-processing forced {mover} into ({goal_i}, {goal_j}) "
                     f"t={goal_t}, the same cell/time {robot_id} stopped at — "
                     f"{robot_id} is inactive so it has no variable in this "
-                    f"window and this bypasses K_crash/K_swap entirely."
+                    f"window and this bypasses K_crash/K_trail entirely."
                 )
-                forced_collisions.append({
-                    "cell": (goal_i, goal_j),
-                    "time": goal_t,
-                    "robots": sorted({r for r, _ in robot_sources} | {robot_id}, key=str),
-                    "sources": sorted(robot_sources, key=str) + [(robot_id, "locked_inactive")],
-                    "origin": "inactive_handoff",
-                })
+                forced_collisions.append(
+                    {
+                        "kind": "vertex",
+                        "cell": (goal_i, goal_j),
+                        "time": goal_t,
+                        "robots": sorted(
+                            {r for r, _ in robot_sources} | {robot_id}, key=str
+                        ),
+                        "sources": sorted(robot_sources, key=str)
+                        + [(robot_id, "locked_inactive")],
+                        "origin": "inactive_handoff",
+                    }
+                )
+                continue
+            # Clearance-shell handoff: no exact-cell match, but a still-being-
+            # fixed robot landed within this now-inactive robot's resting shell.
+            for r2, c2, s2 in by_time.get(goal_t, []):
+                if r2 == robot_id:
+                    continue
+                D = clearance_table.get((robot_id, r2))
+                if not D or D == _trivial:
+                    continue
+                off = (goal_i - c2[0], goal_j - c2[1])
+                if off not in D:
+                    continue
+                self.logger.standard(
+                    f"⚠️  Pre-processing forced {r2} ({s2}) to {c2} t={goal_t}, "
+                    f"within {robot_id}'s clearance of its resting cell "
+                    f"({goal_i}, {goal_j}) — {robot_id} is inactive so it has "
+                    f"no variable in this window and this bypasses K_crash/K_trail."
+                )
+                forced_collisions.append(
+                    {
+                        "kind": "clearance",
+                        "cells": ((goal_i, goal_j), c2),
+                        "time": goal_t,
+                        "robots": sorted({robot_id, r2}, key=str),
+                        "sources": [(r2, s2), (robot_id, "locked_inactive")],
+                        "origin": "inactive_handoff",
+                    }
+                )
 
         return forced_collisions
 
-    def _prepare_window(
-        self, builder, bfs_variant=None, apply_numeric_reduction=True
-    ):
+    def _prepare_window(self, builder, bfs_variant=None, apply_numeric_reduction=True):
         """
         Prepare a QUBO window: derive logical variables, build the sparse QUBO,
         and (optionally) apply diagonal reduction.
@@ -807,7 +933,9 @@ class BaseSolver(ABC):
         builder.update_problem(robot_paths)
         return full_sol, invalid_moves
 
-    def _handle_correction_backoff(self, builder, full_sol, invalid_moves, correction_count):
+    def _handle_correction_backoff(
+        self, builder, full_sol, invalid_moves, correction_count
+    ):
         """
         Track repeated invalid-move corrections for the current window and
         force it forward once max_corrections is exceeded, instead of
@@ -843,9 +971,13 @@ class BaseSolver(ABC):
             # the last (invalid) result and update_problem() with it
             # directly, skipping _resolve_invalid_moves since we already
             # know it's invalid and want to accept it anyway to make progress.
-            path = self.decode_path(full_sol, builder.problem, t_offset=builder.current_T)
+            path = self.decode_path(
+                full_sol, builder.problem, t_offset=builder.current_T
+            )
             robot_paths = self.get_robot_paths(path)
-            robot_paths = self._resolve_duplicate_timesteps(robot_paths, builder.problem)
+            robot_paths = self._resolve_duplicate_timesteps(
+                robot_paths, builder.problem
+            )
             builder.update_problem(robot_paths)
             return 0
         # else: next loop iteration calls _prepare_window to rebuild from scratch

@@ -52,13 +52,13 @@ problems:
         goal: [49, 49]
         start_time: 0
         priority: 1.5
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_1:
         start: [49, 0]
         goal: [0, 49]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
   
   four_robots:
     time_limit: null
@@ -68,23 +68,23 @@ problems:
         goal: [49, 49]
         start_time: 0
         priority: 2.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_1:
         start: [49, 0]
         goal: [0, 49]
         start_time: 0
         priority: 1.5
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_2:
         start: [0, 49]
         goal: [49, 0]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_3:
         start: [49, 49]
         goal: [0, 0]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
 

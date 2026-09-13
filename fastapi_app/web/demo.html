@@ -599,7 +599,7 @@
     maps: {},
     solvers: {},
     robots: [
-      { id: "", start: [0, 0], goal: [0, 0], start_time: 0, priority: 1.0, safety_radius: 0.5 },
+      { id: "", start: [0, 0], goal: [0, 0], start_time: 0, priority: 1.0, robot_radius: 0.5 },
     ],
     activeTab: "form",
     picking: null, // { idx, field: "start"|"goal" } while waiting for a map click
@@ -885,7 +885,7 @@
   }
 
   el("addRobotBtn").addEventListener("click", () => {
-    state.robots.push({ id: "", start: [0, 0], goal: [0, 0], start_time: 0, priority: 1.0, safety_radius: 0.5 });
+    state.robots.push({ id: "", start: [0, 0], goal: [0, 0], start_time: 0, priority: 1.0, robot_radius: 0.5 });
     renderRobotRows();
     syncJsonFromForm();
     refreshPreviewWithRobots();
@@ -1026,7 +1026,7 @@
         goal: r.goal,
         start_time: r.start_time,
         priority: r.priority,
-        safety_radius: r.safety_radius,
+        robot_radius: r.robot_radius,
         coordinate_format: coordinateFormat,
       })),
       penalty_set: el("penaltySelect").value,

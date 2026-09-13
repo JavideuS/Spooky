@@ -606,6 +606,15 @@ class GridQUBOBuilder(BaseQUBO):
                         self.Q.get((obs_idx, obs_idx), 0) + K_obs
                     )
 
+    def _clearance_shell(self, robot_id1, robot_id2):
+        """D_ab for this pair (quantum/utils/clearance.py), or {(0,0)} when
+        clearance isn't configured.
+        The default case for synthetic maps reduces every shell loop below to
+        plain same-cell matching (this is a no-op at defaults)."""
+        return self.problem.get_clearance_table().get(
+            (robot_id1, robot_id2)
+        ) or frozenset({(0, 0)})
+
     def apply_crash_penalty(self):
         M, N = self.problem.grid.M, self.problem.grid.N
         K_crash = self.penalties.get("K_crash", 0)
@@ -624,38 +633,59 @@ class GridQUBOBuilder(BaseQUBO):
                     robot_offset1 = robot_nums[robot_id1] * (M * N * self.total_t)
                     robot_offset2 = robot_nums[robot_id2] * (M * N * self.total_t)
 
-                    # Only cells both robots can reach — the only place collision is possible
-                    shared_cells = set(self._cells(robot_id1, t_window)) & set(
-                        self._cells(robot_id2, t_window)
-                    )
-                    for i, j in shared_cells:
+                    # Only cells robot1 can reach whose D_ab shell robot2 can
+                    # also reach — the only place a footprint overlap is
+                    # possible. D_ab = {(0,0)} (the default) collapses this to
+                    # plain same-cell matching, i.e. the pre-clearance model.
+                    D = self._clearance_shell(robot_id1, robot_id2)
+                    cells2 = set(self._cells(robot_id2, t_window))
+                    for i, j in self._cells(robot_id1, t_window):
                         idx1 = i * N + j + M * N * t_window + robot_offset1
-                        idx2 = i * N + j + M * N * t_window + robot_offset2
-                        self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_crash
+                        for di, dj in D:
+                            w = (i - di, j - dj)
+                            if w in cells2:
+                                idx2 = (
+                                    w[0] * N + w[1] + M * N * t_window + robot_offset2
+                                )
+                                self.Q[(idx1, idx2)] = (
+                                    self.Q.get((idx1, idx2), 0) + K_crash
+                                )
 
-    def apply_swap_penalty(self):
+    def apply_trailing_penalty(self):
         """
-        Approximate inter-robot swap-collision penalty.
+        Robot-robot separation penalty: same-time footprint overlap (the
+        crash case, D_ab-shell generalised) plus the cross-time trailing
+        hazard (K_trail).
+        Note that trailing also guards for swap and is safer, meaning that
+        is reduces more search space which is not necessarily good but
+        is easier to model in QUBO and is a safe decision for real robot deployment
+        where swap may not be enough.
 
-        P_swap = K_crash * r1[t]*r2[t] + K_swap * (r1[t+1]*r2[t] + r1[t]*r2[t+1])
+        P = K_crash * [overlap at t] + K_trail * [overlap between (t,t+1) and (t+1,t)]
 
-        Summed over cells shared by two robots, this penalizes both a true swap
-        (robot1 moves into a cell as robot2 moves out, and vice versa at the
-        neighboring cell) and same-cell/same-time occupancy (the crash case).
-        The two are weighted independently: the same-cell/same-time term reuses
-        K_crash as-is (identical to apply_crash_penalty, so crash protection
-        doesn't get diluted), while the cross-time terms get their own K_swap.
-        Those cross-time terms also fire when one robot simply follows another
-        into a just-vacated cell, which isn't an actual collision — an accepted
-        overconstraint of this pairwise approximation vs. the exact ancilla-based
-        formulation — so K_swap is the knob to tune down if that false-positive
-        cost outweighs the benefit, independently of crash protection.
-        When K_swap is active it replaces apply_crash_penalty (see build())
+        Summed over each robot pair's D_ab shell. The same-time term reuses
+        K_crash as-is (identical to apply_crash_penalty), while the cross-time
+        terms get their own K_trail.
+
+        This method was named apply_swap_penalty / K_swap before —
+        renamed because it never computed swap: a quadratic-only penalty
+        cannot express swap's genuine AND-of-both-endpoints condition (that
+        needs 4 variables jointly, i.e. ancillas) without leaving quadratic
+        form, so these pairwise-product terms always computed trailing's
+        OR-of-either-endpoint predicate instead, under the wrong name. QUBO
+        has no exact-swap tier at all, unlike CBS/ILP, for exactly this
+        reason. K_trail is the knob to tune down if the false-positive cost
+        (this also fires when one robot simply follows another into a
+        just-vacated footprint, which isn't an actual collision — an
+        accepted overconstraint, same as CBS/ILP's trailing) outweighs the
+        benefit, independently of crash protection.
+
+        When K_trail is active it replaces apply_crash_penalty (see build())
         so the same-time term isn't double counted.
         """
         M, N = self.problem.grid.M, self.problem.grid.N
         K_crash = self.penalties.get("K_crash", 0)
-        K_swap = self.penalties.get("K_swap", 0)
+        K_trail = self.penalties.get("K_trail", 0)
         robot_nums = self.problem.get_robot_nums()
         active_robots_per_timestep = self.get_active_robots_per_timestep_in_window()
 
@@ -672,42 +702,66 @@ class GridQUBOBuilder(BaseQUBO):
 
                     robot_offset1 = robot_nums[robot_id1] * (M * N * self.total_t)
                     robot_offset2 = robot_nums[robot_id2] * (M * N * self.total_t)
+                    D = self._clearance_shell(robot_id1, robot_id2)
 
-                    # Same-cell, same-time term (native crash constraint)
-                    shared_cells_t = set(self._cells(robot_id1, t_window)) & set(
-                        self._cells(robot_id2, t_window)
-                    )
-                    for i, j in shared_cells_t:
+                    # Same-cell-shell, same-time term (native crash constraint)
+                    cells1_t = list(self._cells(robot_id1, t_window))
+                    cells2_t = set(self._cells(robot_id2, t_window))
+                    for i, j in cells1_t:
                         idx1 = i * N + j + M * N * t_window + robot_offset1
-                        idx2 = i * N + j + M * N * t_window + robot_offset2
-                        self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_crash
+                        for di, dj in D:
+                            w = (i - di, j - dj)
+                            if w in cells2_t:
+                                idx2 = (
+                                    w[0] * N + w[1] + M * N * t_window + robot_offset2
+                                )
+                                self.Q[(idx1, idx2)] = (
+                                    self.Q.get((idx1, idx2), 0) + K_crash
+                                )
 
-                    # Cross-time swap terms, only meaningful if both robots are
-                    # still active in the window at t+1
+                    # Cross-time trailing terms, only meaningful if both robots
+                    # are still active in the window at t+1
                     if (
                         robot_id1 not in next_active_robots
                         or robot_id2 not in next_active_robots
                     ):
                         continue
                     t_next_window = t_window + 1
+                    cells1_next = set(self._cells(robot_id1, t_next_window))
+                    cells2_next = set(self._cells(robot_id2, t_next_window))
 
-                    # robot1 arrives at t+1 where robot2 was at t
-                    shared_r1_next = set(self._cells(robot_id1, t_next_window)) & set(
-                        self._cells(robot_id2, t_window)
-                    )
-                    for i, j in shared_r1_next:
+                    # robot1 arrives at t+1 inside robot2's D_ab shell at t
+                    for i, j in cells1_next:
                         idx1 = i * N + j + M * N * t_next_window + robot_offset1
-                        idx2 = i * N + j + M * N * t_window + robot_offset2
-                        self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_swap
+                        for di, dj in D:
+                            w = (i - di, j - dj)
+                            if w in cells2_t:
+                                idx2 = (
+                                    w[0] * N + w[1] + M * N * t_window + robot_offset2
+                                )
+                                self.Q[(idx1, idx2)] = (
+                                    self.Q.get((idx1, idx2), 0) + K_trail
+                                )
 
-                    # robot2 arrives at t+1 where robot1 was at t
-                    shared_r2_next = set(self._cells(robot_id1, t_window)) & set(
-                        self._cells(robot_id2, t_next_window)
-                    )
-                    for i, j in shared_r2_next:
+                    # robot2 arrives at t+1 inside robot1's D_ab shell at t.
+                    # Same "w = anchor - d" convention as above, anchored on
+                    # robot1's t-cell this time (D_ab is centrally symmetric
+                    # for circular robots, so the same D serves both
+                    # directions).
+                    for i, j in cells1_t:
                         idx1 = i * N + j + M * N * t_window + robot_offset1
-                        idx2 = i * N + j + M * N * t_next_window + robot_offset2
-                        self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_swap
+                        for di, dj in D:
+                            w = (i - di, j - dj)
+                            if w in cells2_next:
+                                idx2 = (
+                                    w[0] * N
+                                    + w[1]
+                                    + M * N * t_next_window
+                                    + robot_offset2
+                                )
+                                self.Q[(idx1, idx2)] = (
+                                    self.Q.get((idx1, idx2), 0) + K_trail
+                                )
 
     def build(self, constraints_to_apply=None):
         self._warn_if_unrestricted_build(len(self._all_grid_cells))
@@ -724,15 +778,15 @@ class GridQUBOBuilder(BaseQUBO):
                 "K_elev": "elevation",
                 "K_obs": "obstacle",
                 "K_crash": "crash",
-                "K_swap": "swap",
+                "K_trail": "trailing",
             }
             constraints_to_apply = [
                 v for k, v in penalty_to_constraint.items() if k in self.penalties
             ]
-            # apply_swap_penalty already applies the same-cell/same-time term
-            # itself (weighted by K_crash), so don't also run apply_crash_penalty
-            # separately — that would double-count it.
-            if "swap" in constraints_to_apply and "crash" in constraints_to_apply:
+            # apply_trailing_penalty already applies the same-cell/same-time
+            # term itself (weighted by K_crash), so don't also run
+            # apply_crash_penalty separately — that would double-count it.
+            if "trailing" in constraints_to_apply and "crash" in constraints_to_apply:
                 constraints_to_apply.remove("crash")
 
         # To clean the QUBO dictionary before building
@@ -766,8 +820,8 @@ class GridQUBOBuilder(BaseQUBO):
             self.apply_obstacle_penalty()
         if "crash" in constraints_to_apply:
             self.apply_crash_penalty()
-        if "swap" in constraints_to_apply:
-            self.apply_swap_penalty()
+        if "trailing" in constraints_to_apply:
+            self.apply_trailing_penalty()
 
         return self.Q
 

@@ -173,7 +173,7 @@ class BenchmarkRunner:
             validation = is_solution_valid(path, self.problem)
 
             # If invalid, work out whether pre-processing forced the conflict
-            # (bypassing K_crash/K_swap entirely) or the solver actually
+            # (bypassing K_crash/K_trail entirely) or the solver actually
             # sampled a bitstring that violates a penalty that was present.
             forced_collisions = solution.get("metadata", {}).get(
                 "forced_collisions", []
@@ -637,56 +637,79 @@ def _compute_solution_statistics(
 
 def _attribute_invalid_cause(validation, forced_collisions):
     """
-    Cross-reference a failed validation's reported vertex conflicts against
-    the solver's pre-processing forced-collision log (BaseSolver._flag_forced_collisions,
-    surfaced via solution["metadata"]["forced_collisions"]).
+    Cross-reference a failed validation's reported conflicts against the
+    solver's pre-processing forced-collision log
+    (BaseSolver._flag_forced_collisions, surfaced via
+    solution["metadata"]["forced_collisions"]).
 
     A run can be invalid for two very different reasons that call for
-    different fixes: the conflicting cell/time was already forced before
-    K_crash/K_swap ever ran (a pre-processing routing gap), or the QAOA/
-    annealing sample itself landed on a degenerate state that violates a
-    penalty which was genuinely present in Q (a solver-convergence issue).
+    different fixes: the conflict was already forced before K_crash/K_trail
+    ever ran (a pre-processing routing gap), or the QAOA/annealing sample
+    itself landed on a degenerate state that violates a penalty which was
+    genuinely present in Q (a solver-convergence issue). Three conflict
+    shapes are cross-referenced, matching _flag_forced_collisions' "kind"
+    tags: "vertex" (exact same cell/time) against details["conflicts"],
+    "clearance" against details["clearance_conflicts"], and "trailing"
+    against details["trailing_conflicts"] — each matched on (kind, cells,
+    time), not on which robots are named, since is_solution_valid() reports
+    robot numbers while forced_collisions reports robot ids (the two are
+    never compared against each other, only position/time).
 
     Returns None if validation passed, otherwise a dict:
     {"origin": "solver_sampling"} or
-    {"origin": "pre_processing", "matches": [{"cell", "time", "robots", "fixed_by"}, ...]}
-    where "fixed_by" names the mechanism(s) that forced the conflict — e.g.
-    "diag_fixing" when both robots were forced by the same mechanism, or
-    "diag_fixing + goal_lock" when one robot was still being fixed while the
-    other was an already-finished robot locked at its goal.
+    {"origin": "pre_processing", "matches": [{"kind", "cell"|"cells", "time",
+    "robots", "fixed_by"}, ...]} where "fixed_by" names the mechanism(s) that
+    forced the conflict — e.g. "diag_fixing" when both robots were forced by
+    the same mechanism, or "diag_fixing + goal_lock" when one robot was
+    still being fixed while the other was an already-finished robot locked
+    at its goal.
     """
     if validation.get("valid", True):
         return None
 
-    forced_by_cell_time = {}
+    forced_by_key = {}
     for fc in forced_collisions:
-        forced_by_cell_time.setdefault((fc["cell"], fc["time"]), []).append(fc)
+        kind = fc.get("kind", "vertex")
+        if kind == "vertex":
+            key = (kind, fc["cell"], fc["time"])
+        else:
+            key = (kind, frozenset(fc["cells"]), fc["time"])
+        forced_by_key.setdefault(key, []).append(fc)
 
+    details = validation.get("details", {})
     matched = []
-    for conflict in validation.get("details", {}).get("conflicts", []):
-        key = (conflict["cell"], conflict["time"])
-        if key in forced_by_cell_time:
-            matched.extend(forced_by_cell_time[key])
+    for conflict in details.get("conflicts", []):
+        matched.extend(forced_by_key.get(("vertex", conflict["cell"], conflict["time"]), ()))
+    for conflict in details.get("clearance_conflicts", []):
+        key = ("clearance", frozenset(conflict["cells"]), conflict["time"])
+        matched.extend(forced_by_key.get(key, ()))
+    for conflict in details.get("trailing_conflicts", []):
+        key = ("trailing", frozenset(conflict["cells"]), conflict["time"])
+        matched.extend(forced_by_key.get(key, ()))
 
     if not matched:
         # swap_conflicts have no pre-processing equivalent today (forced_collisions
-        # only ever records same-cell/same-time fixes), so any swap_conflict here
-        # is necessarily solver-side.
+        # only ever records vertex/clearance/trailing fixes), so any swap_conflict
+        # here is necessarily solver-side.
         return {"origin": "solver_sampling"}
 
     matches = []
+    seen = set()
     for fc in matched:
+        if id(fc) in seen:
+            continue
+        seen.add(id(fc))
         labels = {
             _FIX_MECHANISM_LABELS.get(source, source) for _, source in fc["sources"]
         }
-        matches.append(
-            {
-                "cell": fc["cell"],
-                "time": fc["time"],
-                "robots": fc["robots"],
-                "fixed_by": " + ".join(sorted(labels)),
-            }
-        )
+        entry = {
+            "kind": fc.get("kind", "vertex"),
+            "time": fc["time"],
+            "robots": fc["robots"],
+            "fixed_by": " + ".join(sorted(labels)),
+        }
+        entry["cell" if "cell" in fc else "cells"] = fc.get("cell", fc.get("cells"))
+        matches.append(entry)
 
     return {"origin": "pre_processing", "matches": matches}
 
@@ -787,9 +810,61 @@ def is_solution_valid(solution, problem):
                         }
                     )
 
-    if conflicts or swap_conflicts:
+    # multi-robot clearance checks: two robots whose required separation
+    # (robot_radius + robot_radius + factor*max(inflation), see
+    # quantum/utils/clearance.py) is violated even though their leader cells
+    # differ. Two DIFFERENT checks, not one
+    #   clearance_conflicts: same-time footprint overlap (crash, generalised
+    #     from a point to a disc).
+    #   trailing_conflicts: the [t, t+1] hazard of one robot's endpoint
+    #     landing in the other's footprint at the other end of the step. This
+    #     has no point-robot analogue (occupancy is instantaneous there) and
+    #     is not a generalisation of the swap check above — it's a distinct
+    #     safeguard for real, non-instantaneous, imperfectly-synchronised
+    #     robot motion, deliberately broader than swap (it also flags
+    #     "vacate and immediately follow", which swap correctly permits).
+    # Both skipped when every pair's D_ab is {(0, 0)} (default behavior on synthetic maps)
+    clearance_conflicts = []
+    trailing_conflicts = []
+    try:
+        offset_table = problem.get_clearance_table()
+    except Exception:
+        offset_table = {}
+    robot_ids_by_num = list(problem.robots.keys())
+    _trivial = frozenset({(0, 0)})
+    for idx, r1 in enumerate(robot_nums_sorted):
+        for r2 in robot_nums_sorted[idx + 1 :]:
+            D = offset_table.get((robot_ids_by_num[r1], robot_ids_by_num[r2]))
+            if not D or D == _trivial:
+                continue
+            times_r1 = position_by_time[r1]
+            times_r2 = position_by_time[r2]
+            for t in set(times_r1) & set(times_r2):
+                (i1, j1) = times_r1[t]
+                (i2, j2) = times_r2[t]
+                if (i1, j1) != (i2, j2) and (i1 - i2, j1 - j2) in D:
+                    clearance_conflicts.append(
+                        {"cells": ((i1, j1), (i2, j2)), "time": t, "robots": [r1, r2]}
+                    )
+                    continue
+                if (t + 1) not in times_r1 or (t + 1) not in times_r2:
+                    continue
+                (ni1, nj1) = times_r1[t + 1]
+                (ni2, nj2) = times_r2[t + 1]
+                if (i1 - ni2, j1 - nj2) in D or (ni1 - i2, nj1 - j2) in D:
+                    trailing_conflicts.append(
+                        {
+                            "cells": ((i1, j1), (i2, j2)),
+                            "time": (t, t + 1),
+                            "robots": [r1, r2],
+                        }
+                    )
+
+    if conflicts or swap_conflicts or clearance_conflicts or trailing_conflicts:
         conflicts.sort(key=lambda c: (c["time"], c["cell"]))
         swap_conflicts.sort(key=lambda c: (c["time"], c["robots"]))
+        clearance_conflicts.sort(key=lambda c: (c["time"], c["robots"]))
+        trailing_conflicts.sort(key=lambda c: (str(c["time"]), c["robots"]))
         result["valid"] = False
         reasons = []
         messages = []
@@ -801,6 +876,14 @@ def is_solution_valid(solution, problem):
             reasons.append("swap_conflict")
             messages.append(f"{len(swap_conflicts)} swap collision(s)")
             result["details"]["swap_conflicts"] = swap_conflicts
+        if clearance_conflicts:
+            reasons.append("clearance_conflict")
+            messages.append(f"{len(clearance_conflicts)} clearance violation(s)")
+            result["details"]["clearance_conflicts"] = clearance_conflicts
+        if trailing_conflicts:
+            reasons.append("trailing_conflict")
+            messages.append(f"{len(trailing_conflicts)} trailing violation(s)")
+            result["details"]["trailing_conflicts"] = trailing_conflicts
         result["reason"] = "+".join(reasons)
         result["message"] = f"❌ Multi-robot conflict detected: {', '.join(messages)}"
         return result

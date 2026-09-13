@@ -52,8 +52,10 @@ def validate_problem(problem):
                 raise ValueError(f"Robot '{robot_id}' start_time must be a non-negative integer")
             if "priority" in robot_data and not isinstance(robot_data["priority"], (int, float)):
                 raise ValueError(f"Robot '{robot_id}' priority must be a number")
-            if "safety_radius" in robot_data and not isinstance(robot_data["safety_radius"], (int, float)):
-                raise ValueError(f"Robot '{robot_id}' safety_radius must be a number")
+            # "safety_radius" is the pre-rename legacy alias for "robot_radius".
+            for _f in ("robot_radius", "safety_radius", "inflation"):
+                if _f in robot_data and not isinstance(robot_data[_f], (int, float)):
+                    raise ValueError(f"Robot '{robot_id}' {_f} must be a number")
     else:
         # Single robot (legacy) validation
         if not isinstance(problem.get("start"), tuple) or len(problem["start"]) != 2:

@@ -225,11 +225,56 @@ class CTNode:
 class ConflictBasedSearch:
     """CBS over a plain networkx.Graph of integer node ids."""
 
-    def __init__(self, graph: nx.Graph, node_limit: int = 5000, time_limit: Optional[float] = None):
+    def __init__(
+        self,
+        graph: nx.Graph,
+        node_limit: int = 5000,
+        time_limit: Optional[float] = None,
+        clearance_table: Optional[Dict[Tuple[str, str], frozenset]] = None,
+    ):
         self.graph = graph
         self.node_limit = node_limit
         self.time_limit = time_limit
         self._astar = SpaceTimeAStar(graph)
+        # {(robot_a, robot_b): D_ab} -- the set of (pos_a - pos_b) grid-cell
+        # offsets that count as a footprint overlap (see
+        # quantum/utils/clearance.py). Missing pair or None entry => that pair
+        # uses the plain exact-cell / exact-swap test (offset must be (0, 0)).
+        self.clearance_table = clearance_table or {}
+        _trivial = frozenset({(0, 0)})
+        # Clearance robot pairs: those whose clearance shell (D_ab) extends
+        # past the leader cell — the only ones that need the generalised
+        # trailing test / multi-cell branch regions.
+        self._clearance_robot_pairs = {
+            pair for pair, off in self.clearance_table.items() if off != _trivial
+        }
+        self._id2pos = {n: tuple(p) for n, p in nx.get_node_attributes(graph, "pos").items()}
+        self._pos2id = {p: n for n, p in self._id2pos.items()}
+
+    def _overlap(self, a: str, b: str, node_a: int, node_b: int) -> bool:
+        """Whether robots a, b (leaders on node_a / node_b) have overlapping
+        footprints -- the generalised same-time "vertex" collision test."""
+        ca, cb = self._id2pos[node_a], self._id2pos[node_b]
+        off = (ca[0] - cb[0], ca[1] - cb[1])
+        D = self.clearance_table.get((a, b))
+        if D is None:
+            return off == (0, 0)
+        return off in D
+
+    def _forbidden_cells(self, target: str, anchor_node: int, a: str, b: str) -> List[int]:
+        """Every leader node robot `target` (which is `a` or `b`) must avoid
+        while the other robot of the pair sits on `anchor_node`. Derived from
+        D_ab: target == a is forbidden on anchor + d, target == b on anchor - d,
+        for every offset d in D_ab."""
+        D = self.clearance_table.get((a, b))
+        ai, aj = self._id2pos[anchor_node]
+        if D is None:
+            cand = [(ai, aj)]
+        elif target == a:
+            cand = [(ai + di, aj + dj) for (di, dj) in D]
+        else:
+            cand = [(ai - di, aj - dj) for (di, dj) in D]
+        return [self._pos2id[c] for c in cand if c in self._pos2id]
 
     @staticmethod
     def _pad(path: List[Tuple[int, int]], goal: int, deadline: int) -> List[Tuple[int, int]]:
@@ -293,43 +338,68 @@ class ConflictBasedSearch:
             for rid, path in solution.items()
         )
 
-    @staticmethod
-    def _all_conflicts(solution: Dict[str, List[Tuple[int, int]]]) -> List[tuple]:
+    def _all_conflicts(self, solution: Dict[str, List[Tuple[int, int]]]) -> List[tuple]:
         """Every conflict in solution (vertex + edge), sorted by time — the
         full scan, not just the earliest one. Used both to pick the
         conflict solve() branches on (conflicts[0]) and, via len(), as
-        CTNode.conflict_count for tie-breaking equal-cost nodes. Each
-        conflict is either (t, "vertex", node, [robot_ids]) or
-        (t, "edge", robot_a, robot_b, node_a_at_t, node_a_at_t1) — matching
-        the two conflict types quantum/benchmark/benchmark.py's
-        is_solution_valid() checks (same-cell/same-time, and swap)."""
-        occupancy: Dict[Tuple[int, int], List[str]] = {}
-        for robot_id, path in solution.items():
-            for node, t in path:
-                occupancy.setdefault((node, t), []).append(robot_id)
+        CTNode.conflict_count for tie-breaking equal-cost nodes.
 
-        conflicts = [
-            (t, "vertex", node, robots)
-            for (node, t), robots in occupancy.items()
-            if len(robots) > 1
-        ]
-
+        Conflicts are pairwise. Each is either
+          (t, "vertex", a, b, node_a, node_b)
+        — robots a, b have overlapping footprints at time t (node_a == node_b
+        in the plain no-clearance case) — or
+          (t, "edge", a, b, a_from, a_to, b_from, b_to)
+        — a's and b's transitions over [t, t+1] conflict. The predicate this
+        checks depends on whether the pair is a clearance pair (D_ab bigger
+        than one cell), and the two are NOT the same rule generalised —
+        trailing is a distinct hazard, not a looser version of swap (see
+        quantum/docs/clearance.md):
+          * trivial pair: exact SWAP only — a_from == b_to and b_from ==
+            a_to, the classic two-way exchange. Correctly permits e.g. b
+            vacating a cell and a moving into it one step later.
+          * clearance pair: TRAILING instead — either robot ending the step
+            inside the other's start-of-step footprint. This has no
+            point-robot analogue (occupancy is instantaneous there, so
+            there's nothing to "trail"); it guards against real,
+            non-instantaneous, imperfectly-synchronised robot motion, and is
+            deliberately broader than swap — it also forbids the "vacate and
+            follow" move swap permits, and it strictly dominates the
+            exact-swap test (a_from == b_to alone already puts offset (0,0),
+            always in D, into the first disjunct), so no separate exact-swap
+            check runs for clearance pairs.
+        This mirrors quantum/benchmark/benchmark.py's is_solution_valid();
+        the clearance generalisation lives in _overlap()."""
+        pos = {rid: {t: n for n, t in path} for rid, path in solution.items()}
         robot_ids = list(solution.keys())
+        conflicts: List[tuple] = []
+
         for i in range(len(robot_ids)):
             a = robot_ids[i]
-            pos_a = {t: n for n, t in solution[a]}
+            pos_a = pos[a]
             for j in range(i + 1, len(robot_ids)):
                 b = robot_ids[j]
-                pos_b = {t: n for n, t in solution[b]}
-                for t in set(pos_a) & set(pos_b):
+                pos_b = pos[b]
+                is_clearance_robot_pair = (a, b) in self._clearance_robot_pairs
+                shared = set(pos_a) & set(pos_b)
+                for t in shared:
+                    if self._overlap(a, b, pos_a[t], pos_b[t]):
+                        conflicts.append((t, "vertex", a, b, pos_a[t], pos_b[t]))
                     if t + 1 not in pos_a or t + 1 not in pos_b:
                         continue
-                    if (
-                        pos_a[t] == pos_b[t + 1]
-                        and pos_b[t] == pos_a[t + 1]
-                        and pos_a[t] != pos_a[t + 1]
-                    ):
-                        conflicts.append((t, "edge", a, b, pos_a[t], pos_a[t + 1]))
+                    a_from, a_to = pos_a[t], pos_a[t + 1]
+                    b_from, b_to = pos_b[t], pos_b[t + 1]
+                    if is_clearance_robot_pair:
+                        violation = self._overlap(
+                            a, b, a_from, b_to
+                        ) or self._overlap(a, b, a_to, b_from)
+                    else:
+                        violation = (
+                            a_from == b_to and b_from == a_to and a_from != a_to
+                        )
+                    if violation:
+                        conflicts.append(
+                            (t, "edge", a, b, a_from, a_to, b_from, b_to)
+                        )
 
         conflicts.sort(key=lambda c: c[0])
         return conflicts
@@ -411,16 +481,25 @@ class ConflictBasedSearch:
 
             t = conflict[0]
             if conflict[1] == "vertex":
-                _, _, cell_node, robots_in_conflict = conflict
-                branch_robots = robots_in_conflict[:2]
-                for robot_id in branch_robots:
+                _, _, robot_a, robot_b, node_a, node_b = conflict
+                # Each child forbids one robot from every leader cell whose
+                # footprint would still overlap the other robot sitting where
+                # it is now. Plain (no-clearance) pairs collapse this to the
+                # single shared cell, i.e. the original CBS branch.
+                branches = [
+                    (robot_a, self._forbidden_cells(robot_a, node_b, robot_a, robot_b)),
+                    (robot_b, self._forbidden_cells(robot_b, node_a, robot_a, robot_b)),
+                ]
+                for robot_id, region in branches:
                     child = CTNode(
                         cost=0.0,
                         vertex_constraints={k: set(v) for k, v in node.vertex_constraints.items()},
                         edge_constraints={k: set(v) for k, v in node.edge_constraints.items()},
                         solution=dict(node.solution),
                     )
-                    child.vertex_constraints.setdefault(robot_id, set()).add((cell_node, t))
+                    cons = child.vertex_constraints.setdefault(robot_id, set())
+                    for cell_node in region:
+                        cons.add((cell_node, t))
                     new_path = self._low_level(robot_id, robots_meta, child, legal_cells)
                     if new_path is None:
                         continue
@@ -430,8 +509,8 @@ class ConflictBasedSearch:
                     child.conflict_count = len(child.conflicts)
                     heapq.heappush(open_heap, child)
             else:
-                _, _, robot_a, robot_b, node_at_t, node_at_t1 = conflict
-                branches = [(robot_a, node_at_t, node_at_t1), (robot_b, node_at_t1, node_at_t)]
+                _, _, robot_a, robot_b, a_from, a_to, b_from, b_to = conflict
+                branches = [(robot_a, a_from, a_to), (robot_b, b_from, b_to)]
                 for robot_id, from_node, to_node in branches:
                     child = CTNode(
                         cost=0.0,
@@ -439,7 +518,17 @@ class ConflictBasedSearch:
                         edge_constraints={k: set(v) for k, v in node.edge_constraints.items()},
                         solution=dict(node.solution),
                     )
-                    child.edge_constraints.setdefault(robot_id, set()).add((from_node, to_node, t))
+                    if from_node == to_node:
+                        # A "wait" transition — forbid it as a vertex so we
+                        # never emit a self-loop edge constraint, which
+                        # SpaceTimeAStar._can_hold_goal assumes never exists.
+                        child.vertex_constraints.setdefault(robot_id, set()).add(
+                            (from_node, t)
+                        )
+                    else:
+                        child.edge_constraints.setdefault(robot_id, set()).add(
+                            (from_node, to_node, t)
+                        )
                     new_path = self._low_level(robot_id, robots_meta, child, legal_cells)
                     if new_path is None:
                         continue

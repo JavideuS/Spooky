@@ -101,6 +101,7 @@ class BaseILPBuilder:
                 "goal_lock",
                 "crash",
                 "swap",
+                "trailing",
             ],
         }
 
@@ -194,37 +195,94 @@ class GridILPBuilder(BaseILPBuilder):
                 for a in robots
             }
             backward_sets = {
-                a: bfs_reachable_sets(reverse_reachable, robots[a].goal, robots[a].T - 1)
+                a: bfs_reachable_sets(
+                    reverse_reachable, robots[a].goal, robots[a].T - 1
+                )
                 for a in robots
             }
         else:
             forward_sets = backward_sets = None
-        self.logger.debug(f"Forward sets: {forward_sets}\nBackward sets: {backward_sets}")
+        self.logger.debug(
+            f"Forward sets: {forward_sets}\nBackward sets: {backward_sets}"
+        )
+
+        # Clearance (quantum/utils/clearance.py). Both are empty / all-{(0,0)}
+        # at the defaults, so everything below is a no-op and the model becomes
+        # identical to the pre-clearance one.
+        keepout = problem.get_obstacle_keepout()  # {a: frozenset[(i,j)]}
+        clearance_table = problem.get_clearance_table()  # {(a,b): D_ab}
+        _trivial = frozenset({(0, 0)})
+        robot_list = list(robots.keys())
+        # Clearance robot pairs: those whose clearance shell (D_ab) is
+        # bigger than one cell.
+        clearance_robot_pairs = [
+            (robot_list[i], robot_list[j], D)
+            for i in range(len(robot_list))
+            for j in range(i + 1, len(robot_list))
+            if (D := clearance_table.get((robot_list[i], robot_list[j])))
+            and D != _trivial
+        ]
+        clearance_robot_pair_ids = {(a, b) for a, b, _ in clearance_robot_pairs}
+
         # Decision variables x[robot, position, time]
         model.x = pyo.Var(model.A, model.V, model.T, within=pyo.Binary)
 
+        # legal[a][t] = cells robot a can still be a leader on at t (survives the
+        # window / BFS-reachability / obstacle keep-out fixing below). Reused to
+        # prune the clearance constraints.
+        # A robot whose start already is its goal is pinned there for its whole
+        # window (start + goal + goal_lock + one_hot leave it no freedom), so
+        # fix every other cell to 0 outright and keep its `legal` set to a
+        # single cell so the clearance enumeration below doesn't range it over the map.
+        parked = {a for a in model.A if robots[a].current_position == robots[a].goal}
+
+        legal = {a: {} for a in model.A}
         in_window_vars = 0
         bfs_fixed = 0
+        keepout_fixed = 0
+        parked_fixed = 0
         for a in model.A:
-            for v in model.V:
-                for t in model.T:
-                    if t not in active_range[a]:
+            ko_a = keepout.get(a, frozenset())
+            for t in model.T:
+                if t not in active_range[a]:
+                    for v in model.V:
                         model.x[a, v, t].fix(0)
-                        continue
+                    continue
+                if a in parked:
+                    goal = robots[a].goal
+                    for v in model.V:
+                        in_window_vars += 1
+                        if v != goal:
+                            model.x[a, v, t].fix(0)
+                            parked_fixed += 1
+                    legal[a][t] = {goal}
+                    continue
+                legal_at = set()
+                for v in model.V:
                     in_window_vars += 1
+                    if v in ko_a:
+                        model.x[a, v, t].fix(0)
+                        keepout_fixed += 1
+                        continue
                     if preprocess:
                         forward_ok = v in forward_sets[a][t - robots[a].start_time]
                         backward_ok = v in backward_sets[a][goal_deadline[a] - t]
                         if not (forward_ok and backward_ok):
                             model.x[a, v, t].fix(0)
                             bfs_fixed += 1
+                            continue
+                    legal_at.add(v)
+                legal[a][t] = legal_at
+        reduced = bfs_fixed + keepout_fixed + parked_fixed
         self.bfs_stats = {
             "window": 0,
             "preprocess": preprocess,
             "initial_variables": in_window_vars,
-            "variables_reduced": bfs_fixed,
-            "final_variables": in_window_vars - bfs_fixed,
-            "reduction_ratio": round(bfs_fixed / in_window_vars, 4)
+            "variables_reduced": reduced,
+            "obstacle_keepout_fixed": keepout_fixed,
+            "parked_fixed": parked_fixed,
+            "final_variables": in_window_vars - reduced,
+            "reduction_ratio": round(reduced / in_window_vars, 4)
             if in_window_vars
             else 0,
         }
@@ -274,20 +332,26 @@ class GridILPBuilder(BaseILPBuilder):
 
         model.goal_lock = pyo.Constraint(model.A, model.T_minus, rule=goal_lock_rule)
 
-        # at most one robot per cell per timestep
+        # at most one robot per cell per timestep. Also the (0,0) case of every
+        # clearance robot pair's separation, so crash_clearance below only adds the rest of
+        # the D_ab shell.
         model.crash = pyo.Constraint(
             model.V,
             model.T,
             rule=lambda m, i, j, t: sum(m.x[a, (i, j), t] for a in m.A) <= 1,
         )
 
-        # no two robots may swap positions across an edge between t and t+1
+        # No two robots may swap positions across an edge between t and t+1.
+        # Skipped for clearance robot pairs not because swap stops applying,
+        # but because model.trailing below provably dominates it), so every
+        # case this constraint would forbid, trailing already forbids too.
         model.swap = pyo.ConstraintList()
-        robot_list = list(robots.keys())
         for t in model.T_minus:
             for idx_i in range(len(robot_list)):
                 for idx_j in range(idx_i + 1, len(robot_list)):
                     ai, aj = robot_list[idx_i], robot_list[idx_j]
+                    if (ai, aj) in clearance_robot_pair_ids:
+                        continue
                     for v in model.V:
                         for w in grid.adjacency[v]:
                             model.swap.add(
@@ -297,6 +361,10 @@ class GridILPBuilder(BaseILPBuilder):
                                 + model.x[aj, v, t + 1]
                                 <= 3
                             )
+
+        self._add_clearance_constraints(
+            model, active_range, legal, clearance_robot_pairs
+        )
 
         # minimize total timesteps spent away from goal (equivalent to sum of arrival times,
         # given goal_lock forces x[a, g_a, ·] to be monotone)
@@ -311,13 +379,75 @@ class GridILPBuilder(BaseILPBuilder):
             ),
         )
 
+        extra = ""
+        if clearance_robot_pairs:
+            extra = (
+                f", clearance: {len(clearance_robot_pairs)} clearance robot pair(s), "
+                f"{len(model.crash_clearance)} crash + "
+                f"{len(model.trailing)} trailing rows"
+            )
         self.logger.standard(
             f"ILP model built: {len(model.A)} robots, {len(model.V)} free cells, "
-            f"{problem.T} timesteps"
+            f"{problem.T} timesteps{extra}"
             f"\nBFS Stats: {self.bfs_stats}"
         )
         self.model = model
         return self.model
+
+    def _add_clearance_constraints(
+        self, model, active_range, legal, clearance_robot_pairs
+    ):
+        """Two DIFFERENT constraints for clearance robot pairs (clearance shell
+        bigger than one cell), not one generalised in two places.
+
+          crash_clearance, at (ta,tb,offsets) = (t, t, D\\{(0,0)}):
+              the rest of the SAME-time footprint-overlap shell.
+              It is model.crash generalised from a point to a disc.
+              The (0,0) centre is already covered by the compact global model.crash.
+
+          trailing, at (t+1, t, D) and (t, t+1, D):
+              a NEW hazard with no point-robot analogue and no relation to
+              swap: does one robot's endpoint at one end of the step land in
+              the other's shell at the other end of the step? Point robots
+              have instantaneous, exact occupancy, so there is no such thing
+              as "lingering" in a cell partway through vacating it,
+              this guards against real, continuous, imperfectly-synchronised
+              robot motion, where that lingering is physically real. Uses
+              the full D (0,0 included): "a arrives where b just was" counts
+              regardless of whether b has since moved on, which is why this
+              is not just swap-with-a-wider-D.
+
+        Each disjunct only involves two position variables (one robot's
+        endpoint at one time, the other's at the other time) -- not all
+        four -- so no transition/adjacency reasoning is needed here at all:
+        banning the pair directly is an exact, tighter encoding of the same
+        predicate than enumerating full (from, to) transition tuples would
+        be. No-op when clearance_robot_pairs is empty."""
+        model.crash_clearance = pyo.ConstraintList()
+        model.trailing = pyo.ConstraintList()
+        if not clearance_robot_pairs:
+            return
+
+        def add_shell_rows(target, a, ta, b, tb, offsets):
+            la = legal[a].get(ta)
+            lb = legal[b].get(tb)
+            if not la or not lb:
+                return
+            for u in la:
+                near = [w for d in offsets if (w := (u[0] - d[0], u[1] - d[1])) in lb]
+                if near:
+                    target.add(
+                        model.x[a, u, ta] + sum(model.x[b, w, tb] for w in near) <= 1
+                    )
+
+        for a, b, D in clearance_robot_pairs:
+            off_nz = [d for d in D if d != (0, 0)]
+            shared_t = set(active_range[a]) & set(active_range[b])
+            for t in shared_t:
+                add_shell_rows(model.crash_clearance, a, t, b, t, off_nz)
+                if (t + 1) in active_range[a] and (t + 1) in active_range[b]:
+                    add_shell_rows(model.trailing, a, t + 1, b, t, D)
+                    add_shell_rows(model.trailing, a, t, b, t + 1, D)
 
 
 class GraphILPBuilder(BaseILPBuilder):
@@ -381,7 +511,9 @@ class GraphILPBuilder(BaseILPBuilder):
             }
         else:
             forward_sets = backward_sets = None
-        self.logger.debug(f"Forward sets: {forward_sets}\nBackward sets: {backward_sets}")
+        self.logger.debug(
+            f"Forward sets: {forward_sets}\nBackward sets: {backward_sets}"
+        )
         # Decision variables x[robot, node, time]
         model.x = pyo.Var(model.A, model.V, model.T, within=pyo.Binary)
 

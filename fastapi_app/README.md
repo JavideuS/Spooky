@@ -267,7 +267,7 @@ new code path.
    the picker.
 5. Add one or more **robots** (start/goal, labeled row/col or x/y depending on
    step 3) via the form rows, or switch to the "Raw JSON" tab to hand-edit the
-   exact `/v1/plan` request body (start_time, priority, safety_radius, or
+   exact `/v1/plan` request body (start_time, priority, robot_radius, inflation, or
    anything the form doesn't expose) — whichever tab is active when you click
    "Plan path" is what gets sent.
 6. Click **Plan path**. The result strip shows cost / planning time / solver;

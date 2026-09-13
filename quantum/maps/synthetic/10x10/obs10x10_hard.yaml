@@ -45,13 +45,13 @@ problems:
         goal: [9, 9]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_1:
         start: [9, 0]
         goal: [0, 9]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
 
   # Four robots through maze
   four_robots:
@@ -62,25 +62,25 @@ problems:
         goal: [9, 9]
         start_time: 0
         priority: 1.5
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_1:
         start: [9, 0]
         goal: [0, 9]
         start_time: 0
         priority: 1.5
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_2:
         start: [0, 9]
         goal: [9, 0]
         start_time: 2
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_3:
         start: [9, 9]
         goal: [0, 0]
         start_time: 2
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
 
   # Six robots - challenging coordination
   six_robots:
@@ -91,37 +91,37 @@ problems:
         goal: [9, 9]
         start_time: 0
         priority: 1.5
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_1:
         start: [9, 0]
         goal: [0, 9]
         start_time: 0
         priority: 1.5
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_2:
         start: [0, 9]
         goal: [9, 0]
         start_time: 1
         priority: 1.2
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_3:
         start: [9, 9]
         goal: [0, 0]
         start_time: 1
         priority: 1.2
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_4:
         start: [0, 2]
         goal: [9, 7]
         start_time: 3
         priority: 0.8
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_5:
         start: [2, 0]
         goal: [7, 9]
         start_time: 3
         priority: 0.8
-        safety_radius: 0.5
+        robot_radius: 0.5
 
   # Ten robots - extreme density
   ten_robots:
@@ -132,58 +132,58 @@ problems:
         goal: [9, 9]
         start_time: 0
         priority: 2.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_1:
         start: [9, 0]
         goal: [0, 9]
         start_time: 0
         priority: 2.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_2:
         start: [0, 9]
         goal: [9, 0]
         start_time: 1
         priority: 1.5
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_3:
         start: [9, 9]
         goal: [0, 0]
         start_time: 1
         priority: 1.5
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_4:
         start: [0, 2]
         goal: [9, 7]
         start_time: 2
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_5:
         start: [2, 0]
         goal: [7, 9]
         start_time: 2
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_6:
         start: [9, 2]
         goal: [0, 7]
         start_time: 3
         priority: 0.8
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_7:
         start: [2, 9]
         goal: [7, 0]
         start_time: 3
         priority: 0.8
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_8:
         start: [0, 7]
         goal: [9, 2]
         start_time: 4
         priority: 0.5
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_9:
         start: [7, 0]
         goal: [2, 9]
         start_time: 4
         priority: 0.5
-        safety_radius: 0.5
+        robot_radius: 0.5

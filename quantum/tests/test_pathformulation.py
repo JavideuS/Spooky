@@ -75,6 +75,21 @@ def test_out_of_range_graph_node_id_raises(goal):
         PathfindingProblem(robot, graph=_graph())
 
 
+def test_graph_mode_clearance_stays_inert_even_with_real_radius():
+    """Pure graph problems (no grid) have no resolution to interpret D_ab's
+    Chebyshev cell-offsets against, and a graph's node `pos` isn't guaranteed
+    to be a uniform grid -- so clearance must stay exact-only there, even
+    when a real robot_radius/inflation is set, rather than silently applying
+    grid-cell arithmetic to whatever `pos` the graph happens to carry."""
+    robots = [
+        RobotConfig("a", start=0, goal=2, robot_radius=5.0, inflation=2.0),
+        RobotConfig("b", start=2, goal=0, robot_radius=5.0, inflation=2.0),
+    ]
+    problem = PathfindingProblem(robots, graph=_graph())
+    assert problem.get_clearance_table() == {}
+    assert problem.get_obstacle_keepout() == {"a": frozenset(), "b": frozenset()}
+
+
 def test_start_time_beyond_horizon_raises():
     robot = RobotConfig("a", start=(0, 0), goal=(2, 2), start_time=5)
     with pytest.raises(InfeasibleProblemError, match="leaves no time"):

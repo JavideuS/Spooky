@@ -77,7 +77,7 @@ def reconstruct_problem_from_metadata(metadata: dict) -> PathfindingProblem:
             goal=goal,
             priority=robot_data.get('priority', 1.0),
             start_time=0,  # Default to 0, not stored in benchmark metadata
-            safety_radius=robot_data.get('safety_radius', 0.5),
+            robot_radius=robot_data.get('robot_radius', 0.5),
             expected_duration=None  # Let problem calculate it
         )
         robots.append(robot)

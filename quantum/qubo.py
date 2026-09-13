@@ -27,11 +27,11 @@ problem = PathfindingProblem.from_map_config(
     materials_data=materials_data
 )
 # problem.robots["Lucia"].priority = 3
-# anja = RobotConfig("Anja", (4, 4), (0, 0), start_time=0, priority=1, safety_radius=0)
+# anja = RobotConfig("Anja", (4, 4), (0, 0), start_time=0, priority=1, robot_radius=0)
 # problem.add_robot(anja)
-# showmaker = RobotConfig("Showmaker", (0, 2), (2, 0), start_time=0, priority=1, safety_radius=0)
+# showmaker = RobotConfig("Showmaker", (0, 2), (2, 0), start_time=0, priority=1, robot_radius=0)
 # problem.add_robot(showmaker)
-# caps = RobotConfig("Caps", (0, 0), (2, 2), start_time=0, priority=1, safety_radius=0)
+# caps = RobotConfig("Caps", (0, 0), (2, 2), start_time=0, priority=1, robot_radius=0)
 # problem.add_robot(caps)
 # problem.add_robot(anja, True) # This alternative keeps predefined time when adding robots
 

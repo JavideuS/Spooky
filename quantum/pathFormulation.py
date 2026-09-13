@@ -10,17 +10,41 @@ class InfeasibleProblemError(ValueError):
 
 
 class PathfindingProblem:
-
-    def __init__(self, robots, grid=None, graph=None, T=None, name="unnamed"):
+    def __init__(
+        self,
+        robots,
+        grid=None,
+        graph=None,
+        T=None,
+        name="unnamed",
+        separation_factor=None,
+        clearance_enabled=True,
+    ):
         # Support both grid and graph formats
         self.logger = get_logger()
         self.grid = grid
         self.graph = graph
-        
+
+        # Clearance config (see quantum/utils/clearance.py). One feature, one
+        # switch: obstacle keep-out and robot-robot separation both derive from
+        # each robot's (robot_radius, inflation); they only compose differently.
+        #   separation_factor: multiplier on the max-inflation term of
+        #     robot-robot separation; None => clearance module default (1.0).
+        #   clearance_enabled: when False, get_clearance_table()
+        #     and get_obstacle_keepout() return empty and _validate_clearance_
+        #     config() is skipped. In this case the problem is planned as pure MAPF
+        #     even if robot_radius / inflation are set (useful as a baseline, or when
+        #     the map is already an inflated cost map).
+        #
+        #     At the defaults every clearance quantity is a no-op regardless, so this
+        #     only matters once real radii are set.
+        self.separation_factor = separation_factor
+        self.clearance_enabled = clearance_enabled
+
         # Validate that at least one format is provided
         if self.grid is None and self.graph is None:
             raise ValueError("Either grid or graph must be provided")
-    
+
         self.robots = {}
         if isinstance(robots, dict):
             self.robots = robots
@@ -65,7 +89,170 @@ class PathfindingProblem:
         self.T = T
         self.T = T
         self.name = name
-        
+        # Lazily built and cached; invalidated whenever the robot set changes
+        # (add_robot). See get_clearance_table() / get_obstacle_keepout().
+        self._clearance_table = None
+        self._obstacle_keepout = None
+        self._validate_clearance_config()
+
+    def get_clearance_table(self):
+        """{(a_id, b_id): D_ab} robot-robot separation offset sets for every
+        ordered pair of robots (see quantum/utils/clearance.py). Built once,
+        then cached. {} when clearance_enabled is False, or in pure graph
+        mode (self.grid is None): D_ab's offsets are Chebyshev grid-cell
+        arithmetic against a physical resolution, and a graph's node `pos`
+        isn't guaranteed to be a uniform grid, so clearance stays exact-only
+        there rather than applying grid-cell math to whatever pos a graph
+        happens to carry. A "both"-format problem (grid and graph present)
+        still gets real clearance, from the grid's resolution. Otherwise every
+        D_ab is {(0, 0)} (callers fall back to exact same-cell / swap checks)
+        unless some pair needs a footprint bigger than one cell."""
+        if not self.clearance_enabled or self.grid is None:
+            return {}
+        if self._clearance_table is None:
+            from quantum.utils import clearance as _clr
+
+            resolution = self.grid.resolution
+            factor = (
+                self.separation_factor
+                if self.separation_factor is not None
+                else _clr.DEFAULT_SEPARATION_FACTOR
+            )
+            self._clearance_table = _clr.build_offset_table(
+                self.robots, resolution, factor
+            )
+        return self._clearance_table
+
+    def get_obstacle_keepout(self):
+        """{robot_id: frozenset[(i, j)]} -> grid cells a robot may not occupy as
+        a leader because its footprint (clearance = robot_radius + inflation)
+        would cover an obstacle.
+
+        Robot's own *start* is exempted (it may be parked tight to a wall and
+        must still be representable at t=0; this is the start-in-inflation warning
+        case in _validate_clearance_config).
+
+        Goal is not exempted and doesn't need to be, as a goal in the inflated
+        band is already a hard InfeasibleProblemError at construction. Every
+        set is empty when clearance_enabled is False, in graph mode, or for a
+        radius-0 footprint (the default). Lazy + cached; invalidated by
+        add_robot. Builders consume this their own way (CBS: subtract from
+        legal_cells; ILP: fix x to 0; QUBO: mask reachable sets)."""
+        if self._obstacle_keepout is None:
+            self._obstacle_keepout = self._build_obstacle_keepout()
+        return self._obstacle_keepout
+
+    def _build_obstacle_keepout(self):
+        if self.grid is None or not self.clearance_enabled:
+            return {rid: frozenset() for rid in self.robots}
+        from quantum.utils import clearance as _clr
+
+        res = self.grid.resolution
+        obstacles = {tuple(o) for o in self.grid.obstacles}
+        M, N = self.grid.M, self.grid.N
+        band_by_radius = {}  # radius_cells -> frozenset (shared across equal footprints)
+        out = {}
+        for rid, robot in self.robots.items():
+            r = _clr.footprint_radius_cells(robot.clearance, res)
+            if r == 0:
+                out[rid] = frozenset()
+                continue
+            if r not in band_by_radius:
+                band_by_radius[r] = (
+                    _clr.inflated_obstacle_cells(obstacles, M, N, robot.clearance, res)
+                    - obstacles
+                )
+            out[rid] = frozenset(band_by_radius[r] - {tuple(robot.start)})
+        return out
+
+    def _validate_clearance_config(self):
+        """Clearance-aware feasibility checks, run once construction is far
+        enough along that each robot's T (hence deadline) is known. No-op in
+        graph mode or when clearance_enabled is False.
+
+        - goal within its own clearance of an obstacle -> InfeasibleProblemError
+          (a non-human local planner can't complete the final approach).
+        - start within its own clearance of an obstacle -> warning only (the
+          robot is physically there already and the planners exempt it).
+        - two robots whose starts are within their combined separation AND
+          share a start_time -> InfeasibleProblemError. A robot's start is
+          hard-pinned to an exact cell at an exact instant.
+          Two robots pinned at the same instant, too close, is a direct
+          contradiction in every possible solution -- exactly as certain as the
+          goal case below, just gated on shared start_time instead of shared
+          deadline. Differing start_times are NOT checked, for the same
+          reason differing deadlines aren't checked for goals below: whether
+          one robot (say, already parked from an earlier start) still occupies
+          that cell by the time the other starts depends on an arrival time not
+          known before solving (left to the solver's no_solution).
+        - two robots whose goals are within their combined separation ->
+          InfeasibleProblemError. In an abstract MAPF sense a robot that
+          arrives, waits, and despawns before the other arrives could make
+          non-overlapping windows work, but clearance_enabled is the
+          deployment switch and real robots sit at their goal for good, so
+          this blocks unconditionally. (Turn clearance_enabled off for the
+          despawn semantics.)
+        """
+        if self.grid is None or not self.clearance_enabled:
+            return
+        from quantum.utils import clearance as _clr
+
+        res = self.grid.resolution
+        obstacles = {tuple(o) for o in self.grid.obstacles}
+        for robot in self.robots.values():
+            if not isinstance(robot.goal, (tuple, list)):
+                continue
+            r = _clr.footprint_radius_cells(robot.clearance, res)
+            if r == 0:
+                continue
+            if _clr.cell_in_obstacle_footprint(robot.goal, obstacles, r):
+                raise InfeasibleProblemError(
+                    f"Robot '{robot.robot_id}' goal {tuple(robot.goal)} is within its "
+                    f"clearance ({robot.clearance} m) of an obstacle — no collision-free "
+                    f"final approach exists at this resolution ({res} m/cell)."
+                )
+            if _clr.cell_in_obstacle_footprint(robot.start, obstacles, r):
+                self.logger.standard(
+                    f"⚠ Robot '{robot.robot_id}' start {tuple(robot.start)} is within its "
+                    f"clearance of an obstacle; planning will let it leave but the first "
+                    f"steps run tight to the obstacle."
+                )
+
+        table = self.get_clearance_table()
+        ids = list(self.robots)
+        for x in range(len(ids)):
+            a = self.robots[ids[x]]
+            for y in range(x + 1, len(ids)):
+                b = self.robots[ids[y]]
+                D = table.get((ids[x], ids[y]))
+                if not D or D == frozenset({(0, 0)}):
+                    continue
+
+                if (
+                    isinstance(a.start, (tuple, list))
+                    and isinstance(b.start, (tuple, list))
+                    and a.start_time == b.start_time
+                ):
+                    off = (a.start[0] - b.start[0], a.start[1] - b.start[1])
+                    if off in D:
+                        raise InfeasibleProblemError(
+                            f"Robots '{ids[x]}' and '{ids[y]}' start at {tuple(a.start)} / "
+                            f"{tuple(b.start)} at the same start_time ({a.start_time}), "
+                            f"closer than their required separation — they cannot both "
+                            f"be there at once."
+                        )
+
+                if isinstance(a.goal, (tuple, list)) and isinstance(
+                    b.goal, (tuple, list)
+                ):
+                    off = (a.goal[0] - b.goal[0], a.goal[1] - b.goal[1])
+                    if off in D:
+                        raise InfeasibleProblemError(
+                            f"Robots '{ids[x]}' and '{ids[y]}' have goals {tuple(a.goal)} / "
+                            f"{tuple(b.goal)} closer than their required separation — they "
+                            f"cannot both park there."
+                        )
+
     def _validate_robot_positions(self):
         """
         Fail fast on an infeasible start/goal (out of bounds, on an
@@ -99,7 +286,16 @@ class PathfindingProblem:
                         )
 
     @classmethod
-    def general_init(cls, start, end, grid=None, graph=None, T=None, name="unnamed", coordinate_format="matrix"):
+    def general_init(
+        cls,
+        start,
+        end,
+        grid=None,
+        graph=None,
+        T=None,
+        name="unnamed",
+        coordinate_format="matrix",
+    ):
         # In this case we simply create a default robot configuration for single robot
         robot = RobotConfig("Lucia", start, end, coordinate_format=coordinate_format)
 
@@ -117,13 +313,17 @@ class PathfindingProblem:
         end = tuple(problem_dict["goal"])
         T = problem_dict.get("T", None)
         coordinate_format = problem_dict.get("coordinate_format", "matrix")
-        return cls.general_init(start, end, grid=grid, T=T, coordinate_format=coordinate_format)
-    
+        return cls.general_init(
+            start, end, grid=grid, T=T, coordinate_format=coordinate_format
+        )
+
     @classmethod
-    def from_graph_data(cls, graph_data, start_node, end_node, T=None, name="graph_problem"):
+    def from_graph_data(
+        cls, graph_data, start_node, end_node, T=None, name="graph_problem"
+    ):
         """
         Create a PathfindingProblem instance from graph data.
-        
+
         Args:
             graph_data: Dictionary with 'nodes' and 'edges' keys or Graph instance
             start_node: Starting node index
@@ -141,15 +341,24 @@ class PathfindingProblem:
             start_node = graph.get_node_from_position(start_node)
         if isinstance(end_node, (list, tuple)):
             end_node = graph.get_node_from_position(end_node)
-            
+
         return cls.general_init(start_node, end_node, graph=graph, T=T, name=name)
 
     @classmethod
-    def from_unified_data(cls, h5_source, start, end, materials_data=None, T=None, name=None, coordinate_format="matrix"):
+    def from_unified_data(
+        cls,
+        h5_source,
+        start,
+        end,
+        materials_data=None,
+        T=None,
+        name=None,
+        coordinate_format="matrix",
+    ):
         """
         Create a unified PathfindingProblem instance with both grid and graph data.
         This is the main function for loading synthetic maps that support both approaches.
-        
+
         Args:
             h5_source: HDF5 file path or file-like object
             start: Start position (i,j) for grid or node_id for graph
@@ -157,7 +366,7 @@ class PathfindingProblem:
             materials_data: Optional materials data for Grid object
             T: Time horizon (optional)
             name: Problem name (optional, will use map name if not provided)
-            
+
         Returns:
             PathfindingProblem: Unified problem with both grid and graph representations
         """
@@ -165,40 +374,35 @@ class PathfindingProblem:
 
         # Load both data types
         data = load_both_from_hdf5(h5_source)
-        
+
         # Use provided name or map name
-        problem_name = name or data['name']
-        
+        problem_name = name or data["name"]
+
         # Create grid if available
         grid = None
-        if data['has_map'] and data['map_data']:
+        if data["has_map"] and data["map_data"]:
             grid = map.Grid.from_hdf5_data(
-                data['map_data'],
-                materials_data=materials_data,
-                name=problem_name
+                data["map_data"], materials_data=materials_data, name=problem_name
             )
-        
+
         # Create graph if available
         graph = None
-        if data['has_graph'] and data['graph_data']:
-            graph = map.Graph.from_hdf5_data(
-                data['graph_data'],
-                name=problem_name
-            )
-        
+        if data["has_graph"] and data["graph_data"]:
+            graph = map.Graph.from_hdf5_data(data["graph_data"], name=problem_name)
+
         # Create unified problem
         problem = cls.general_init(
             start=start,  # Keep original start for grid
-            end=end,      # Keep original end for grid
+            end=end,  # Keep original end for grid
             grid=grid,
             graph=graph,
             T=T,
             name=problem_name,
-            coordinate_format=coordinate_format
+            coordinate_format=coordinate_format,
         )
-        
+
         return problem
-    
+
     @classmethod
     def from_h5(cls, h5_path, robots, materials_data=None, T=None, name=None):
         """
@@ -219,59 +423,55 @@ class PathfindingProblem:
             PathfindingProblem: Unified problem instance
         """
         h5_path = str(h5_path)
-        if not h5_path.endswith('.h5'):
+        if not h5_path.endswith(".h5"):
             h5_path = f"{h5_path}.h5"
 
         from quantum.config.hdf5parser import load_both_from_hdf5
+
         data = load_both_from_hdf5(h5_path)
-        problem_name = name or data['name']
+        problem_name = name or data["name"]
 
         grid = None
-        if data['has_map'] and data['map_data']:
+        if data["has_map"] and data["map_data"]:
             grid = map.Grid.from_hdf5_data(
-                data['map_data'],
-                materials_data=materials_data,
-                name=problem_name
+                data["map_data"], materials_data=materials_data, name=problem_name
             )
 
         graph = None
-        if data['has_graph'] and data['graph_data']:
-            graph = map.Graph.from_hdf5_data(
-                data['graph_data'],
-                name=problem_name
-            )
+        if data["has_graph"] and data["graph_data"]:
+            graph = map.Graph.from_hdf5_data(data["graph_data"], name=problem_name)
 
-        return cls(
-            robots=robots,
-            grid=grid,
-            graph=graph,
-            T=T,
-            name=problem_name
-        )
+        return cls(robots=robots, grid=grid, graph=graph, T=T, name=problem_name)
 
     @classmethod
-    def from_map_config(cls, map_path, problem_name="baseline", materials_data=None, coordinate_format="matrix"):
+    def from_map_config(
+        cls,
+        map_path,
+        problem_name="baseline",
+        materials_data=None,
+        coordinate_format="matrix",
+    ):
         """
         Fast initialization from map path and problem configuration.
         This is a convenience method that combines H5 loading and YAML config parsing.
         Supports both single-robot (legacy) and multi-robot configurations.
-        
+
         Args:
             map_path: Path to map file (with or without .h5/.yaml extension)
                      e.g., "maps/synthetic/5x5/obs5x5_medium" or "maps/synthetic/5x5/obs5x5_medium.h5"
             problem_name: Name of the problem configuration in the YAML file (default: "baseline")
             materials_data: Optional materials data for Grid object
-            
+
         Returns:
             PathfindingProblem: Unified problem instance
-            
+
         Example:
             >>> # Single robot (legacy format)
             >>> problem = PathfindingProblem.from_map_config(
             ...     "maps/synthetic/5x5/obs5x5_medium",
             ...     problem_name="baseline"
             ... )
-            
+
             >>> # Multi-robot format
             >>> problem = PathfindingProblem.from_map_config(
             ...     "maps/synthetic/10x10/no_obs10x10",
@@ -280,31 +480,31 @@ class PathfindingProblem:
         """
         import quantum.config.parser as config_parser
         from pathlib import Path
-        
+
         # Normalize path (remove extension if present)
         map_path = str(map_path)
-        if map_path.endswith('.h5'):
+        if map_path.endswith(".h5"):
             base_path = map_path[:-3]
-        elif map_path.endswith('.yaml'):
+        elif map_path.endswith(".yaml"):
             base_path = map_path[:-5]
         else:
             base_path = map_path
-        
+
         h5_path = f"{base_path}.h5"
         yaml_path = f"{base_path}.yaml"
-        
+
         # Load problem configuration from YAML
         config = config_parser.load_config(yaml_path, sections=["problems"])
-        
+
         if "problems" not in config or problem_name not in config["problems"]:
             raise ValueError(
                 f"Problem '{problem_name}' not found in {yaml_path}. "
                 f"Available problems: {list(config.get('problems', {}).keys())}"
             )
-        
+
         problem_config = config["problems"][problem_name]
         time_limit = problem_config.get("time_limit", None)
-        
+
         # Check if this is a multi-robot problem
         if "robots" in problem_config:
             # Multi-robot configuration
@@ -312,13 +512,24 @@ class PathfindingProblem:
             for robot_id, robot_data in problem_config["robots"].items():
                 robot = RobotConfig(
                     robot_id=robot_id,
-                    start=tuple(robot_data["start"]) if isinstance(robot_data["start"], list) else robot_data["start"],
-                    goal=tuple(robot_data["goal"]) if isinstance(robot_data["goal"], list) else robot_data["goal"],
+                    start=tuple(robot_data["start"])
+                    if isinstance(robot_data["start"], list)
+                    else robot_data["start"],
+                    goal=tuple(robot_data["goal"])
+                    if isinstance(robot_data["goal"], list)
+                    else robot_data["goal"],
                     start_time=robot_data.get("start_time", 0),
                     priority=robot_data.get("priority", 1.0),
-                    safety_radius=robot_data.get("safety_radius", 0.5),
+                    # "safety_radius" accepted as a legacy alias for pre-rename
+                    # problem YAMLs.
+                    robot_radius=robot_data.get(
+                        "robot_radius", robot_data.get("safety_radius", 0.5)
+                    ),
+                    inflation=robot_data.get("inflation", 0.0),
                     expected_duration=robot_data.get("expected_duration", None),
-                    coordinate_format=robot_data.get("coordinate_format", coordinate_format)
+                    coordinate_format=robot_data.get(
+                        "coordinate_format", coordinate_format
+                    ),
                 )
                 robots.append(robot)
 
@@ -328,13 +539,21 @@ class PathfindingProblem:
                 robots=robots,
                 materials_data=materials_data,
                 T=time_limit,
-                name=problem_full_name
+                name=problem_full_name,
             )
         else:
             # Single robot (legacy format)
-            start = tuple(problem_config["start"]) if isinstance(problem_config["start"], list) else problem_config["start"]
-            goal = tuple(problem_config["goal"]) if isinstance(problem_config["goal"], list) else problem_config["goal"]
-            
+            start = (
+                tuple(problem_config["start"])
+                if isinstance(problem_config["start"], list)
+                else problem_config["start"]
+            )
+            goal = (
+                tuple(problem_config["goal"])
+                if isinstance(problem_config["goal"], list)
+                else problem_config["goal"]
+            )
+
             # Use from_unified_data to create the problem
             return cls.from_unified_data(
                 h5_source=h5_path,
@@ -343,23 +562,31 @@ class PathfindingProblem:
                 materials_data=materials_data,
                 T=time_limit,
                 name=f"{Path(base_path).stem}_{problem_name}",
-                coordinate_format=problem_config.get("coordinate_format", coordinate_format)
+                coordinate_format=problem_config.get(
+                    "coordinate_format", coordinate_format
+                ),
             )
-    
+
     def add_robot(self, robot: RobotConfig, keep_time=False):
         """Add a robot to the problem."""
         self.robots[robot.robot_id] = robot
         self.num_robots += 1
+        # robot set changed; rebuild clearance caches on next request
+        self._clearance_table = None
+        self._obstacle_keepout = None
         if not keep_time:
             self.T = self.calculate_timeline()
-    
+
     def manhattan_distance(self, start, end):
         """Calculate Manhattan distance for grid coordinates."""
         return abs(start[0] - end[0]) + abs(start[1] - end[1])
 
     def euclidean_distance(self, start, end):
         """Calculate Euclidean distance for graph coordinates."""
-        return np.sqrt((start[0] - end[0]) * (start[0] - end[0]) + (start[1] - end[1]) * (start[1] - end[1]))
+        return np.sqrt(
+            (start[0] - end[0]) * (start[0] - end[0])
+            + (start[1] - end[1]) * (start[1] - end[1])
+        )
 
     # def is_valid_move(self, robot, from_pos, to_pos):
     #     """Check if a move is valid."""
@@ -367,7 +594,7 @@ class PathfindingProblem:
     #         return self.grid.is_valid_move(robot, from_pos, to_pos)
     #     else:
     #         return self.graph.is_valid_move(robot, from_pos, to_pos)
-    
+
     def set_robot_time(self):
         """Set time horizon T for each robot if not already set."""
         for robot in self.robots.values():
@@ -376,10 +603,12 @@ class PathfindingProblem:
                     # Heuristic: 2x Manhattan distance + 4 steps buffer
                     # This handles congestion/detours better than 1.5x, especially for short paths
                     dist = self.manhattan_distance(robot.current_position, robot.goal)
-                    robot.T = int(dist * 2.0) + 4 # Better for multirobot and deroutes
-                    self.logger.debug(f"Calculated heuristic T for robot {robot.robot_id} with dist {dist}, T={robot.T}") 
+                    robot.T = int(dist * 2.0) + 4  # Better for multirobot and deroutes
+                    self.logger.debug(
+                        f"Calculated heuristic T for robot {robot.robot_id} with dist {dist}, T={robot.T}"
+                    )
 
-                else:   # graph format
+                else:  # graph format
                     # For graphs, I need to implement some heuristic like straight line from start to node
                     # And make a conversion from like meters to time steps and some extra margin
                     robot.T = 10
@@ -415,34 +644,40 @@ class PathfindingProblem:
         for idx, robot_id in enumerate(self.robots.keys()):
             robot_num[robot_id] = idx
         return robot_num
-    
+
     def get_format_type(self):
         """Return the format type: 'grid', 'graph', or 'both'."""
         if self.grid is not None and self.graph is not None:
-            return 'both'
+            return "both"
         elif self.grid is not None:
-            return 'grid'
+            return "grid"
         else:
-            return 'graph'
-    
+            return "graph"
+
     def get_graph_robot_current_goal(self, robot_id):
         """Get graph-specific current_position and goal node indices from a robot."""
         if self.graph is not None:
             # Convert coordinates to node indices if not already done
             robot = self.robots[robot_id]
-            start_node = (robot.current_position if isinstance(robot.current_position, int)
-                          else self.graph.get_node_from_position(robot.current_position))
-            
-            end_node = (robot.goal if isinstance(robot.goal, int)
-                        else self.graph.get_node_from_position(robot.goal))
+            start_node = (
+                robot.current_position
+                if isinstance(robot.current_position, int)
+                else self.graph.get_node_from_position(robot.current_position)
+            )
+
+            end_node = (
+                robot.goal
+                if isinstance(robot.goal, int)
+                else self.graph.get_node_from_position(robot.goal)
+            )
             return start_node, end_node
         else:
             return None, None
-    
+
     def can_use_grid(self):
         """Check if grid representation is available."""
         return self.grid is not None
-    
+
     def can_use_graph(self):
         """Check if graph representation is available."""
         return self.graph is not None
@@ -457,6 +692,8 @@ class PathfindingProblem:
             graph=None,
             T=self.T,
             name=self.name,
+            separation_factor=self.separation_factor,
+            clearance_enabled=self.clearance_enabled,
         )
 
     def as_graph_only(self):
@@ -469,6 +706,8 @@ class PathfindingProblem:
             graph=self.graph,
             T=self.T,
             name=self.name,
+            separation_factor=self.separation_factor,
+            clearance_enabled=self.clearance_enabled,
         )
 
     def to_dict(self):
@@ -478,7 +717,9 @@ class PathfindingProblem:
         result = {
             "name": self.name,
             "T": self.T,
-            "robots": {robot_id: robot.to_dict() for robot_id, robot in self.robots.items()},
+            "robots": {
+                robot_id: robot.to_dict() for robot_id, robot in self.robots.items()
+            },
         }
 
         if self.grid is not None:
@@ -486,5 +727,5 @@ class PathfindingProblem:
 
         if self.graph is not None:
             result["graph"] = self.graph.to_dict()
-  
+
         return result

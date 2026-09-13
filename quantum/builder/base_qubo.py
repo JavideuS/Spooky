@@ -853,9 +853,21 @@ class BaseQUBO(ABC):
         var_idx's cell at t-1, and is *also* fixed to move into this robot's
         own t-1 cell at t -- both crossing through each other's edge at the
         same transition. _collides_with_fixed_rival only catches same-
-        cell/same-time (vertex) collisions; this is the other half K_swap is
+        cell/same-time (vertex) collisions; this is the other half K_trail is
         supposed to cover but never gets a say in, same reason as the vertex
         case (see _collides_with_fixed_rival's docstring).
+
+        Exact-cell only, like _collides_with_fixed_rival.
+        Note neither this nor that check is D_ab-shell aware.
+
+        For a clearance pair, this preprocessing pass can still commit two robots
+        into positions that violate the D_ab-shell crash/trailing test even
+        though no exact cell/edge collision was ever detected here; is_
+        solution_valid()'s clearance_conflict/trailing_conflict checks catch
+        it post-hoc, but benchmark.py's _attribute_invalid_cause() only cross-
+        references the exact "conflicts" (vertex) key today, so a violation
+        forced this way is currently misattributed to "solver_sampling"
+        rather than "pre_processing". Known gap, not yet closed.
         """
         if not total_fixed or own_robot_num is None or prev_fixed_pos is None:
             return False
@@ -876,11 +888,7 @@ class BaseQUBO(ABC):
                 if val2 != 1:
                     continue
                 fi2, fj2, ft2, frn2 = paths.decode_position(fixed_idx2, self.problem)
-                if (
-                    frn2 == frn
-                    and ft2 == t
-                    and (fi2, fj2) == (own_prev_i, own_prev_j)
-                ):
+                if frn2 == frn and ft2 == t and (fi2, fj2) == (own_prev_i, own_prev_j):
                     return True
         return False
 
@@ -1087,8 +1095,12 @@ class BaseQUBO(ABC):
 
         for _attempt in range(2 * max(self.t_max, 1)):
             reachable = self.reachable_positions_aggressive(
-                self.problem.robots[robot_id], start_pos, prev_timestep, self.t_max,
-                blocked=blocked, allow_wait_at=wait_at,
+                self.problem.robots[robot_id],
+                start_pos,
+                prev_timestep,
+                self.t_max,
+                blocked=blocked,
+                allow_wait_at=wait_at,
             )
             self.logger.debug(f"Reachable positions: {reachable}")
 

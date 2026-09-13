@@ -814,7 +814,8 @@ def plan_stateless(request: StatelessPlanRequest):
             goal=resolve_position(r.goal, r.coordinate_format),
             start_time=r.start_time,
             priority=r.priority,
-            safety_radius=r.safety_radius,
+            robot_radius=r.robot_radius,
+            inflation=r.inflation,
             coordinate_format=r.coordinate_format,
         )
         for i, r in enumerate(request.robots)
@@ -824,11 +825,19 @@ def plan_stateless(request: StatelessPlanRequest):
     try:
         if request.format == "graph":
             problem = pathfinding.PathfindingProblem(
-                robot_configs, graph=env, T=request.T
+                robot_configs,
+                graph=env,
+                T=request.T,
+                clearance_enabled=request.clearance_enabled,
+                separation_factor=request.separation_factor,
             )
         else:
             problem = pathfinding.PathfindingProblem(
-                robot_configs, grid=env, T=request.T
+                robot_configs,
+                grid=env,
+                T=request.T,
+                clearance_enabled=request.clearance_enabled,
+                separation_factor=request.separation_factor,
             )
         builder = _select_builder(
             solver, problem, request.format, penalties, "v1_plan"

@@ -94,7 +94,10 @@ class CBSSolver(BaseSolver):
             }
 
         cbs = ConflictBasedSearch(
-            builder.graph, node_limit=self.node_limit, time_limit=self.time_limit
+            builder.graph,
+            node_limit=self.node_limit,
+            time_limit=self.time_limit,
+            clearance_table=problem.get_clearance_table(),
         )
         paths, meta = cbs.solve(robots_meta, legal_cells=builder.legal_cells)
 

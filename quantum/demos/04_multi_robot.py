@@ -58,7 +58,7 @@ def main():
         goal=(4, 0),              # Bottom-left
         start_time=0,
         priority=1,               # Higher priority than default (1)
-        safety_radius=0
+        robot_radius=0
     )
     problem.add_robot(robot2)
     print(f"    ✓ Added Kai: priority={robot2.priority}, start={(0,4)}, goal={(4,0)}")
@@ -70,10 +70,10 @@ def main():
         goal=(2, 4),              # Middle-right
         start_time=2,             # Starts 2 timesteps later
         priority=1,
-        safety_radius=1           # Requires 1-cell buffer around it
+        robot_radius=1           # Requires 1-cell buffer around it
     )
     problem.add_robot(robot3)
-    print(f"    ✓ Added Zane: priority={robot3.priority}, start_time={robot3.start_time}, safety_radius={robot3.safety_radius}")
+    print(f"    ✓ Added Zane: priority={robot3.priority}, start_time={robot3.start_time}, robot_radius={robot3.robot_radius}")
     
     # Display robot summary
     print("\n  Robot Summary:")

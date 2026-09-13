@@ -85,7 +85,8 @@ class RobotSpec(BaseModel):
     goal: list[float]
     start_time: int = 0
     priority: float = 1.0
-    safety_radius: float = 0.5
+    robot_radius: float = 0.5           # physical body radius, metres (largest half-extent if non-circular)
+    inflation: float = 0.0             # safety margin, metres: min gap kept between this robot's edge and any obstacle / other robot edge
     coordinate_format: str = "matrix"  # "matrix" (row, col), "cartesian" (x, y robotics/Y-up),
     # or "world" (real-world x, y meters in the map's frame — see quantum/maps/pgm2HDF5.py);
     # applies to this robot's start/goal, and its returned path is formatted the same way
@@ -101,6 +102,8 @@ class StatelessPlanRequest(BaseModel):
     details: bool = False
     render: bool = False            # also return an animated Plotly figure (data+layout+frames) of the solved paths; grid only
     clip_at_goal: bool = False      # trim each robot's returned path once parked at goal, keeping only the first arrival
+    clearance_enabled: bool = True  # honour each robot's robot_radius+inflation as an obstacle keep-out and robot-robot separation (grid/CBS only); False => plain MAPF baseline
+    separation_factor: Optional[float] = None  # multiplier on the max-inflation term of robot-robot separation; None => clearance module default (1.0)
 
     @field_validator("robots")
     @classmethod

@@ -54,15 +54,15 @@ class GraphQUBO(BaseQUBO):
                 "K_lock": "lock",
                 "K_bt": "backtracking",
                 "K_crash": "crash",
-                "K_swap": "swap",
+                "K_trail": "trailing",
             }
             constraints_to_apply = [
                 v for k, v in penalty_to_constraint.items() if k in self.penalties
             ]
-            # apply_swap_penalty already applies the same-node/same-time term
+            # apply_trailing_penalty already applies the same-node/same-time term
             # itself (weighted by K_crash), so don't also run apply_crash_penalty
             # separately — that would double-count it.
-            if "swap" in constraints_to_apply and "crash" in constraints_to_apply:
+            if "trailing" in constraints_to_apply and "crash" in constraints_to_apply:
                 constraints_to_apply.remove("crash")
 
         self.Q = {}
@@ -83,8 +83,8 @@ class GraphQUBO(BaseQUBO):
             self.apply_backtracking_penalty()
         if "crash" in constraints_to_apply:
             self.apply_crash_penalty()
-        if "swap" in constraints_to_apply:
-            self.apply_swap_penalty()
+        if "trailing" in constraints_to_apply:
+            self.apply_trailing_penalty()
         if "multi_robot_proximity" in constraints_to_apply:
             self.apply_multi_robot_proximity_penalty()
 
@@ -658,29 +658,32 @@ class GraphQUBO(BaseQUBO):
                         idx2 = node_i + (self.num_nodes * t_window) + robot_offset2
                         self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_crash
 
-    def apply_swap_penalty(self):
+    def apply_trailing_penalty(self):
         """
-        Approximate inter-robot swap-collision penalty (graph equivalent of
-        QUBOBuilder.apply_swap_penalty — cells become nodes).
+        Robot-robot separation penalty.
+        Graph mode stays exact-cell/exact-swap only (no D_ab shell): a graph's node `pos`
+        isn't guaranteed to be a uniform grid, same reasoning CBS/ILP already
+        apply to graph mode.
 
-        P_swap = K_crash * r1[t]*r2[t] + K_swap * (r1[t+1]*r2[t] + r1[t]*r2[t+1])
+        P = K_crash * r1[t]*r2[t] + K_trail * (r1[t+1]*r2[t] + r1[t]*r2[t+1])
 
-        Summed over nodes shared by two robots, this penalizes both a true swap
-        (robot1 moves into a node as robot2 moves out, and vice versa at the
-        neighboring node) and same-node/same-time occupancy (the crash case).
-        The two are weighted independently: the same-node/same-time term reuses
-        K_crash as-is (identical to apply_crash_penalty, so crash protection
-        doesn't get diluted), while the cross-time terms get their own K_swap.
+        Summed over nodes shared by two robots, this penalizes both same-
+        node/same-time occupancy (the crash case) and the cross-time
+        trailing hazard. The two are weighted independently: the same-node/
+        same-time term reuses K_crash as-is (identical to apply_crash_penalty,
+        so crash protection doesn't get overshadowed), while the cross-time terms
+        get their own K_trail.
         Those cross-time terms also fire when one robot simply follows another
-        into a just-vacated node, which isn't an actual collision — an accepted
-        overconstraint of this pairwise approximation vs. the exact ancilla-based
-        formulation — so K_swap is the knob to tune down if that false-positive
-        cost outweighs the benefit, independently of crash protection.
-        When K_swap is active it replaces apply_crash_penalty (see build()) so
-        the same-time term isn't double counted.
+        into a just-vacated node, which isn't an actual collision (an
+        accepted overconstraint), so K_trail is the knob to tune down if that
+        false-positive cost outweighs the benefit, independently of crash
+        protection.
+
+        When K_trail is active it replaces apply_crash_penalty
+        (see build()) so the same-time term isn't double counted.
         """
         K_crash = self.penalties.get("K_crash", 0)
-        K_swap = self.penalties.get("K_swap", 0)
+        K_trail = self.penalties.get("K_trail", 0)
         robot_nums = self.problem.get_robot_nums()
         active_robots_per_timestep = self.get_active_robots_per_timestep_in_window()
 
@@ -727,7 +730,7 @@ class GraphQUBO(BaseQUBO):
                     for node_i in shared_r1_next:
                         idx1 = node_i + (self.num_nodes * t_next_window) + robot_offset1
                         idx2 = node_i + (self.num_nodes * t_window) + robot_offset2
-                        self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_swap
+                        self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_trail
 
                     # robot2 arrives at t+1 where robot1 was at t
                     shared_r2_next = set(self._nodes(robot_id1, t_window)) & set(
@@ -736,7 +739,7 @@ class GraphQUBO(BaseQUBO):
                     for node_i in shared_r2_next:
                         idx1 = node_i + (self.num_nodes * t_window) + robot_offset1
                         idx2 = node_i + (self.num_nodes * t_next_window) + robot_offset2
-                        self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_swap
+                        self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_trail
 
     def reachable_positions(self, robot, start_node, start, end):
         # Initialize reachable set with the start node at start_time

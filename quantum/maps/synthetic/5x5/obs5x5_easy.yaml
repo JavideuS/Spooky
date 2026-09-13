@@ -23,13 +23,13 @@ problems:
         goal: [4, 4]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_1:
         start: [4, 0]
         goal: [0, 4]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
   
   # Three robots with different priorities
   three_robots:
@@ -40,19 +40,19 @@ problems:
         goal: [4, 4]
         start_time: 0
         priority: 2.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       medium_priority:
         start: [4, 0]
         goal: [0, 4]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       low_priority:
         start: [0, 4]
         goal: [4, 0]
         start_time: 1
         priority: 0.5
-        safety_radius: 0.5
+        robot_radius: 0.5
   
   # Four robots - corners to opposite corners
   four_robots_corners:
@@ -63,22 +63,22 @@ problems:
         goal: [4, 4]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_1:
         start: [4, 0]
         goal: [0, 4]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_2:
         start: [0, 4]
         goal: [4, 0]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_3:
         start: [4, 4]
         goal: [0, 0]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5

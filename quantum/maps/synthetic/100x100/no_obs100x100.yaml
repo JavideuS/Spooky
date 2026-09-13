@@ -20,10 +20,10 @@ problems:
         goal: [99, 99]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_1:
         start: [99, 0]
         goal: [0, 99]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5

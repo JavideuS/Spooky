@@ -23,7 +23,7 @@ MAP = "quantum/maps/synthetic/3x3/no_obs3x3"
 PENALTIES = {
     "K_hot": 9, "K_adj": 4.8, "K_start": 6.5, "K_goal": 3, "K_lock": 4,
     "K_bt": 2.3, "K_tp": 1.2, "K_goal_approx": 0.7, "K_obs": 0,
-    "K_crash": 2.7, "K_swap": 3,
+    "K_crash": 2.7, "K_trail": 3,
 }
 
 

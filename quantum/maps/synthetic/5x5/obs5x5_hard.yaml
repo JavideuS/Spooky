@@ -30,13 +30,13 @@ problems:
         goal: [4, 4]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_1:
         start: [0, 4]
         goal: [4, 0]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
   
   # Three robots navigating around obstacles
   three_robots:
@@ -47,19 +47,19 @@ problems:
         goal: [4, 4]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_1:
         start: [4, 0]
         goal: [0, 4]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_2:
         start: [0, 2]
         goal: [4, 2]
         start_time: 2
         priority: 1.5
-        safety_radius: 0.5
+        robot_radius: 0.5
   
   # Five robots - high density scenario
   five_robots:
@@ -70,28 +70,28 @@ problems:
         goal: [4, 4]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_1:
         start: [4, 0]
         goal: [0, 4]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_2:
         start: [0, 4]
         goal: [4, 0]
         start_time: 1
         priority: 1.2
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_3:
         start: [4, 4]
         goal: [0, 0]
         start_time: 1
         priority: 1.2
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_4:
         start: [0, 1]
         goal: [4, 1]
         start_time: 2
         priority: 0.8
-        safety_radius: 0.5
+        robot_radius: 0.5

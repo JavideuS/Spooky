@@ -7,7 +7,8 @@ class RobotConfig:
 
     def __init__(self, robot_id: str, start: Union[Tuple[int, int], int],
                  goal: Union[Tuple[int, int], int], start_time: int = 0,
-                 priority: float = 1.0, safety_radius: float = 0.5, expected_duration: Optional[int] = None,
+                 priority: float = 1.0, robot_radius: float = 0.5, inflation: float = 0.0,
+                 expected_duration: Optional[int] = None,
                  coordinate_format: str = "matrix"):
         """
         Initialize robot configuration.
@@ -17,7 +18,13 @@ class RobotConfig:
             start: Start position (grid coords or node index)
             goal: Goal position (grid coords or node index)
             priority: Priority weight for this robot (higher = more important)
-            safety_radius: Safety radius for collision avoidance
+            robot_radius: Physical body radius, metres (largest half-extent for
+                a non-circular robot). Two such robots touch at centre-to-centre
+                distance robot_radius_a + robot_radius_b.
+            inflation: Safety margin, metres — the minimum gap the planner keeps
+                between this robot's edge and any obstacle or other robot's
+                edge. See quantum/utils/clearance.py for how the two combine
+                (additive vs obstacles, max-of-the-pair vs another robot).
             coordinate_format: "matrix" (Spooky's native (row, col), the default),
                 "cartesian" (robotics/Y-up (x, y)), or "world" (real-world meters,
                 ROS map frame — requires the map to carry an `origin`/`resolution`,
@@ -30,7 +37,8 @@ class RobotConfig:
         self.start = start
         self.goal = goal
         self.priority = priority
-        self.safety_radius = safety_radius
+        self.robot_radius = robot_radius
+        self.inflation = inflation
         self.start_time = start_time
         self.T = expected_duration  # By default is none and can be calculated by the problem, but you can predefine it
         self.coordinate_format = coordinate_format
@@ -42,6 +50,13 @@ class RobotConfig:
         self.current_position = start
         self.path = []
         self.active = True  # Whether robot is actively planning
+
+    @property
+    def clearance(self) -> float:
+        """Per-robot keep-out from obstacles (metres): body radius plus safety
+        margin. Derived, never stored. NB robot-vs-robot separation is not
+        clearance_a + clearance_b — see quantum/utils/clearance.py."""
+        return self.robot_radius + self.inflation
 
     def resolve_coordinates(self, num_rows: int, origin=None, resolution=None):
         """
@@ -124,7 +139,8 @@ class RobotConfig:
             'start': self.format_position(self.start),
             'goal': self.format_position(self.goal),
             'priority': self.priority,
-            'safety_radius': self.safety_radius,
+            'robot_radius': self.robot_radius,
+            'inflation': self.inflation,
             'current_position': self.format_position(self.current_position),
             'path': [(*self.format_position((i, j)), t) for i, j, t in self.path],
             'active': self.active

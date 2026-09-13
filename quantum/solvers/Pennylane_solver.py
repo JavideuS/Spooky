@@ -932,7 +932,7 @@ class PennylaneSolver(BaseSolver):
             "optimized_params": self.params,
             "metadata": {
                 "window_stats": window_stats,  # Per-window variable reduction stats
-                "forced_collisions": forced_collisions,  # Pre-processing forced collisions (bypass K_crash/K_swap)
+                "forced_collisions": forced_collisions,  # Pre-processing forced collisions (bypass K_crash/K_trail)
                 "qpu_time_estimates": qpu_time_estimates,  # Per-window pre-execution QPU time estimates (qiskit.remote only)
             },
         }

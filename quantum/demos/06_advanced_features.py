@@ -60,7 +60,7 @@ def main():
     problem.add_robot(robot2)
     print(f"    ✓ Added Kai: {robot2.current_position} → {robot2.goal}")
     
-    robot3 = RobotConfig("Jay", (1, 0), (1, 2), start_time=1, priority=1, safety_radius=1)
+    robot3 = RobotConfig("Jay", (1, 0), (1, 2), start_time=1, priority=1, robot_radius=1)
     problem.add_robot(robot3)
     print(f"    ✓ Added Jay: {robot3.current_position} → {robot3.goal}")
     

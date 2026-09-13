@@ -23,13 +23,13 @@ problems:
         goal: [9, 9]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_1:
         start: [9, 0]
         goal: [0, 9]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
   
   # Four robots from corners
   four_robots:
@@ -40,25 +40,25 @@ problems:
         goal: [9, 9]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_1:
         start: [9, 0]
         goal: [0, 9]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_2:
         start: [0, 9]
         goal: [9, 0]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_3:
         start: [9, 9]
         goal: [0, 0]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
   
   # Six robots with staggered starts
   six_robots:
@@ -69,34 +69,34 @@ problems:
         goal: [9, 9]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_1:
         start: [9, 0]
         goal: [0, 9]
         start_time: 0
         priority: 1.0
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_2:
         start: [0, 9]
         goal: [9, 0]
         start_time: 2
         priority: 1.2
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_3:
         start: [9, 9]
         goal: [0, 0]
         start_time: 2
         priority: 1.2
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_4:
         start: [0, 4]
         goal: [9, 5]
         start_time: 3
         priority: 0.8
-        safety_radius: 0.5
+        robot_radius: 0.5
       robot_5:
         start: [4, 0]
         goal: [5, 9]
         start_time: 3
         priority: 0.8
-        safety_radius: 0.5
+        robot_radius: 0.5

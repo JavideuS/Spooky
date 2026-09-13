@@ -160,13 +160,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--robot",
         action="append",
         default=[],
-        metavar="ID=START:GOAL[:PRIORITY[:SAFETY_RADIUS[:START_TIME]]]",
+        metavar="ID=START:GOAL[:PRIORITY[:ROBOT_RADIUS[:START_TIME]]]",
         help=(
             "Define a robot directly on the command line instead of looking it up "
             "in a problems YAML -- solves straight against --map's .h5, no "
             "companion .yaml required. Repeatable for multiple robots. START/GOAL "
             "are each 'a,b', interpreted per --coordinate-format. "
-            "PRIORITY/SAFETY_RADIUS/START_TIME are optional (defaults: 1.0, 0.5, 0). "
+            "PRIORITY/ROBOT_RADIUS/START_TIME are optional (defaults: 1.0, 0.5, 0). "
             "Example: --robot robot_0=0,0:9,9 --robot robot_1=5,5:0,0:2.0. "
             "Mutually exclusive with --problem/--start/--goal."
         ),
@@ -213,11 +213,11 @@ def build_parser() -> argparse.ArgumentParser:
     pen = parser.add_argument_group("Penalties")
     pen.add_argument(
         "--penalty-set",
-        default="swap",
+        default="trailing",
         metavar="SET",
         help=(
             "Named penalty set from config.yaml to use as base "
-            "(default: swap). Overridden by individual --K-* flags."
+            "(default: trailing). Overridden by individual --K-* flags."
         ),
     )
     # Individual overrides — if given, they take precedence over the set
@@ -270,11 +270,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override K_crash penalty",
     )
     pen.add_argument(
-        "--K-swap",
+        "--K-trail",
         type=float,
         default=None,
         metavar="VAL",
-        help="Override K_swap penalty",
+        help="Override K_trail penalty",
     )
     pen.add_argument(
         "--K-obs",
@@ -625,7 +625,7 @@ def _parse_coord(token: str, context: str) -> tuple:
 def parse_robot_specs(raw: list[str], coordinate_format: str):
     """
     Parse --robot entries into a list of RobotConfig.
-    Entry format: 'ID=START:GOAL[:PRIORITY[:SAFETY_RADIUS[:START_TIME]]]'
+    Entry format: 'ID=START:GOAL[:PRIORITY[:ROBOT_RADIUS[:START_TIME]]]'
     """
     from quantum.robotConfiguration import RobotConfig
 
@@ -633,7 +633,7 @@ def parse_robot_specs(raw: list[str], coordinate_format: str):
     for entry in raw:
         if "=" not in entry:
             raise ValueError(
-                f"Invalid --robot entry '{entry}'. Expected 'ID=START:GOAL[:PRIORITY[:SAFETY_RADIUS[:START_TIME]]]'."
+                f"Invalid --robot entry '{entry}'. Expected 'ID=START:GOAL[:PRIORITY[:ROBOT_RADIUS[:START_TIME]]]'."
             )
         robot_id, rest = entry.split("=", 1)
         robot_id = robot_id.strip()
@@ -645,20 +645,20 @@ def parse_robot_specs(raw: list[str], coordinate_format: str):
         if len(extra) > 3:
             raise ValueError(
                 f"Invalid --robot entry '{entry}': too many fields "
-                f"(expected START:GOAL[:PRIORITY[:SAFETY_RADIUS[:START_TIME]]])."
+                f"(expected START:GOAL[:PRIORITY[:ROBOT_RADIUS[:START_TIME]]])."
             )
         try:
             priority = float(extra[0]) if len(extra) > 0 else 1.0
-            safety_radius = float(extra[1]) if len(extra) > 1 else 0.5
+            robot_radius = float(extra[1]) if len(extra) > 1 else 0.5
             start_time = int(extra[2]) if len(extra) > 2 else 0
         except ValueError:
-            raise ValueError(f"Invalid --robot entry '{entry}': PRIORITY/SAFETY_RADIUS/START_TIME must be numeric.")
+            raise ValueError(f"Invalid --robot entry '{entry}': PRIORITY/ROBOT_RADIUS/START_TIME must be numeric.")
 
         start = _parse_coord(start_tok, f"--robot '{entry}' start")
         goal = _parse_coord(goal_tok, f"--robot '{entry}' goal")
         robots.append(RobotConfig(
             robot_id=robot_id, start=start, goal=goal,
-            priority=priority, safety_radius=safety_radius, start_time=start_time,
+            priority=priority, robot_radius=robot_radius, start_time=start_time,
             coordinate_format=coordinate_format,
         ))
     return robots
@@ -714,7 +714,7 @@ def build_penalties(config: dict, args: argparse.Namespace) -> dict:
         "K_bt": args.K_bt,
         "K_tp": args.K_tp,
         "K_crash": args.K_crash,
-        "K_swap": args.K_swap,
+        "K_trail": args.K_trail,
         "K_obs": args.K_obs,
         "K_goal_approx": args.K_goal_approx,
     }

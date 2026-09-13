@@ -1,6 +1,10 @@
 import networkx as nx
 from quantum.utils.logger import get_logger
-from quantum.builder.ILPBuilder import bfs_reachable_sets, reverse_adjacency, validate_time_horizon
+from quantum.builder.ILPBuilder import (
+    bfs_reachable_sets,
+    reverse_adjacency,
+    validate_time_horizon,
+)
 
 
 class BaseCBSBuilder:
@@ -24,7 +28,7 @@ class BaseCBSBuilder:
         # search's reservation table) instead
         self.penalties = {
             "name": "cbs_hard_constraints",
-            "constraints": ["reservation_table", "crash", "swap"],
+            "constraints": ["reservation_table", "crash", "swap", "trailing"],
         }
 
     def build(self, preprocess=True):
@@ -68,6 +72,22 @@ class GridCBSBuilder(BaseCBSBuilder):
         robot = self.problem.robots[robot_id]
         return self.local_index(robot.current_position), self.local_index(robot.goal)
 
+    def _inflated_obstacle_ids(self, robots):
+        """{robot_id: set(node_id)} obstacle keep-out per robot, from
+        PathfindingProblem.get_obstacle_keepout() (which already exempts
+        start/goal), mapped to graph node ids and with the robot's current
+        position also exempted."""
+        keepout = self.problem.get_obstacle_keepout()
+        node_ids = set(self.graph.nodes)
+        out = {}
+        for robot_id, robot in robots.items():
+            ids = {
+                self.local_index((i, j)) for (i, j) in keepout.get(robot_id, ())
+            } & node_ids
+            ids.discard(self.local_index(robot.current_position))
+            out[robot_id] = ids
+        return out
+
     def build(self, preprocess=True):
         problem = self.problem
         grid = problem.grid
@@ -89,6 +109,18 @@ class GridCBSBuilder(BaseCBSBuilder):
 
         self.graph = graph
 
+        # Per-robot obstacle inflation: every leader cell whose footprint
+        # (clearance = robot_radius + inflation) would cover an obstacle is
+        # illegal for that robot. Time-invariant, so it folds straight into
+        # legal_cells. The robot's own start/goal are never removed so a
+        # robot parked against a wall stays feasible (we assume it arrived
+        # there legally) but can't route through other robots' inflated margins.
+
+        # Empty for every robot at the default
+        # robot_radius / unit resolution (footprint radius 0).
+        blocked_ids = self._inflated_obstacle_ids(robots)
+        any_inflation = any(blocked_ids.values())
+
         # Forward-from-start and backward-from-goal BFS reachability per
         # robot, exactly as GridILPBuilder does
         # Used to restrict SpaceTimeAStar's neighbor expansion, not to fix
@@ -96,7 +128,7 @@ class GridCBSBuilder(BaseCBSBuilder):
         # in spirit: fewer cells the low-level search has to consider.
         in_window_vars = 0
         final_vars = 0
-        self.legal_cells = {} if preprocess else None
+        self.legal_cells = {} if (preprocess or any_inflation) else None
         if preprocess:
             reachable = {v: list(graph.neighbors(v)) + [v] for v in graph.nodes}
             reverse_reachable = reverse_adjacency(reachable)
@@ -106,10 +138,21 @@ class GridCBSBuilder(BaseCBSBuilder):
                 max_steps = robot.T - 1
                 forward = bfs_reachable_sets(reachable, start_id, max_steps)
                 backward = bfs_reachable_sets(reverse_reachable, goal_id, max_steps)
-                legal = [forward[k] & backward[max_steps - k] for k in range(robot.T)]
+                blocked = blocked_ids[robot_id]
+                legal = [
+                    (forward[k] & backward[max_steps - k]) - blocked
+                    for k in range(robot.T)
+                ]
                 self.legal_cells[robot_id] = legal
                 in_window_vars += self.vars_per_time * robot.T
                 final_vars += sum(len(s) for s in legal)
+        elif any_inflation:
+            all_free = set(graph.nodes)
+            for robot_id, robot in robots.items():
+                legal_set = all_free - blocked_ids[robot_id]
+                self.legal_cells[robot_id] = [legal_set for _ in range(robot.T)]
+                in_window_vars += self.vars_per_time * robot.T
+                final_vars += len(legal_set) * robot.T
         else:
             for robot in robots.values():
                 in_window_vars += self.vars_per_time * robot.T
