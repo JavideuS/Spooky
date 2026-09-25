@@ -722,6 +722,16 @@ class BaseSolver(ABC):
         vars_reduced = len(diag_fixed)
         reduction_ratio = vars_reduced / initial_vars if initial_vars > 0 else 0
 
+        # Unreduced size of this window in the flat encoding: every cell/node
+        # for every (robot, t) slot the window covers. initial_vars is already
+        # post-BFS (build() only emits active cells), so without this the
+        # logical stage's reduction is invisible in the stats.
+        if builder.problem.get_format_type() == "graph":
+            cells_per_t = builder.num_nodes
+        else:
+            cells_per_t = builder.problem.grid.M * builder.problem.grid.N
+        dense_vars = len(active_cells) * cells_per_t
+
         self.logger.debug(
             f"⏱️ get_logical_vars: {(t1 - t0) * 1000:.1f}ms, "
             f"build: {(t2 - t1) * 1000:.1f}ms, "
@@ -734,6 +744,12 @@ class BaseSolver(ABC):
 
         window_stat = {
             "window": builder.iter,
+            "var_limit": builder.var_limit,
+            # Timesteps in this window, including the one it shares with the
+            # previous window (current_T advances by t_max - 1).
+            "window_size": builder.t_max,
+            "dense_variables": dense_vars,
+            "logical_variables": initial_vars,
             "initial_variables": initial_vars,
             "variables_reduced": vars_reduced,
             "final_variables": final_vars,

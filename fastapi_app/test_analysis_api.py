@@ -104,3 +104,18 @@ def test_unknown_sweep_404():
         assert (
             client.get("/v1/analysis/sweeps/does_not_exist/summary").status_code == 404
         )
+
+
+def test_reduction_table_shape():
+    """Pre-split sweeps have null stage fields, so only check that the
+    ratios that are present are consistent with each other."""
+    sweep_id = _first_sweep_id()
+    with TestClient(app) as client:
+        res = client.get(f"/v1/analysis/sweeps/{sweep_id}/reduction")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["row_count"] == len(body["rows"]) > 0
+    for row in body["rows"]:
+        ratios = [row[k] for k in ("logical_reduction_ratio", "total_reduction_ratio")]
+        if None not in ratios:
+            assert 0.0 <= ratios[0] <= ratios[1] + 1e-9 <= 1.0 + 1e-9

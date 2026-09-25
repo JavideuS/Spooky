@@ -277,6 +277,8 @@ class GridILPBuilder(BaseILPBuilder):
         self.bfs_stats = {
             "window": 0,
             "preprocess": preprocess,
+            "dense_variables": in_window_vars,
+            "logical_variables": in_window_vars - reduced,
             "initial_variables": in_window_vars,
             "variables_reduced": reduced,
             "obstacle_keepout_fixed": keepout_fixed,
@@ -535,6 +537,8 @@ class GraphILPBuilder(BaseILPBuilder):
         self.bfs_stats = {
             "window": 0,
             "preprocess": preprocess,
+            "dense_variables": in_window_vars,
+            "logical_variables": in_window_vars - bfs_fixed,
             "initial_variables": in_window_vars,
             "variables_reduced": bfs_fixed,
             "final_variables": in_window_vars - bfs_fixed,

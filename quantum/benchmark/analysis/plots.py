@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-from quantum.benchmark.analysis.aggregate import _valid_mask
+from quantum.benchmark.analysis.aggregate import _valid_mask, with_reduction_columns
 from quantum.utils import preprocess as preprocess_modes
 from quantum.visualizer import QuantumRoboticsVisualizer
 
@@ -325,17 +325,25 @@ def plot_path_efficiency(
 def plot_variable_reduction(
     df: pd.DataFrame, output_dir: Optional[str] = None
 ) -> go.Figure:
-    """Mean variable reduction per (instance, solver), over runs that actually
-    pre-processed.
+    """Mean variable reduction per (instance, solver), split by stage, over
+    runs that actually pre-processed.
+
+    Each bar stacks two stages: the solid part is the logical stage
+    (obstacles, start/goal fixing, BFS reachability) measured against the
+    dense encoding; the hatched part is what the numeric/diagonal stage adds
+    on top, up to the total. The numeric stage only sees what survived BFS,
+    so the segments are ``ρ_logical`` and ``ρ_total − ρ_logical``, not
+    ``ρ_numeric`` itself (ρ_total = 1 − (1−ρ_logical)(1−ρ_numeric)).
 
     `preprocess` is a mode string since the modes landed (raw / bfs_aggressive
     / bfs_safe / full / full_safe)
     """
+    df = with_reduction_columns(df)
     reduced = df["preprocess"].map(preprocess_modes.uses_windowed_pipeline)
     summary = (
-        df[reduced & df["average_reduction_ratio"].notna()]
+        df[reduced & df["total_reduction_ratio"].notna()]
         .groupby(["instance_map", "problem_name", "solver_name"])[
-            "average_reduction_ratio"
+            ["logical_reduction_ratio", "total_reduction_ratio"]
         ]
         .mean()
         .reset_index()
@@ -347,32 +355,66 @@ def plot_variable_reduction(
 
     fig = go.Figure()
     for solver_name, group in summary.groupby("solver_name"):
+        logical = group["logical_reduction_ratio"]
+        numeric_gain = group["total_reduction_ratio"] - logical
+        common = dict(
+            x=group["instance"], offsetgroup=solver_name, legendgroup=solver_name
+        )
         fig.add_trace(
             go.Bar(
-                x=group["instance"],
-                y=group["average_reduction_ratio"],
-                name=solver_name,
-                marker=dict(
-                    color=colors[solver_name],
-                    line=_BAR_MARKER_LINE,
-                ),
-                # Show mean % on top of each bar so the value is readable
-                # without hovering — especially useful in static exports.
-                text=[f"{v:.0%}" for v in group["average_reduction_ratio"]],
-                textposition="outside",
-                hovertemplate=f"{solver_name}<br>%{{x}}<br>reduction=%{{y:.1%}}<extra></extra>",
+                **common,
+                y=logical,
+                name=f"{solver_name} · logical",
+                marker=dict(color=colors[solver_name], line=_BAR_MARKER_LINE),
+                hovertemplate=f"{solver_name}<br>%{{x}}<br>logical=%{{y:.1%}}<extra></extra>",
             )
         )
+        fig.add_trace(
+            go.Bar(
+                **common,
+                y=numeric_gain,
+                base=logical,
+                name=f"{solver_name} · + numeric",
+                marker=dict(
+                    color=colors[solver_name],
+                    opacity=0.45,
+                    pattern=dict(shape="/"),
+                    line=_BAR_MARKER_LINE,
+                ),
+                # Total on top so the headline number is readable without
+                # hovering — especially useful in static exports.
+                text=[f"{v:.1%}" for v in group["total_reduction_ratio"]],
+                textposition="outside",
+                customdata=group["total_reduction_ratio"],
+                hovertemplate=(
+                    f"{solver_name}<br>%{{x}}<br>+numeric=%{{y:.1%}}"
+                    "<br>total=%{customdata:.1%}<extra></extra>"
+                ),
+            )
+        )
+    if summary.empty:
+        fig.add_annotation(
+            text="No stage-split reduction stats in this sweep (re-run it to record them)",
+            showarrow=False,
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            y=0.5,
+        )
+    # Reductions cluster in the 90s; a 0-based axis would flatten the
+    # logical/numeric split into a sliver.
+    floor = summary["logical_reduction_ratio"].min() if not summary.empty else 0
+    lower = max(0.0, np.floor((floor - 0.05) * 10) / 10) if pd.notna(floor) else 0
     fig.update_layout(
         **_LAYOUT_THEME,
-        title="Variable/search-space reduction from BFS preprocessing",
+        title="Variable reduction by stage (logical, then numeric on the remainder)",
         barmode="group",
         xaxis=dict(**_AXIS_THEME, title="Instance"),
         yaxis=dict(
             **_AXIS_THEME,
-            title="Reduction ratio",
+            title="Reduction vs. dense encoding",
             tickformat=".0%",
-            range=[0, 1.1],  # headroom for the text labels above bars
+            range=[lower, 1.04],  # headroom for the text labels above bars
         ),
     )
     if output_dir:

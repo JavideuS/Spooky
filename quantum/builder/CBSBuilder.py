@@ -162,6 +162,8 @@ class GridCBSBuilder(BaseCBSBuilder):
         self.bfs_stats = {
             "window": 0,
             "preprocess": preprocess,
+            "dense_variables": in_window_vars,
+            "logical_variables": final_vars,
             "initial_variables": in_window_vars,
             "variables_reduced": reduced,
             "final_variables": final_vars,
@@ -236,6 +238,8 @@ class GraphCBSBuilder(BaseCBSBuilder):
         self.bfs_stats = {
             "window": 0,
             "preprocess": preprocess,
+            "dense_variables": in_window_vars,
+            "logical_variables": final_vars,
             "initial_variables": in_window_vars,
             "variables_reduced": reduced,
             "final_variables": final_vars,

@@ -118,6 +118,15 @@ def load_sweep(sweep_dir: str) -> pd.DataFrame:
                     "total_variables_reduced": var_stats.get("total_variables_reduced"),
                     "total_final_variables": var_stats.get("total_final_variables"),
                     "average_reduction_ratio": var_stats.get("average_reduction_ratio"),
+                    "var_limit": var_stats.get("var_limit"),
+                    "max_window_size": var_stats.get("max_window_size"),
+                    "mean_window_size": var_stats.get("mean_window_size"),
+                    "max_solver_variables": var_stats.get("max_solver_variables"),
+                    "total_dense_variables": var_stats.get("total_dense_variables"),
+                    "total_logical_variables": var_stats.get("total_logical_variables"),
+                    "logical_reduction_ratio": var_stats.get("logical_reduction_ratio"),
+                    "numeric_reduction_ratio": var_stats.get("numeric_reduction_ratio"),
+                    "total_reduction_ratio": var_stats.get("total_reduction_ratio"),
                     "termination_condition": run.get("termination_condition"),
                     "avg_path_efficiency": avg_efficiency,
                     "min_path_efficiency": min_efficiency,
@@ -629,16 +638,45 @@ def compute_failure_causes(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+REDUCTION_COLUMNS = [
+    "var_limit",
+    "max_window_size",
+    "mean_window_size",
+    "max_solver_variables",
+    "total_dense_variables",
+    "total_logical_variables",
+    "total_final_variables",
+    "logical_reduction_ratio",
+    "numeric_reduction_ratio",
+    "total_reduction_ratio",
+]
+
+
+def with_reduction_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Numeric copies of the stage-split reduction columns, NaN where absent.
+    Sweeps predating the split have them missing (precomputed CSVs) or all
+    None (object dtype), and groupby().mean() rejects object columns."""
+    df = df.copy()
+    for col in REDUCTION_COLUMNS:
+        df[col] = pd.to_numeric(df[col], errors="coerce") if col in df else np.nan
+    return df
+
+
 def compute_variable_reduction_stats(df: pd.DataFrame) -> pd.DataFrame:
     """Groups the already-computed average_reduction_ratio column — no new
     computation, BenchmarkRunner already aggregates this per run from each
     solver's own window_stats/bfs_stats."""
+    df = with_reduction_columns(df)
     return (
         df.groupby(["instance_map", "problem_name", "solver_name", "preprocess"])
         .agg(
             mean_reduction_ratio=("average_reduction_ratio", "mean"),
             mean_initial_variables=("total_initial_variables", "mean"),
             mean_final_variables=("total_final_variables", "mean"),
+            mean_logical_reduction_ratio=("logical_reduction_ratio", "mean"),
+            mean_numeric_reduction_ratio=("numeric_reduction_ratio", "mean"),
+            mean_total_reduction_ratio=("total_reduction_ratio", "mean"),
+            max_solver_variables=("max_solver_variables", "max"),
         )
         .reset_index()
     )

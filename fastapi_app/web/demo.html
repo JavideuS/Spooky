@@ -578,6 +578,30 @@
     <div class="bench-section-title" style="margin-top:22px;">Plots</div>
     <div class="plot-grid" id="benchPlots" style="margin-top:12px;"></div>
 
+    <div class="bench-section-title" style="margin-top:22px;">Variable reduction</div>
+    <div class="info-line" style="margin-top:4px;">
+      One row per (map, problem, solver, pre-processing mode), averaged over runs. Variables flow
+      <b>dense</b> → <b>logical</b> → <b>final</b>:
+      <b>dense</b> = the full encoding, every cell for every (robot, timestep) in each window;
+      <b>logical</b> = what survives obstacles, start/goal fixing and BFS reachability (exact, cheap);
+      <b>final</b> = what survives numeric/diagonal fixing, which only sees the logical variables (heuristic).
+      Each ratio is relative to the stage before it, so total = 1 − (1 − logical)(1 − numeric) — they do not add.
+      Counts are summed over all windows (compute cost).
+      <b>Var limit</b> caps the logical variables per window;
+      <b>window</b> is the timesteps per window — mean over each solve's windows (then over runs) / longest seen.
+      Windows are re-sized one at a time over the robots still active: more robots sharing the var limit, or a per-robot
+      cap, shorten them; a robot reaching its goal drops out, so the remaining robots get longer windows; and the last one
+      only covers the leftover horizon — so e.g. 4.3 / 5 means mostly 5-step windows with a short tail,
+      while mean = max means the var limit never bound. Consecutive windows share one timestep, so a 5-step window
+      advances the solve by 4;
+      <b>max solver vars</b> is the largest problem the solver actually received in one window — the qubit budget.
+      Smaller windows usually lower the totals as well: BFS prunes hardest in a window's first steps, while a long
+      window spends most of its steps with the grid already flooded. It is not guaranteed — each window restarts BFS,
+      so some window sizes can total more than one large window.
+      “—” = not applicable (one-shot ILP/CBS have no windows) or not recorded (sweep predates these stats).
+    </div>
+    <div style="overflow-x:auto; margin-top:12px;" id="benchReduction"></div>
+
     <div class="bench-section-title" style="margin-top:22px;">Per-map breakdown</div>
     <div class="info-line" style="margin-top:4px;">
       One row per (map, problem, solver). <span class="cause-pre">pre_processing</span> = BFS/diagonal
@@ -1191,7 +1215,7 @@
     ["success_rate", "Success rate by instance"],
     ["path_efficiency", "Per-robot path efficiency"],
     ["energy_excess", "Energy excess over each config's best (raw units, not cross-comparable)"],
-    ["variable_reduction", "Variable reduction from BFS preprocessing"],
+    ["variable_reduction", "Variable reduction by stage (solid: logical · hatched: + numeric)"],
   ];
 
   const bench = {
@@ -1344,6 +1368,7 @@
     renderPerf(data.solvers || []);
     renderSolverTable(data.solvers || []);
     renderByInstance(sweepId, params);
+    renderReduction(sweepId, params);
     renderPlots(sweepId, params);
   }
 
@@ -1466,6 +1491,60 @@
              <thead><tr>
                <th>Map</th><th>Problem</th><th>Solver</th><th>Success</th>
                <th>Valid/Runs</th><th>Mean t</th><th style="text-align:left;">Failure cause</th>
+             </tr></thead><tbody>${rows}</tbody>
+           </table>`;
+      })
+      .catch((err) => {
+        box.innerHTML = `<div class="bench-empty">${esc(String(err.message || err))}</div>`;
+      });
+  }
+
+  // ---- Variable reduction per stage (see the info-line above the table) ----
+
+  function renderReduction(sweepId, params) {
+    const box = el("benchReduction");
+    box.innerHTML = '<div class="bench-empty">loading…</div>';
+    fetch(
+      `/v1/analysis/sweeps/${encodeURIComponent(sweepId)}/reduction` +
+        (params && params.toString() ? `?${params.toString()}` : "")
+    )
+      .then(async (r) => {
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.detail || r.statusText);
+        return j;
+      })
+      .then((j) => {
+        const num = (v) => (v == null ? "—" : Math.round(v).toLocaleString());
+        const pct = (v) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
+        const win = (r) =>
+          r.max_window_size == null ? "—" : `${r.mean_window_size.toFixed(1)} / ${num(r.max_window_size)}`;
+        const rows = j.rows
+          .map(
+            (r) => `
+          <tr>
+            <td>${esc(r.map)}</td>
+            <td>${esc(r.problem_name)}</td>
+            <td>${esc(r.solver)}</td>
+            <td>${esc(r.preprocess)}</td>
+            <td>${num(r.var_limit)}</td>
+            <td>${win(r)}</td>
+            <td><b>${num(r.max_solver_variables)}</b></td>
+            <td>${num(r.mean_dense_variables)}</td>
+            <td>${num(r.mean_logical_variables)}</td>
+            <td>${num(r.mean_final_variables)}</td>
+            <td>${pct(r.logical_reduction_ratio)}</td>
+            <td>${pct(r.numeric_reduction_ratio)}</td>
+            <td><b>${pct(r.total_reduction_ratio)}</b></td>
+          </tr>`
+          )
+          .join("");
+        box.innerHTML =
+          `<table class="bench-table">
+             <thead><tr>
+               <th>Map</th><th>Problem</th><th>Solver</th><th>Mode</th>
+               <th>Var limit</th><th>Window (mean / max)</th><th>Max solver vars</th>
+               <th>Dense</th><th>Logical</th><th>Final</th>
+               <th>ρ logical</th><th>ρ numeric</th><th>ρ total</th>
              </tr></thead><tbody>${rows}</tbody>
            </table>`;
       })

@@ -36,6 +36,9 @@ def _runs_long(preprocess_values):
                     "total_initial_variables": 100,
                     "total_final_variables": 50,
                     "num_windows": 2,
+                    "logical_reduction_ratio": 0.9,
+                    "numeric_reduction_ratio": 0.5,
+                    "total_reduction_ratio": 0.95,
                 }
             )
     return pd.DataFrame(rows)
@@ -68,6 +71,33 @@ def test_raw_runs_are_excluded_from_variable_reduction():
     charting its rows would drag the mean toward zero for the wrong reason."""
     only_raw = _runs_long([pm.RAW])
     fig = plots.plot_variable_reduction(only_raw)
+    assert all(len(trace.x) == 0 for trace in fig.data)
+
+
+def test_variable_reduction_stacks_numeric_on_logical():
+    """The numeric stage only sees what survived BFS, so its segment must
+    sit on top of the logical one and end at the total -- not be drawn as
+    its own (relative) ratio."""
+    fig = plots.plot_variable_reduction(_runs_long([pm.FULL]))
+    by_name = {trace.name: trace for trace in fig.data}
+    logical = by_name["sa_neal · logical"]
+    numeric = by_name["sa_neal · + numeric"]
+    assert list(logical.y) == pytest.approx([0.9])
+    assert list(numeric.base) == pytest.approx([0.9])
+    assert list(numeric.y) == pytest.approx([0.05])
+
+
+def test_variable_reduction_tolerates_pre_split_sweeps():
+    """Sweeps recorded before the stage split have none of its columns
+    (precomputed CSVs) -- the plot must render empty, not KeyError."""
+    legacy = _runs_long([pm.FULL]).drop(
+        columns=[
+            "logical_reduction_ratio",
+            "numeric_reduction_ratio",
+            "total_reduction_ratio",
+        ]
+    )
+    fig = plots.plot_variable_reduction(legacy)
     assert all(len(trace.x) == 0 for trace in fig.data)
 
 

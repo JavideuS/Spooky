@@ -288,7 +288,62 @@ class BenchmarkRunner:
                     "total_final_variables": total_final,
                     "average_reduction_ratio": round(avg_reduction, 4),
                     "num_windows": len(window_stats),
+                    # Largest QUBO/ILP actually handed to the solver in one
+                    # window -- the per-solve hardware budget (qubits), as
+                    # opposed to var_limit, which caps the *logical* count
+                    # before numeric fixing. Totals are compute. Windowing
+                    # usually lowers the totals too: BFS prunes hardest in a
+                    # window's first steps, and a long window spends most of
+                    # its steps with the grid already flooded. Not
+                    # guaranteed -- each window restarts BFS, so some window
+                    # sizes can total more than one big chunk.
+                    "max_solver_variables": max(
+                        ws["final_variables"] for ws in window_stats
+                    ),
                 }
+                # Windowed solvers only; ILP/CBS solve in one shot. Sizes
+                # vary within a solve: max_window_size() re-sizes each window
+                # over the robots still active, so it shrinks when more robots
+                # share var_limit or a robot_window_limits cap applies, grows
+                # once a robot reaches its goal and drops out (the rest split
+                # var_limit among fewer), and the last window only
+                # covers the leftover horizon. mean < max means some windows
+                # were cut short; mean == max means var_limit never bound.
+                sizes = [
+                    ws["window_size"] for ws in window_stats if "window_size" in ws
+                ]
+                if sizes:
+                    result["variable_stats"].update(
+                        {
+                            "var_limit": window_stats[0]["var_limit"],
+                            "max_window_size": max(sizes),
+                            "mean_window_size": round(sum(sizes) / len(sizes), 2),
+                        }
+                    )
+
+                # Stage split: dense -> logical (BFS/start/goal/obstacles)
+                # -> final (numeric/diagonal fixing). Pre-split JSONs and
+                # solvers that don't report dense_variables skip this.
+                if all("dense_variables" in ws for ws in window_stats):
+                    total_dense = sum(ws["dense_variables"] for ws in window_stats)
+                    total_logical = sum(ws["logical_variables"] for ws in window_stats)
+
+                    def _ratio(kept, of):
+                        return round(1 - kept / of, 4) if of > 0 else 0
+
+                    result["variable_stats"].update(
+                        {
+                            "total_dense_variables": total_dense,
+                            "total_logical_variables": total_logical,
+                            "logical_reduction_ratio": _ratio(
+                                total_logical, total_dense
+                            ),
+                            "numeric_reduction_ratio": _ratio(
+                                total_final, total_logical
+                            ),
+                            "total_reduction_ratio": _ratio(total_final, total_dense),
+                        }
+                    )
 
                 # Level 2+: Add detailed per-window breakdown
                 if self.level >= 2:

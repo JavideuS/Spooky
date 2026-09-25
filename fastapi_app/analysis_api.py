@@ -35,6 +35,7 @@ import registry
 from quantum.benchmark.analysis import plots as sweep_plots
 from quantum.benchmark.analysis.aggregate import (
     _valid_mask,
+    with_reduction_columns,
     aggregate_sweep,
     run_statistical_tests,
 )
@@ -615,4 +616,64 @@ def by_instance(
             }
         )
     rows.sort(key=lambda r: (r["map"], r["problem_name"], -r["success_rate"]))
+    return {"sweep_id": sweep_id, "row_count": len(rows), "rows": rows}
+
+
+@router.get("/sweeps/{sweep_id}/reduction")
+def reduction(
+    sweep_id: str,
+    grid_size: Optional[str] = None,
+    problem: Optional[str] = None,
+    num_robots: Optional[int] = None,
+    solver: Optional[str] = None,
+):
+    """One row per (map, problem, solver, preprocess): the variable counts
+    through each reduction stage, averaged over runs.
+
+    dense (full flat encoding) -> logical (obstacles, start/goal fixing, BFS
+    reachability) -> final (numeric/diagonal fixing on what BFS left). Ratios
+    are each relative to the previous stage, so
+    total = 1 - (1 - logical)(1 - numeric). max_solver_variables is the
+    largest problem handed to the solver in any one window (the qubit
+    budget); var_limit caps the logical count per window, before numeric
+    fixing. Windowed fields are null for one-shot solvers (ILP/CBS), and all
+    stage fields are null on sweeps recorded before the split."""
+    df = _filter_runs(
+        _tables(sweep_id)["runs_long"],
+        solver=solver,
+        grid_size=grid_size,
+        problem=problem,
+        num_robots=num_robots,
+    )
+    if df.empty:
+        raise HTTPException(404, "No runs match that instance class.")
+
+    df = with_reduction_columns(df)
+    df = df.assign(_preprocess=df["preprocess"].astype(str))
+    rows = []
+    for (instance_map, prob, solver_name, mode), group in df.groupby(
+        ["instance_map", "problem_name", "solver_name", "_preprocess"], sort=False
+    ):
+        mean = lambda col: _fnone(group[col].mean())  # noqa: E731
+        rows.append(
+            {
+                "instance_map": instance_map,
+                "map": str(instance_map).split("/")[-1],
+                "problem_name": prob,
+                "solver": solver_name,
+                "preprocess": mode,
+                "n_runs": int(len(group)),
+                "var_limit": _fnone(group["var_limit"].max()),
+                "mean_window_size": mean("mean_window_size"),
+                "max_window_size": _fnone(group["max_window_size"].max()),
+                "max_solver_variables": _fnone(group["max_solver_variables"].max()),
+                "mean_dense_variables": mean("total_dense_variables"),
+                "mean_logical_variables": mean("total_logical_variables"),
+                "mean_final_variables": mean("total_final_variables"),
+                "logical_reduction_ratio": mean("logical_reduction_ratio"),
+                "numeric_reduction_ratio": mean("numeric_reduction_ratio"),
+                "total_reduction_ratio": mean("total_reduction_ratio"),
+            }
+        )
+    rows.sort(key=lambda r: (r["map"], r["problem_name"], r["solver"], r["preprocess"]))
     return {"sweep_id": sweep_id, "row_count": len(rows), "rows": rows}
