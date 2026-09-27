@@ -386,10 +386,11 @@ class PennylaneSolver(BaseSolver):
         this solve loop doesn't own hardware-accounting concerns directly.
 
         Returns:
-            tuple: (counts, last_timing) — counts is a Qiskit/Qrisp-style
-            bitstring -> shot count dict; last_timing is
+            tuple: (counts, last_timing, job_id, machine) — counts is a
+            Qiskit/Qrisp-style bitstring -> shot count dict; last_timing is
             IQMHardwareBackend.last_timing after the run (a dict of real
-            measured timeline segments, or None if recording failed).
+            measured timeline segments, or None if recording failed);
+            job_id and machine identify the job for the Resonance dashboard.
         """
         from quantum.hardware.iqm_backend import IQMHardwareBackend
 
@@ -399,7 +400,7 @@ class PennylaneSolver(BaseSolver):
         backend = self._get_backend(num_qubits)
         hardware = IQMHardwareBackend(backend)
         counts = hardware.run(qrisp_circuit, shots)
-        return counts, hardware.last_timing
+        return counts, hardware.last_timing, hardware.last_job_id, backend.name
 
     def create_ansatz(self, wires, qaoa_layer):
         """
@@ -834,7 +835,7 @@ class PennylaneSolver(BaseSolver):
                 self.logger.standard("   Waiting for quantum job to complete...")
                 self.logger.standard("=" * 60)
                 sample_start = time.time()
-                counts, iqm_timing = self._run_iqm_sampler(
+                counts, iqm_timing, job_id, machine = self._run_iqm_sampler(
                     ansatz_circuit, self.params, num_qubits, shots
                 )
                 sample_time = time.time() - sample_start
@@ -845,6 +846,9 @@ class PennylaneSolver(BaseSolver):
                 qpu_time_estimates.append(
                     {
                         "device": "qiskit.iqm",
+                        "backend": machine,
+                        "job_id": str(job_id) if job_id is not None else None,
+                        "shots": shots,
                         "wall_clock_sec": sample_time,
                         "iqm_timing": iqm_timing,
                     }
@@ -910,6 +914,9 @@ class PennylaneSolver(BaseSolver):
 
                     qpu_estimate_entry = {
                         "device": "qiskit.remote",
+                        "backend": backend.name,
+                        "job_id": dev.last_job_id,
+                        "shots": shots,
                         "wall_clock_sec": sample_time,
                         "gate_model": dev.last_gate_estimate,
                         "clops_model": dev.last_clops_estimate,
