@@ -14,8 +14,30 @@ rather than a model — and native gate sequence (via job._iqm_job.payload())
 for calibration.
 """
 
+import math
+
 from quantum.hardware.qpu_calibration import iqm_two_qubit_depth, record_execution
 from quantum.utils.logger import get_logger
+
+# Resonance credits per started second of QPU execution (execution_started ->
+# execution_ended, rounded up, 1 s minimum). Observed on the Resonance
+# dashboard 2026-09-27 -- 31 Garnet and 2 Emerald jobs matched exactly --
+# not an IQM-documented rule, and no IQM API reports credits, so it is an
+# estimate to check against the dashboard. Update when IQM changes pricing.
+IQM_CREDITS_PER_QPU_SECOND = {"garnet": 0.5, "emerald": 0.75}
+
+
+def estimate_iqm_credits(machine, execution_time_sec):
+    """Estimated Resonance charge for one job, or None for an unknown machine
+    or a job without an execution time. `machine` may be Qrisp's backend name
+    ("IQM-garnet") or the bare machine name."""
+    if execution_time_sec is None:
+        return None
+    name = str(machine).lower().removeprefix("iqm-")
+    rate = IQM_CREDITS_PER_QPU_SECOND.get(name)
+    if rate is None:
+        return None
+    return rate * max(1, math.ceil(execution_time_sec))
 
 
 class IQMHardwareBackend:
@@ -32,6 +54,8 @@ class IQMHardwareBackend:
         # "validation_time_sec", "job_total_sec"} (keys present only when that
         # timeline entry existed), or None if recording failed/was skipped.
         self.last_timing = None
+        # estimate_iqm_credits() for the last job, None if it couldn't be made
+        self.last_estimated_credits = None
 
     def run(self, circuit, shots):
         """
@@ -47,7 +71,18 @@ class IQMHardwareBackend:
         counts = job.result().get_counts()
 
         self.last_timing = None
+        self.last_estimated_credits = None
         self._record_execution(job, shots)
+        if self.last_timing:
+            self.last_estimated_credits = estimate_iqm_credits(
+                self.backend.name, self.last_timing.get("execution_time_sec")
+            )
+        if self.last_estimated_credits is not None:
+            self.logger.minimal(
+                f"💵 Estimated IQM charge: ~{self.last_estimated_credits:g} credits "
+                f"({self.last_timing['execution_time_sec']:.2f}s QPU on "
+                f"{self.backend.name}; observed billing rule, not an IQM API)"
+            )
         return counts
 
     def _record_execution(self, job, shots):
@@ -99,6 +134,19 @@ class IQMHardwareBackend:
                 raw_job, "validation_started", "validation_ended"
             )
             job_total_sec = self._timeline_segment(raw_job, "received", "ready")
+            extra_timing = {
+                k: v
+                for k, v in {
+                    "compile_time_sec": compile_time_sec,
+                    "validation_time_sec": validation_time_sec,
+                    "job_total_sec": job_total_sec,
+                }.items()
+                if v is not None
+            }
+            # Stored before the gate-depth work below: the timing (and the
+            # credit estimate built from it) must survive a payload change
+            # that breaks the depth calculation.
+            self.last_timing = {"execution_time_sec": execution_time_sec, **extra_timing}
 
             circuits, _params = raw_job.payload()
             # payload() returns model_dump()'d circuits (dicts) in current
@@ -110,17 +158,6 @@ class IQMHardwareBackend:
                 else circuit.instructions
             )
             two_qubit_depth = iqm_two_qubit_depth(instructions)
-
-            extra_timing = {
-                k: v
-                for k, v in {
-                    "compile_time_sec": compile_time_sec,
-                    "validation_time_sec": validation_time_sec,
-                    "job_total_sec": job_total_sec,
-                }.items()
-                if v is not None
-            }
-            self.last_timing = {"execution_time_sec": execution_time_sec, **extra_timing}
 
             rate = record_execution(
                 self.backend.name,

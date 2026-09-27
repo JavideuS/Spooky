@@ -142,6 +142,8 @@ class BenchmarkRunner:
         runs_with_clops_estimate = 0
         total_billed_usage_sec = 0.0
         runs_with_billed_usage = 0
+        total_estimated_iqm_credits = 0.0
+        runs_with_iqm_credits = 0
         total_queue_time_sec = 0.0
         runs_with_queue_time = 0
         total_overhead_sec = 0.0
@@ -257,6 +259,16 @@ class BenchmarkRunner:
             ]
             if billed_usage_values:
                 result["billed_usage_sec"] = sum(billed_usage_values)
+
+            # IQM reports no credits; this is the observed billing rule
+            # (quantum.hardware.iqm_backend.estimate_iqm_credits) per job.
+            iqm_credit_values = [
+                e["estimated_credits"]
+                for e in qpu_time_estimates
+                if e and e.get("estimated_credits") is not None
+            ]
+            if iqm_credit_values:
+                result["estimated_iqm_credits"] = round(sum(iqm_credit_values), 4)
 
             # Build/execution/queue/overhead split — see
             # _compute_hardware_time_split's docstring for why
@@ -401,6 +413,9 @@ class BenchmarkRunner:
             if "billed_usage_sec" in result:
                 total_billed_usage_sec += result["billed_usage_sec"]
                 runs_with_billed_usage += 1
+            if "estimated_iqm_credits" in result:
+                total_estimated_iqm_credits += result["estimated_iqm_credits"]
+                runs_with_iqm_credits += 1
             if "queue_time_sec" in result:
                 total_queue_time_sec += result["queue_time_sec"]
                 total_overhead_sec += result["overhead_sec"]
@@ -494,6 +509,15 @@ class BenchmarkRunner:
             self.logger.minimal(
                 f"Total billed QPU usage this benchmark: {total_billed_usage_sec:.2f}s "
                 f"(across {runs_with_billed_usage}/{self.num_runs} run(s) with usage data)"
+            )
+        if runs_with_iqm_credits:
+            self.results["summary"]["total_estimated_iqm_credits"] = round(
+                total_estimated_iqm_credits, 4
+            )
+            self.logger.minimal(
+                f"Estimated IQM credits this benchmark: {total_estimated_iqm_credits:g} "
+                f"(across {runs_with_iqm_credits}/{self.num_runs} run(s); observed "
+                "billing rule, check against the Resonance dashboard)"
             )
         if runs_with_queue_time:
             self.results["summary"]["total_queue_time_sec"] = round(
