@@ -1,5 +1,12 @@
+from collections import deque
+
 import numpy as np
 from .base_qubo import BaseQUBO
+
+GOAL_DISTANCES = ("manhattan", "bfs")
+# Fraction of the competing collision penalty a robot's whole-window progress
+# reward may reach (see GridQUBOBuilder.progress_weight_cap)
+PROGRESS_CAP_MARGIN = 0.5
 
 
 def compute_obstacle_potential_field(M, N, obstacles, sigma=1.5):
@@ -28,7 +35,68 @@ class GridQUBOBuilder(BaseQUBO):
         robot_window_limits=None,
         verbose_level=2,
         log_reductions=True,
+        goal_distance="manhattan",
+        obstacle_repulsion=0.4,
+        progress_weight=0.0,
+        allow_wait=False,
+        approach_weight=0.0,
+        approach_radius=None,
     ):
+        """
+        goal_distance: distance the goal-approach reward is built on.
+            "manhattan" (default, the original term) ignores obstacles;
+            "bfs" is each robot's true shortest-path distance to its goal
+            over the static map and its own clearance keep-out (see
+            goal_distance_map). Identical on obstacle-free maps.
+        obstacle_repulsion: weight of the P_obs potential-field push away
+            from obstacles in the same term. It exists to patch Manhattan's
+            blindness to walls; with "bfs" it may be redundant (0 disables).
+        progress_weight: alpha of a reward linear in progress made this
+            window, alpha * (d0 - d(cell)), with d0 the robot's distance at
+            the window start. Unlike the distance_scaling curve, which is
+            nearly flat far from the goal, it is worth the same per step at
+            any distance, and it is bounded by the window length. 0 disables.
+            Always capped so the reward a robot can collect over a window
+            stays below the collision penalty it competes with (see
+            progress_weight_cap); "auto" uses the cap itself.
+        allow_wait: let a robot stay in place when it may need to yield, i.e.
+            another active robot is within approach_radius at the window
+            start (see _may_wait). Staying is then rewarded like a move in the
+            adjacency term, and backtracking pairs inside the window are
+            dropped -- a pairwise term can't tell "stayed" from "left and came
+            back", and the progress term already gives a bounce no net gain.
+            Revisits of cells from earlier windows keep K_bt. Off, a wait
+            costs roughly K_adj + K_bt per step, far more than a swap's
+            2 * K_trail, so windowed multi-robot plans swap instead of yield.
+            A robot with nobody near keeps the strict terms: allowing it to
+            wait only flattens its landscape.
+        approach_weight: soft penalty on two robots ending the window heading
+            into each other (see apply_approach_penalty) -- lets a short
+            window coordinate route choices it can't see the end of. 0
+            disables. approach_radius: path distance beyond which it is 0;
+            None (default) = min(M, N) // 2, so on a small map it doesn't
+            reach every robot pair and penalise passes in open space.
+        """
+        if goal_distance not in GOAL_DISTANCES:
+            raise ValueError(
+                f"goal_distance must be one of {GOAL_DISTANCES}, got {goal_distance!r}"
+            )
+        self.goal_distance = goal_distance
+        self.obstacle_repulsion = obstacle_repulsion
+        if progress_weight != "auto" and float(progress_weight) < 0:
+            raise ValueError(
+                f"progress_weight must be >= 0 or 'auto', got {progress_weight!r}"
+            )
+        self.progress_weight = progress_weight
+        self.allow_wait = allow_wait
+        self.approach_weight = approach_weight
+        self.approach_radius = (
+            approach_radius
+            if approach_radius is not None
+            else max(1, min(problem.grid.M, problem.grid.N) // 2)
+        )
+        self._cell_distances = {}
+        self._goal_distance_maps = {}
         super().__init__(
             problem,
             penalties,
@@ -174,7 +242,10 @@ class GridQUBOBuilder(BaseQUBO):
                     n = i * N + j + M * N * t + robot_offset
                     self.Q[(n, n)] = self.Q.get((n, n), 0) + K_adj
 
-                    for k, l in adjacency[(i, j)]:
+                    targets = adjacency[(i, j)]
+                    if self._may_wait(robot_id):
+                        targets = [*targets, (i, j)]
+                    for k, l in targets:
                         if self._active_cells is not None and (k, l) not in next_active:
                             continue
                         m = k * N + l + M * N * (t + 1) + robot_offset
@@ -241,6 +312,158 @@ class GridQUBOBuilder(BaseQUBO):
                 self.Q.get((start_idx, start_idx), 0) - K_start
             )
 
+    def _goal_time_factor(self, t, start):
+        """Weight of window step t in the goal-approach term: grows to ~2.5x
+        at the window's last step, so the end state counts most."""
+        return 1.2 ** (5 * (t - start) / (self.t_max - start))
+
+    def progress_weight_cap(self, start=0):
+        """Largest progress weight for which yielding can never cost more
+        than PROGRESS_CAP_MARGIN times the collision penalty it avoids (K_trail
+        if set, else K_crash). The rule: a soft incentive summed over the
+        window must never outweigh the penalty for the violation it could buy
+        -- otherwise the QUBO prefers colliding to yielding.
+
+        Yielding one step (waiting instead of colliding) leaves the robot one
+        cell behind at every later window step, so it forfeits
+        alpha * sum_t time_factor(t) -- not the whole window's progress,
+        which grows with the square of the window length and would shrink
+        alpha towards 0 on long windows (0.04 at t_max=7, where a lone robot
+        on a forced detour just bounced in place)."""
+        limit = self.penalties.get("K_trail") or self.penalties.get("K_crash") or 0
+        steps = sum(
+            self._goal_time_factor(t, start) for t in range(start + 1, self.t_max)
+        )
+        if not limit or not steps:
+            return 0.0
+        return PROGRESS_CAP_MARGIN * limit / steps
+
+    def effective_progress_weight(self, start=0):
+        """progress_weight clipped to progress_weight_cap ("auto" = the cap)."""
+        if not self.progress_weight:
+            return 0.0
+        cap = self.progress_weight_cap(start)
+        if self.progress_weight == "auto":
+            return cap
+        return min(float(self.progress_weight), cap)
+
+    def _goal_dist(self, robot_id, cell):
+        """Distance from `cell` to the robot's goal under goal_distance
+        (inf for a cell BFS can't route from)."""
+        cell = tuple(cell)
+        if self.goal_distance == "bfs":
+            return self.goal_distance_map(robot_id).get(cell, float("inf"))
+        return self.problem.manhattan_distance(cell, self.problem.robots[robot_id].goal)
+
+    def _may_wait(self, robot_id):
+        """allow_wait, but only for a robot with another active robot within
+        approach_radius of it at the window start: waiting exists for
+        yielding, and a robot with nobody to yield to only gets a flatter
+        landscape from it (a lone robot on a forced detour bounced in place)."""
+        if not self.allow_wait:
+            return False
+        near = self.cell_distance_map(self.problem.robots[robot_id].current_position)
+        return any(
+            tuple(self.problem.robots[other].current_position) in near
+            for other in self.get_active_robot_in_window()
+            if other != robot_id
+        )
+
+    def cell_distance_map(self, cell):
+        """{cell: steps} BFS distances from `cell` over grid.adjacency
+        (obstacles only). Cached per source cell."""
+        cell = tuple(cell)
+        if cell not in self._cell_distances:
+            adjacency = self.problem.grid.adjacency
+            dist = {cell: 0}
+            frontier = deque([cell])
+            while frontier:
+                cur = frontier.popleft()
+                if dist[cur] >= self.approach_radius:
+                    continue
+                for nxt in adjacency.get(cur, ()):
+                    if nxt not in dist:
+                        dist[nxt] = dist[cur] + 1
+                        frontier.append(nxt)
+            self._cell_distances[cell] = dist
+        return self._cell_distances[cell]
+
+    def apply_approach_penalty(self):
+        """
+        Soft penalty on robot pairs that end the window heading into each
+        other: at the window's last step, robot a at c_a and robot b at c_b
+        where each lies on a shortest path of the other to its goal,
+
+            d_a(c_a) == dist(c_a, c_b) + d_a(c_b)
+            d_b(c_b) == dist(c_a, c_b) + d_b(c_a)
+
+        with d_x the robot's BFS distance-to-goal map. Two such robots must
+        pass each other to keep their shortest routes -- a head-on in a
+        corridor. A window only sees a few steps, so without this term each
+        robot picks between equally short routes independently; on a ring of
+        four robots swapping corners only 2 of the 16 choices avoid a
+        head-on. Weight fades linearly with dist and is 0 beyond
+        approach_radius. Quadratic: it prices positions, not moves (a
+        move-direction pair would need four variables).
+        """
+        M, N = self.problem.grid.M, self.problem.grid.N
+        robot_nums = self.problem.get_robot_nums()
+        t_end = self.t_max - 1
+        active = self.get_active_robots_per_timestep_in_window().get(
+            self.current_T + t_end, []
+        )
+        radius = self.approach_radius
+        for a_idx, a in enumerate(active):
+            d_a = self.goal_distance_map(a)
+            off_a = robot_nums[a] * (M * N * self.total_t)
+            for b in active[a_idx + 1 :]:
+                d_b = self.goal_distance_map(b)
+                off_b = robot_nums[b] * (M * N * self.total_t)
+                cells_b = list(self._cells(b, t_end))
+                for c_a in self._cells(a, t_end):
+                    near = self.cell_distance_map(c_a)
+                    for c_b in cells_b:
+                        dab = near.get(c_b)
+                        if not dab or c_a not in d_a or c_b not in d_b:
+                            continue  # same cell (crash term) or out of range
+                        if d_a[c_a] != dab + d_a.get(c_b, -1):
+                            continue
+                        if d_b[c_b] != dab + d_b.get(c_a, -1):
+                            continue
+                        w = self.approach_weight * (1 - dab / (radius + 1))
+                        idx_a = c_a[0] * N + c_a[1] + M * N * t_end + off_a
+                        idx_b = c_b[0] * N + c_b[1] + M * N * t_end + off_b
+                        key = (min(idx_a, idx_b), max(idx_a, idx_b))
+                        self.Q[key] = self.Q.get(key, 0.0) + w
+
+    def goal_distance_map(self, robot_id):
+        """{(i, j): steps} shortest-path distance from every cell to this
+        robot's goal, by BFS backwards from the goal over grid.adjacency
+        (obstacle-aware), skipping the robot's clearance keep-out cells.
+        Cells that can't reach the goal are absent, so they get no reward.
+
+        Unlike Manhattan distance it has no local minima: every reachable
+        non-goal cell has a neighbour one step closer. That makes it the exact
+        cost-to-go for a robot on its own, so a short window scored with it
+        can't be lured into a dead end or the wrong side of a wall. It knows
+        nothing about other robots -- the QUBO still decides all of that.
+        Computed once per robot and cached: map and goal don't change.
+        """
+        if robot_id not in self._goal_distance_maps:
+            goal = tuple(self.problem.robots[robot_id].goal)
+            keepout = self.problem.get_obstacle_keepout().get(robot_id, frozenset())
+            adjacency = self.problem.grid.adjacency
+            dist = {goal: 0}
+            frontier = deque([goal])
+            while frontier:
+                cell = frontier.popleft()
+                for nxt in adjacency.get(cell, ()):
+                    if nxt not in dist and nxt not in keepout:
+                        dist[nxt] = dist[cell] + 1
+                        frontier.append(nxt)
+            self._goal_distance_maps[robot_id] = dist
+        return self._goal_distance_maps[robot_id]
+
     def apply_goal_approximation_penalty(self, robot_id):
         """
         Apply goal approximation penalty: encourage getting near the goal.
@@ -250,21 +473,23 @@ class GridQUBOBuilder(BaseQUBO):
         """
         M, N = self.problem.grid.M, self.problem.grid.N
         K_goal_approx = self.penalties["K_goal_approx"]
-        K_obs_repel = 0.4
+        K_obs_repel = self.obstacle_repulsion
         robot_nums = self.problem.get_robot_nums()
 
         robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
 
         robot = self.problem.robots[robot_id]
-        e_i, e_j = robot.goal
 
         start_time = robot.start_time
         start = 0
         if self.current_T < start_time:
             start = start_time - self.current_T
 
+        d0 = self._goal_dist(robot_id, robot.current_position)
+        alpha = self.effective_progress_weight(start)
+
         for t in range(start + 1, self.t_max):
-            time_factor = (1.2) ** (5 * (t - start) / (self.t_max - start))
+            time_factor = self._goal_time_factor(t, start)
             for i, j in self._cells(robot_id, t):
                 n = i * N + j + M * N * t + robot_offset
 
@@ -273,12 +498,13 @@ class GridQUBOBuilder(BaseQUBO):
                 if (i, j) in self.problem.grid.obstacles:
                     continue
 
-                # Goal progress (Manhattan, time-weighted)
-                # Use the configurable Manhattan distance scaling method
-                raw_dist = self.problem.manhattan_distance((i, j), (e_i, e_j))
+                # Goal progress (time-weighted), shaped by distance_scaling
+                raw_dist = self._goal_dist(robot_id, (i, j))
                 K_dis = self.calculate_manhattan_penalty(
                     raw_dist, K_goal_approx, time_factor
                 )
+                if alpha and max(d0, raw_dist) != float("inf"):
+                    K_dis += alpha * time_factor * (d0 - raw_dist)
 
                 # Soft obstacle avoidance using potential field
                 # (for nearby obstacles)
@@ -429,6 +655,8 @@ class GridQUBOBuilder(BaseQUBO):
                 # iterating range(start, end) blindly would create phantom Q entries for
                 # timesteps where the cell is not active, leaking variables into the QUBO.
                 active_ts = [t for t in range(start, end) if (i, j) in active_sets[t]]
+                if self._may_wait(robot_id):
+                    active_ts = []  # see allow_wait in __init__
                 for idx1, t1 in enumerate(active_ts):
                     g_t = i * N + j + M * N * t1 + robot_offset
                     for t2 in active_ts[idx1 + 1 :]:
@@ -822,6 +1050,8 @@ class GridQUBOBuilder(BaseQUBO):
             self.apply_crash_penalty()
         if "trailing" in constraints_to_apply:
             self.apply_trailing_penalty()
+        if self.approach_weight:
+            self.apply_approach_penalty()
 
         return self.Q
 

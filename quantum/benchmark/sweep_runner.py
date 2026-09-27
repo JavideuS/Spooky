@@ -338,6 +338,18 @@ class SweepRunner:
         if "var_limit" in solver_cfg:
             builder_kwargs["var_limit"] = solver_cfg["var_limit"]
         if builder_kind == "grid":
+            # Grid-only goal-term options; absent keys keep QUBOBuilder's defaults
+            for key in (
+                "distance_scaling",
+                "goal_distance",
+                "obstacle_repulsion",
+                "progress_weight",
+                "allow_wait",
+                "approach_weight",
+                "approach_radius",
+            ):
+                if key in solver_cfg:
+                    builder_kwargs[key] = solver_cfg[key]
             p = problem.as_grid_only()
             return p, QUBOBuilder(p, **builder_kwargs)
         p = problem.as_graph_only()

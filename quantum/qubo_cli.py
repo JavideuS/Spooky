@@ -148,6 +148,62 @@ def build_parser() -> argparse.ArgumentParser:
         help="Distance scaling mode passed to QUBOBuilder (default: enhanced_linear)",
     )
     prob.add_argument(
+        "--goal-distance",
+        default="manhattan",
+        choices=["manhattan", "bfs"],
+        help=(
+            "Distance the goal-approach reward uses: 'manhattan' ignores "
+            "obstacles, 'bfs' is the obstacle-aware shortest path (grid builder "
+            "only; default: manhattan)"
+        ),
+    )
+    prob.add_argument(
+        "--obstacle-repulsion",
+        type=float,
+        default=0.4,
+        metavar="W",
+        help="Weight of the obstacle potential-field repulsion, 0 disables (grid builder only; default: 0.4)",
+    )
+    prob.add_argument(
+        "--progress-weight",
+        type=lambda v: v if v == "auto" else float(v),
+        default=0.0,
+        metavar="ALPHA",
+        help=(
+            "Reward per step of progress toward the goal within a window, "
+            "capped so it can never outweigh the collision penalty; 'auto' "
+            "uses that cap. 0 disables (grid builder only; default: 0)"
+        ),
+    )
+    prob.add_argument(
+        "--approach-weight",
+        type=float,
+        default=0.0,
+        metavar="W",
+        help=(
+            "Soft penalty on robot pairs ending a window heading into each "
+            "other along their shortest routes, so short windows coordinate "
+            "route choices. 0 disables (grid builder only; default: 0)"
+        ),
+    )
+    prob.add_argument(
+        "--approach-radius",
+        type=int,
+        default=None,
+        metavar="CELLS",
+        help="Path distance beyond which --approach-weight is 0 (default: min(M, N) // 2)",
+    )
+    prob.add_argument(
+        "--allow-wait",
+        action="store_true",
+        help=(
+            "Let a robot stay in place when another robot is within the "
+            "approach radius (reward staying like a move, drop in-window "
+            "backtracking pairs). Needed for multi-robot yielding (grid "
+            "builder only)"
+        ),
+    )
+    prob.add_argument(
         "--window-limit",
         default=[],
         nargs="+",
@@ -1081,6 +1137,12 @@ def main():
     elif args.builder == "grid":
         p = problem.as_grid_only()
         builder_kwargs["distance_scaling"] = args.distance_scaling
+        builder_kwargs["goal_distance"] = args.goal_distance
+        builder_kwargs["obstacle_repulsion"] = args.obstacle_repulsion
+        builder_kwargs["progress_weight"] = args.progress_weight
+        builder_kwargs["allow_wait"] = args.allow_wait
+        builder_kwargs["approach_weight"] = args.approach_weight
+        builder_kwargs["approach_radius"] = args.approach_radius
         builder = QUBOBuilder(p, **builder_kwargs)
     else:  # graph
         p = problem.as_graph_only()

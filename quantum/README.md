@@ -46,6 +46,56 @@ python qubo_cli.py --map maps/synthetic/10x10/no_obs10x10 --problem two_robots -
 
 Run `python qubo_cli.py --help` to see all available options.
 
+#### Pre-processing modes (`--preprocess`)
+
+| Mode | Internal name | What it does |
+|---|---|---|
+| `safe` (default) | `bfs_safe` | Monotone BFS pruning only; the solver decides every window. The only pruning that cannot exclude a feasible solution, so QUBO-vs-ILP/CBS comparisons are like-for-like. Costs ~10–19x the variables of aggressive BFS. |
+| `greedy` | `full` | Aggressive BFS plus greedy diagonal pinning. Fast, but the pinning often decides whole windows before the solver runs (it acts as a greedy prioritized planner). Default for `--solver pennylane`, whose statevector cannot hold `safe`-sized windows. |
+| `raw` | `raw` | The old `--no-preprocess` loop: no pruning, no pinning, no correction retries. |
+
+The internal names (`bfs_aggressive`, `bfs_safe`, `full`, `full_safe`) are also
+accepted; results and sweep configs always record the internal name. On a local
+statevector simulator a window too wide for available memory raises
+`SimulatorCapacityError` (lower `--var-limit` or use `greedy`) instead of crashing.
+
+A run that stops because a robot provably cannot reach its goal before its
+deadline (shortest path > steps left) is reported as a windowing stall and
+attributed to `windowing` in benchmark results.
+
+#### Windowed multi-robot options (grid builder)
+
+A window only sees a few steps, so the goal-approach term is what tells it where
+to go, and the penalty balance decides whether robots yield or collide. These
+options are off by default; recommended for multi-robot runs:
+
+```bash
+python qubo_cli.py --map maps/synthetic/10x10/obs10x10_hard --problem four_robots \
+    --goal-distance bfs --progress-weight auto --obstacle-repulsion 0 \
+    --allow-wait --approach-weight 3
+```
+
+| Option | Why |
+|---|---|
+| `--goal-distance bfs` | Per-robot shortest-path distance to the goal instead of Manhattan: sees walls and has no local minima. Identical to Manhattan on obstacle-free maps. |
+| `--progress-weight auto` | Reward linear in progress made this window. The distance-scaling curve alone is nearly flat far from the goal (~0.01 per step at distance 16), too weak to steer anything. |
+| `--obstacle-repulsion 0` | The obstacle potential field only patched Manhattan's blindness to walls; with `bfs` it adds local minima instead. |
+| `--allow-wait` | Lets a robot stay in place when another robot is within the approach radius. Without it waiting costs ~`K_adj + K_bt` per step, far more than a swap's `2·K_trail`, so windows swap instead of yielding. Robots with nobody nearby keep the strict terms. |
+| `--approach-weight 3` | Penalizes robot pairs ending a window heading into each other along their shortest routes. Each window picks between equally short routes independently; for four robots swapping corners on a ring only 2 of 16 such choices avoid a head-on. `--approach-radius` defaults to `min(M, N) // 2`. |
+
+The rule behind `--progress-weight` (and why it is capped even when set by
+hand): **a soft incentive summed over the window must stay below the penalty for
+the violation it competes with.** Yielding one step costs the robot one cell of
+progress at every later window step, so the cap is
+`0.5 · K_trail / Σ_t time_factor(t)` (`K_crash` if there is no `K_trail`);
+`auto` uses the cap itself. Above it the QUBO prefers colliding or swapping to
+yielding; far below it robots lack the drive to finish before their deadline.
+
+On the 17 obstacle problems of `synthetic/5x5` and `synthetic/10x10` (`safe`,
+`trailing` penalty set, 5 seeds each) these options took valid runs from 43/85
+(18 windowing stalls) to 55/85 (none). The weights were tuned on those same
+problems, so treat the numbers as indicative.
+
 `--benchmark` results, and the sweep/analysis tooling under `benchmark/`,
 always write to `<repo>/results/` (`benchmarks/`, `sweeps/`) no matter which
 directory you launch from — set `SPOOKY_RESULTS_DIR` to relocate it.
@@ -81,7 +131,7 @@ Inside `qubo.py`, you can switch between different problem configurations (e.g.,
 |---|---|---|
 | **Logical Reduction** | `get_logical_variables()` | BFS forward from each robot's current position. Variables at unreachable `(robot, t, position)` triplets are never added to the QUBO. Start/goal variables are pinned to 1 in `fixed_ones`. |
 | **Build QUBO** | `builder.build()` | All constraint methods query `_cells()` / `_nodes()` which return only the active sparse set, so the resulting `Q` matrix is minimal by construction. |
-| **Numerical Reduction** | `reduce_diag_fixed_vars_iterative()` | Variables whose diagonal coefficient dominates the sum of all off-diagonal magnitudes are fixed to 0 and removed. The process repeats until no further reductions are possible. |
+| **Numerical Reduction** | `reduce_diag_fixed_vars_iterative()` | `greedy` mode only. Per robot and timestep, the variable with the unique lowest diagonal coefficient is pinned to 1 (and the highest to 0), rival robots' pinned cells and clearance shells are avoided, and pinned values are folded into the remaining coefficients; repeats until nothing changes. A heuristic, not a sound reduction: it can exclude the window's true optimum, and it often pins the whole window. |
 | **Solve** | `solve_qubo()` | The reduced QUBO (typically 50–80 % smaller than the naive formulation) is optionally normalized and submitted to the backend. |
 | **Post-process** | `_handle_iteration_result()` | The raw binary sample is merged with `fixed_vars`, decoded to `(row, col, t)` coordinates, validated for adjacency and collision, and corrected where possible via BFS repair. |
 
