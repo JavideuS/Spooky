@@ -19,13 +19,13 @@ import math
 from quantum.hardware.qpu_calibration import iqm_two_qubit_depth, record_execution
 from quantum.utils.logger import get_logger
 
-# Resonance credits per started second of QPU execution (execution_started ->
-# execution_ended, rounded up, 1 s minimum). It is an estimate to check against
-# the dashboard. Update when IQM changes pricing.
+# Resonance credits per started second of compilation + QPU execution
+# (rounded up, 1 s minimum). It is an estimate to check against the
+# dashboard. Update when IQM changes pricing.
 IQM_CREDITS_PER_QPU_SECOND = {"garnet": 0.5, "emerald": 0.75}
 
 
-def estimate_iqm_credits(machine, execution_time_sec):
+def estimate_iqm_credits(machine, execution_time_sec, compile_time_sec=0.0):
     """Estimated Resonance charge for one job, or None for an unknown machine
     or a job without an execution time. `machine` may be Qrisp's backend name
     ("IQM-garnet") or the bare machine name."""
@@ -35,7 +35,7 @@ def estimate_iqm_credits(machine, execution_time_sec):
     rate = IQM_CREDITS_PER_QPU_SECOND.get(name)
     if rate is None:
         return None
-    return rate * max(1, math.ceil(execution_time_sec))
+    return rate * max(1, math.ceil(execution_time_sec + (compile_time_sec or 0.0)))
 
 
 class IQMHardwareBackend:
@@ -73,12 +73,15 @@ class IQMHardwareBackend:
         self._record_execution(job, shots)
         if self.last_timing:
             self.last_estimated_credits = estimate_iqm_credits(
-                self.backend.name, self.last_timing.get("execution_time_sec")
+                self.backend.name,
+                self.last_timing.get("execution_time_sec"),
+                self.last_timing.get("compile_time_sec"),
             )
         if self.last_estimated_credits is not None:
             self.logger.minimal(
                 f"💵 Estimated IQM charge: ~{self.last_estimated_credits:g} credits "
-                f"({self.last_timing['execution_time_sec']:.2f}s QPU on "
+                f"({self.last_timing['execution_time_sec']:.2f}s QPU + "
+                f"{self.last_timing.get('compile_time_sec') or 0:.2f}s compile on "
                 f"{self.backend.name}; observed billing rule, not an IQM API)"
             )
         return counts

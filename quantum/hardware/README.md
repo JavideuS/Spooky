@@ -94,14 +94,16 @@ Run 1: ✅ Valid | Time: build=0.00s, exec=2.00s, queue=24.41s, overhead=9.00s |
 
 IQM's API reports no credits, so each IQM job's results entry carries
 `estimated_credits` from `iqm_backend.estimate_iqm_credits()`: the machine's
-rate × QPU execution seconds (`execution_started -> execution_ended`), rounded
-up, 1 s minimum. Rates (`IQM_CREDITS_PER_QPU_SECOND`): Garnet 0.5, Emerald
-0.75 credits/s, read off the Resonance dashboard on 2026-09-27. Billing is on
-execution time, not the server's total job time: two Emerald jobs of 0.62 s
-and 0.73 s execution (1.25 s and 1.39 s total) were charged 0.75 each. The
-rule reproduced a 29-job Garnet sweep's 14.5 credits exactly. It is an
-observed rule, not a documented one: check the dashboard, and update the
-rates if IQM changes pricing. Each job logs `💵 Estimated IQM charge`, and a
+rate × (compilation + QPU execution) seconds, rounded up, 1 s minimum. Rates
+(`IQM_CREDITS_PER_QPU_SECOND`): Garnet 0.5, Emerald 0.75 credits/s, read off
+the Resonance dashboard on 2026-09-27. It matched all 49 jobs charged so far
+(two CLI pilots, a 29-job Garnet and a 16-job Emerald sweep), per job on the
+dashboard's billed seconds. Queue, validation and post-processing are not
+billed: jobs of ~1.2 s total server time were charged the 1 s minimum.
+Compilation is: two Emerald jobs of ~0.6 s execution and ~0.5 s compilation
+were billed 2 s, which execution time alone misses. It is an observed rule,
+not a documented one: check the dashboard, and update the rates if IQM
+changes pricing. Each job logs `💵 Estimated IQM charge`, and a
 benchmark totals them as `total_estimated_iqm_credits`.
 
 - **IQM CLOPS per machine**: IQM only publicly documents CLOPS for Garnet. `iqm-benchmarks` (`iqm.benchmarks.quantum_volume.clops.CLOPSBenchmark`) can compute an official CLOPS_V/CLOPS_H for any machine by actually running the benchmark — `quantum/hardware/iqm_clops_calibration.ipynb` is set up to do this. **Attempted 2026-08-22, deferred**: one full-device Garnet run costs ~26 of a 30-credits/month allotment — essentially the entire monthly budget for one run — and Emerald was unavailable at the time regardless. Revisit once credits are specifically budgeted for it; results storage (`results/iqm_clops.json`, matching `qpu_clops.py`'s pattern for IBM) is already built, just unpopulated.

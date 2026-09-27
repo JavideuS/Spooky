@@ -44,17 +44,21 @@ def test_iqm_sampler_returns_job_id_and_machine(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "machine, execution_sec, charged",
+    "machine, execution_sec, compile_sec, charged",
     [
-        # Resonance dashboard charges for the 2026-09-27 pilots
-        ("IQM-garnet", 1.556093, 1.0),
-        ("IQM-garnet", 0.474861, 0.5),
-        ("IQM-emerald", 0.622382, 0.75),
-        ("emerald", 0.734884, 0.75),
+        # Resonance dashboard charges, 2026-09-27
+        ("IQM-garnet", 1.556093, 0.089856, 1.0),
+        ("IQM-garnet", 0.474861, 0.088483, 0.5),
+        ("IQM-emerald", 0.622382, 0.164862, 0.75),
+        ("emerald", 0.734884, 0.168167, 0.75),
+        # sub-second execution, but slow compilation makes it a 2 s job
+        ("IQM-emerald", 0.53, 0.496, 1.5),
     ],
 )
-def test_iqm_credit_estimate_matches_observed_charges(machine, execution_sec, charged):
-    assert iqm_backend.estimate_iqm_credits(machine, execution_sec) == charged
+def test_iqm_credit_estimate_matches_observed_charges(
+    machine, execution_sec, compile_sec, charged
+):
+    assert iqm_backend.estimate_iqm_credits(machine, execution_sec, compile_sec) == charged
 
 
 def test_iqm_credit_estimate_unknown_machine_or_timing():
