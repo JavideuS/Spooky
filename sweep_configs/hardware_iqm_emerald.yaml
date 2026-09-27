@@ -1,0 +1,43 @@
+# hardware_iqm.yaml on IQM Emerald instead of Garnet: same problems and windows.
+#   spooky-sweep --config sweep_configs/hardware_iqm_emerald.yaml --dry-run
+#   spooky-sweep --config sweep_configs/hardware_iqm_emerald.yaml \
+#       --enable-hardware --confirm-hardware-quota "yes-spend-quota"
+#
+# Garnet ran these 29 jobs for 14.5 credits (0.5 credit per started second,
+# every job under 1 s). Emerald's rate is unknown; 3x3 runs first.
+# fail_fast: a declined job (credits out) stops the sweep instead of every
+# later problem queueing and failing too.
+
+sweep:
+  id: null
+  seed: 42
+  enable_hardware: true
+  output_root: results/sweeps
+
+instances:
+  - map: quantum/maps/synthetic/3x3/obs3x3_standard
+    problems: [baseline]
+    builder: grid
+  - map: quantum/maps/synthetic/5x5/no_obs5x5
+    problems: [baseline]
+    builder: grid
+  - map: quantum/maps/synthetic/5x5/obs5x5_easy
+    problems: [baseline]
+    builder: grid
+  - map: quantum/maps/synthetic/5x5/obs5x5_medium
+    problems: [baseline]
+    builder: grid
+
+solvers:
+  - name: qaoa_iqm_emerald
+    backend: pennylane
+    params:
+      { device: qiskit.iqm, machine: emerald, normalize_scale: 4.0, layers: 2, num_reads: auto, use_session: false }
+    penalty_set: trailing
+    var_limit: 20
+    num_runs: 1
+    hardware: true
+
+execution:
+  preprocess_default: bfs_safe
+  fail_fast: true
