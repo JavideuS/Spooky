@@ -45,6 +45,7 @@ class DWaveSolver(BaseSolver):
         best_energy = []
         window_stats = []
         forced_collisions = []
+        deadline_misses = []
         response = None
         correction_count = 0
         import time as timing
@@ -95,6 +96,9 @@ class DWaveSolver(BaseSolver):
                 self.logger.standard(
                     "✅ All robots reached goal or inactive. Stopping solver."
                 )
+                break
+
+            if self._stop_on_deadline_miss(builder, deadline_misses):
                 break
 
             window_start = timing.time()
@@ -157,6 +161,7 @@ class DWaveSolver(BaseSolver):
             "metadata": {
                 "window_stats": window_stats,
                 "forced_collisions": forced_collisions,
+                "deadline_misses": deadline_misses,
                 "num_robots": builder.problem.num_robots,
                 "total_variables": builder.initial_num_vars,
                 "fixed_variables": len(fixed_vars) if "fixed_vars" in dir() else 0,

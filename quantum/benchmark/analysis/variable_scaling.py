@@ -125,8 +125,9 @@ def _build_for_mode(problem, penalties, mode, var_limit=None):
     builder = builder_cls(scoped, penalties, **kwargs)
 
     variant = preprocess_modes.bfs_variant(mode)
+    bfs_fixed = {}
     if variant is not None:
-        _, active_cells = builder.get_logical_variables(variant)
+        bfs_fixed, active_cells = builder.get_logical_variables(variant)
         builder._active_cells = active_cells
         projected = sum(len(cells) for cells in active_cells.values())
     else:
@@ -150,7 +151,7 @@ def _build_for_mode(problem, penalties, mode, var_limit=None):
     before = builder.get_num_wires()
 
     if preprocess_modes.applies_numeric_reduction(mode):
-        builder.reduce_diag_fixed_vars_iterative()
+        builder.reduce_diag_fixed_vars_iterative(prior_fixed=bfs_fixed)
     after = builder.get_num_wires()
 
     return builder, before, after

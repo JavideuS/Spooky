@@ -130,17 +130,9 @@ def test_dwave_solve_respects_clearance():
     for robot b's remaining steps -- so this exercises real solving, not
     just preprocessing, without hitting the gap below.
 
-    NOT covered by this test (found while writing it, not something these
-    changes introduced -- see base_qubo.py's _collides_with_swap_rival
-    docstring): when BFS/diagonal preprocessing manages to fully determine a
-    window on its own ("fully pre-processed, skipping solver"), it can
-    commit two robots to positions that violate D_ab-shell clearance without
-    ever consulting K_crash/K_trail, because that preprocessing pass is
-    exact-cell/exact-swap only. Reproduced with a parked robot sitting
-    exactly on the other robot's straight-line shortest path -- confirmed
-    present at default (no-clearance) radius too, so it's a pre-existing
-    windowing gap, not a clearance regression. Not fixed here; flagged as a
-    known gap in clearance.md / base_qubo.py."""
+    The preprocessing side of this (BFS/diagonal fixing committing a
+    clearance violation on its own) is covered by
+    test_preprocessing_routes_around_clearance_shell below."""
     grid = Grid(5, 5, obstacles=[], resolution=0.4)
     robots = [
         RobotConfig("a", (2, 0), (2, 4), start_time=0, expected_duration=10,
@@ -159,16 +151,13 @@ def test_dwave_solve_respects_clearance():
     assert result["valid"], result.get("message", result)
 
 
-def test_forced_clearance_violation_attributed_to_preprocessing():
-    """The gap from the previous test, now diagnosed rather than silent:
-    _flag_forced_collisions (base_solver.py) is clearance-shell aware, so a
-    window preprocessing fully resolves on its own can still be caught and
-    correctly attributed to pre_processing rather than solver_sampling, even
-    though preprocessing itself still isn't clearance-aware (that part is
-    still open -- this only fixes the after-the-fact accounting). Same
-    reproducer as above (parked robot sitting on the other's straight-line
-    shortest path) but at 'b' offset one row up, which used to leave
-    forced_collisions empty."""
+def test_preprocessing_routes_around_clearance_shell():
+    """A parked robot sitting on the other robot's straight-line shortest
+    path, one row off it, so every cell of that line is inside the pair's
+    D_ab shell. The diagonal fixer used to pin that line anyway: its rival
+    check was exact-cell only, and the parked robot is pinned by BFS, which
+    the fixer never saw. With _rival_keepout (base_qubo.py) it detours around
+    the shell, so nothing is forced and the result is valid."""
     grid = Grid(7, 7, obstacles=[], resolution=0.4)
     robots = [
         RobotConfig("a", (3, 0), (3, 6), start_time=0, expected_duration=12,
@@ -176,21 +165,105 @@ def test_forced_clearance_violation_attributed_to_preprocessing():
         RobotConfig("b", (1, 3), (1, 3), start_time=0, expected_duration=12,
                     robot_radius=0.6),
     ]
-    problem = PathfindingProblem(robots, grid=grid, name="attribution_check")
-    builder = GridQUBOBuilder(problem, penalties=PENALTIES)
-    solver = DWaveSolver(normalize_scale=4, num_reads=50, seed=0)
-    solution = solver.solve(builder, preprocess=True)
+    problem = PathfindingProblem(robots, grid=grid, name="keepout_check")
+    D = problem.get_clearance_table()[("a", "b")]
+    reach = max(_cheb((0, 0), d) for d in D)
 
-    path = solver.decode_path(solution["solution"], problem)
-    result = is_solution_valid(path, problem)
-    assert not result["valid"]  # still the same underlying gap, unfixed
-    assert "clearance_conflict" in result["reason"] or "trailing_conflict" in result["reason"]
+    for mode in ("full", "full_safe"):
+        builder = GridQUBOBuilder(problem, penalties=PENALTIES)
+        solver = DWaveSolver(normalize_scale=4, num_reads=50, seed=0)
+        solution = solver.solve(builder, preprocess=mode)
 
-    forced_collisions = solution["metadata"]["forced_collisions"]
-    assert any(fc["kind"] in ("clearance", "trailing") for fc in forced_collisions), (
-        "expected at least one clearance/trailing entry in forced_collisions"
-    )
+        assert solution["metadata"]["forced_collisions"] == [], mode
+        path = solver.decode_path(solution["solution"], problem)
+        result = is_solution_valid(path, problem)
+        assert result["valid"], (mode, result.get("message", result))
+        a_cells = [cell[:2] for cell, robot in path if robot == 0]
+        assert all(_cheb(c, (1, 3)) > reach for c in a_cells), (mode, a_cells)
 
-    cause = _attribute_invalid_cause(result, forced_collisions)
+
+def test_forced_clearance_violation_attributed_to_preprocessing():
+    """_attribute_invalid_cause matches a clearance/trailing conflict against
+    _flag_forced_collisions' log, so a violation preprocessing forced is
+    blamed on pre_processing, not solver_sampling. Inputs are the ones the
+    reproducer above produced before preprocessing became clearance-aware
+    (robot numbers in the validation, robot ids in the log, as in a real run)."""
+    validation = {
+        "valid": False,
+        "reason": "clearance_conflict+trailing_conflict",
+        "details": {
+            "clearance_conflicts": [
+                {"cells": ((3, 1), (1, 3)), "time": 1, "robots": [0, 1]},
+            ],
+            "trailing_conflicts": [
+                {"cells": ((3, 1), (1, 3)), "time": (1, 2), "robots": [0, 1]},
+            ],
+        },
+    }
+    forced_collisions = [
+        {"kind": "clearance", "cells": ((1, 3), (3, 1)), "time": 1,
+         "robots": ["a", "b"], "sources": [("a", "diag"), ("b", "bfs")],
+         "origin": "same_window"},
+        {"kind": "trailing", "cells": ((3, 1), (1, 3)), "time": (1, 2),
+         "robots": ["a", "b"], "sources": [("a", "diag"), ("b", "bfs")],
+         "origin": "same_window"},
+    ]
+
+    cause = _attribute_invalid_cause(validation, forced_collisions)
     assert cause["origin"] == "pre_processing", cause
-    assert any(m["kind"] in ("clearance", "trailing") for m in cause["matches"])
+    assert {m["kind"] for m in cause["matches"]} == {"clearance", "trailing"}
+
+    unmatched = _attribute_invalid_cause(validation, [])
+    assert unmatched == {"origin": "solver_sampling"}
+
+
+def test_deadline_guard_stops_windowing_stall():
+    """10x10 hard / four_robots: the windowed plan is locally valid every
+    window but livelocks robot_1 away from its goal. _deadline_misses proves
+    it can't make it and the solve stops early, attributed to windowing
+    rather than solver_sampling."""
+    problem = PathfindingProblem.from_map_config(
+        "quantum/maps/synthetic/10x10/obs10x10_hard", "four_robots"
+    ).as_grid_only()
+    builder = GridQUBOBuilder(problem, penalties=PENALTIES)
+    solver = DWaveSolver(normalize_scale=4, num_reads=4, seed=0)
+    solution = solver.solve(builder, preprocess="full")
+
+    misses = solution["metadata"]["deadline_misses"]
+    assert misses and all(m["steps_needed"] > m["steps_left"] for m in misses)
+    assert builder.current_T < builder.total_t  # stopped before the horizon
+
+    result = is_solution_valid(solver.decode_path(solution["solution"], problem), problem)
+    assert not result["valid"]
+    cause = _attribute_invalid_cause(
+        result,
+        solution["metadata"]["forced_collisions"],
+        window_stats=solution["metadata"]["window_stats"],
+        deadline_misses=misses,
+    )
+    assert cause["origin"] == "windowing", cause
+
+
+def test_deadline_guard_silent_on_solvable_problem():
+    """No false alarms: a problem that solves validly never records a miss."""
+    problem = PathfindingProblem.from_map_config(
+        "quantum/maps/synthetic/10x10/obs10x10_easy", "four_robots"
+    ).as_grid_only()
+    builder = GridQUBOBuilder(problem, penalties=PENALTIES)
+    solver = DWaveSolver(normalize_scale=4, num_reads=4, seed=0)
+    solution = solver.solve(builder, preprocess="full")
+
+    assert solution["metadata"]["deadline_misses"] == []
+    result = is_solution_valid(solver.decode_path(solution["solution"], problem), problem)
+    assert result["valid"], result.get("message")
+
+
+def test_goal_not_reached_with_no_solver_windows_blamed_on_preprocessing():
+    validation = {"valid": False, "reason": "robot_1_invalid", "details": {}}
+    all_fixed = [{"final_variables": 0}, {"final_variables": 0}]
+    cause = _attribute_invalid_cause(validation, [], window_stats=all_fixed)
+    assert cause == {"origin": "pre_processing", "matches": [], "reason": "solver_never_ran"}
+
+    some_solved = [{"final_variables": 0}, {"final_variables": 2}]
+    cause = _attribute_invalid_cause(validation, [], window_stats=some_solved)
+    assert cause == {"origin": "solver_sampling"}

@@ -515,7 +515,7 @@ class BaseQUBO(ABC):
 
         return restored_Q, removed_const
 
-    def reduce_diag_fixed_vars_iterative(self):
+    def reduce_diag_fixed_vars_iterative(self, prior_fixed=None):
         """
         Iteratively apply diag_fixed_vars until no new fixed variables are found.
 
@@ -533,10 +533,19 @@ class BaseQUBO(ABC):
         deferred in pass N gets blindly re-picked in pass N+1, once the rival
         occupying it is no longer visible in Q.
 
+        Args:
+            prior_fixed: {var_idx: 1} pinned before this pass, i.e.
+                get_logical_variables()'s BFS pins (starts, parked or
+                instantaneous-goal robots). Only _rival_keepout reads them,
+                so a robot routes around a rival BFS already committed; they
+                are kept out of total_fixed so recalculation never unfixes
+                or re-folds them.
+
         Returns:
             dict: {variable_index: fixed_value} where fixed_value is 0 or 1
         """
         self.reduction_log = []
+        self._pinned_before_diag = dict(prior_fixed or {})
         total_fixed = {}
         while True:
             new_fixed = self.diag_fixed_vars(prior_fixed=total_fixed)
@@ -544,6 +553,7 @@ class BaseQUBO(ABC):
                 break
             total_fixed.update(new_fixed)
         self.reduction_log = []  # Memory cleanup
+        self._pinned_before_diag = {}
         return total_fixed
 
     def list_to_dict_solution(self, solution_list):
@@ -820,29 +830,66 @@ class BaseQUBO(ABC):
 
         return timestep_vars
 
-    def _collides_with_fixed_rival(self, var_idx, t, total_fixed, own_robot_num):
+    def _rival_keepout(self, t, total_fixed, own_robot_num):
         """
-        True if `var_idx` (a candidate cell for the robot currently being
-        processed, at window-relative timestep `t`) is already occupied by a
-        *different* robot that diag-fixing has already committed to 1 earlier
-        in this pass.
+        Cells the robot currently being processed may not occupy at
+        window-relative timestep `t`, given every *different* robot already
+        committed to 1 in `total_fixed`. Mirrors is_solution_valid()'s checks
+        (quantum/benchmark/benchmark.py) so a fix this allows is one the
+        validator accepts:
+        - trivial pair (D_ab == {(0,0)}): the rival's exact cell at t only.
+          Moving into a cell the rival just vacated stays legal, as in the
+          validator.
+        - clearance pair: the D_ab shell around the rival at t
+          ("clearance_conflict"), plus the shells around it at t-1 and t+1
+          ("trailing_conflict": own cell at t vs rival's at the other end of
+          either step).
 
-        Robots are processed one at a time in priority order
+        Rivals are read from total_fixed plus the BFS pins handed to
+        reduce_diag_fixed_vars_iterative(), so a parked robot BFS pinned is
+        seen too. Robots are processed one at a time in priority order
         (get_active_robot_in_window()), each fully fixed before the next
         starts, so any rival entry in total_fixed at this point is final for
         this pass -- there's nothing to arbitrate here, just something to
-        avoid walking into.
+        avoid walking into. The keep-out is also what BFS recalculation
+        blocks, so a whole shell is routed around at once instead of one
+        cell per retry.
+
+        Not covered: robots that went inactive earlier (no variables in this
+        window); _flag_forced_collisions still reports that handoff case.
         """
-        if not total_fixed or own_robot_num is None:
-            return False
-        i, j, _, _ = paths.decode_position(var_idx, self.problem)
-        for fixed_idx, val in total_fixed.items():
+        keepout = set()
+        committed = {**getattr(self, "_pinned_before_diag", {}), **(total_fixed or {})}
+        if not committed or own_robot_num is None:
+            return keepout
+        clearance_table = self.problem.get_clearance_table()
+        num_to_id = {num: rid for rid, num in self.problem.get_robot_nums().items()}
+        own_id = num_to_id.get(own_robot_num)
+        trivial = frozenset({(0, 0)})
+        for fixed_idx, val in committed.items():
             if val != 1:
                 continue
             fi, fj, ft, frn = paths.decode_position(fixed_idx, self.problem)
-            if frn != own_robot_num and ft == t and (fi, fj) == (i, j):
-                return True
-        return False
+            if frn == own_robot_num or abs(ft - t) > 1:
+                continue
+            D = clearance_table.get((own_id, num_to_id.get(frn)))
+            if not D or D == trivial:
+                if ft == t:
+                    keepout.add((fi, fj))
+                continue
+            # (own - rival) in D_ab  <=>  own in rival + D_ab
+            keepout.update((fi + di, fj + dj) for di, dj in D)
+        return keepout
+
+    def _collides_with_fixed_rival(self, var_idx, t, total_fixed, own_robot_num):
+        """
+        True if `var_idx` (a candidate cell for the robot currently being
+        processed, at window-relative timestep `t`) falls in the keep-out of
+        a *different* robot already committed to 1 -- its exact cell, or for
+        a clearance pair its D_ab shell at t-1/t/t+1 (see _rival_keepout).
+        """
+        i, j, _, _ = paths.decode_position(var_idx, self.problem)
+        return (i, j) in self._rival_keepout(t, total_fixed, own_robot_num)
 
     def _collides_with_swap_rival(
         self, var_idx, t, prev_fixed_pos, total_fixed, own_robot_num
@@ -857,17 +904,9 @@ class BaseQUBO(ABC):
         supposed to cover but never gets a say in, same reason as the vertex
         case (see _collides_with_fixed_rival's docstring).
 
-        Exact-cell only, like _collides_with_fixed_rival.
-        Note neither this nor that check is D_ab-shell aware.
-
-        For a clearance pair, this preprocessing pass can still commit two robots
-        into positions that violate the D_ab-shell crash/trailing test even
-        though no exact cell/edge collision was ever detected here; is_
-        solution_valid()'s clearance_conflict/trailing_conflict checks catch
-        it post-hoc, but benchmark.py's _attribute_invalid_cause() only cross-
-        references the exact "conflicts" (vertex) key today, so a violation
-        forced this way is currently misattributed to "solver_sampling"
-        rather than "pre_processing". Known gap, not yet closed.
+        Exact-cell only. That is all a trivial pair needs; for a clearance
+        pair a swap always lands the candidate in the rival's t-1 shell, so
+        _rival_keepout's trailing check already rejects it.
         """
         if not total_fixed or own_robot_num is None or prev_fixed_pos is None:
             return False
@@ -1092,6 +1131,14 @@ class BaseQUBO(ABC):
         wait_at = set()
         own_robot_num = self.problem.get_robot_nums()[robot_id]
         last_fixed_var = None
+
+        # Route around every committed rival's keep-out up front -- for a
+        # clearance pair that's a whole D_ab shell per timestep, which
+        # discovering one cell per retry would exhaust the retry budget on.
+        for t_block in range(curr_t, self.t_max):
+            keepout = self._rival_keepout(t_block, total_fixed, own_robot_num)
+            if keepout:
+                blocked.setdefault(t_block, set()).update(keepout)
 
         for _attempt in range(2 * max(self.t_max, 1)):
             reachable = self.reachable_positions_aggressive(

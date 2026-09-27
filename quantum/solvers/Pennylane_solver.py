@@ -543,6 +543,7 @@ class PennylaneSolver(BaseSolver):
         # preprocess=True: full pipeline with variable reduction and correction loop
         window_stats = []  # Track per-window variable reduction stats
         forced_collisions = []  # Track pre-processing forced collisions across all windows
+        deadline_misses = []  # Robots proven unable to reach their goal (see _deadline_misses)
         qpu_time_estimates = []  # Per-window pre-execution QPU time estimates (qiskit.remote only)
         correction_count = 0  # Track consecutive correction attempts for current window
 
@@ -565,6 +566,9 @@ class PennylaneSolver(BaseSolver):
                 self.logger.standard(
                     "✅ All robots reached goal or inactive. Stopping solver."
                 )
+                break
+
+            if self._stop_on_deadline_miss(builder, deadline_misses):
                 break
 
             fixed_vars, window_stat, is_preprocessed, window_forced_collisions = (
@@ -933,6 +937,7 @@ class PennylaneSolver(BaseSolver):
             "metadata": {
                 "window_stats": window_stats,  # Per-window variable reduction stats
                 "forced_collisions": forced_collisions,  # Pre-processing forced collisions (bypass K_crash/K_trail)
+                "deadline_misses": deadline_misses,  # Robots proven unable to reach their goal (windowing stall)
                 "qpu_time_estimates": qpu_time_estimates,  # Per-window pre-execution QPU time estimates (qiskit.remote only)
             },
         }

@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections import deque
 import numpy as np
 from typing import Dict, Any, List, Tuple
 from quantum.utils.paths import decode_position, clip_path_at_goal
@@ -709,7 +710,7 @@ class BaseSolver(ABC):
         initial_vars = builder.get_num_wires()
         bfs_fixed = fixed_vars
         diag_fixed = (
-            builder.reduce_diag_fixed_vars_iterative()
+            builder.reduce_diag_fixed_vars_iterative(prior_fixed=bfs_fixed)
             if apply_numeric_reduction
             else {}
         )
@@ -948,6 +949,96 @@ class BaseSolver(ABC):
 
         builder.update_problem(robot_paths)
         return full_sol, invalid_moves
+
+    def _deadline_misses(self, builder):
+        """
+        Active robots that can no longer reach their goal before their
+        deadline, however the remaining windows are solved.
+
+        For each active robot that has started: the fewest steps from its
+        current position to its goal on the static map (obstacles only --
+        no other robots, no clearance keep-out), against the timesteps left
+        before start_time + T (capped at builder.total_t). Ignoring rivals
+        and keep-out can only shorten the distance, so a miss here is a
+        proof, never a false alarm: the robot cannot make it.
+
+        This is what turns a windowing livelock into an early stop. Every
+        window can be locally valid -- legal moves, collisions avoided --
+        while earlier commitments have already made the goal unreachable;
+        without this check the solve carries on until the horizon runs out.
+        Deliberately no "no progress for N windows" rule: yielding to another
+        robot is legitimately progress-free for a while.
+
+        Returns:
+            list of {"robot", "window", "time", "position", "steps_needed",
+            "steps_left"}, empty when every active robot can still make it.
+        """
+        problem = builder.problem
+        is_graph = problem.get_format_type() == "graph"
+        misses = []
+        for robot_id, robot in problem.robots.items():
+            if not robot.active or builder.current_T < robot.start_time:
+                continue
+            deadline = min(robot.start_time + robot.T, builder.total_t) - 1
+            steps_left = deadline - builder.current_T
+            if is_graph:
+                start, goal = problem.get_graph_robot_current_goal(robot_id)
+                neighbours = lambda n: (
+                    m for m, _ in problem.graph.adjacency.get(n, ())
+                )
+            else:
+                start, goal = tuple(robot.current_position), tuple(robot.goal)
+                neighbours = lambda c: problem.grid.adjacency.get(c, ())
+            steps_needed = self._hop_distance(start, goal, neighbours, steps_left)
+            if steps_needed > steps_left:
+                misses.append(
+                    {
+                        "robot": robot_id,
+                        "window": builder.iter,
+                        "time": builder.current_T,
+                        "position": robot.current_position,
+                        "steps_needed": steps_needed,
+                        "steps_left": steps_left,
+                    }
+                )
+        return misses
+
+    @staticmethod
+    def _hop_distance(start, goal, neighbours, limit):
+        """BFS hop count from start to goal, or limit + 1 once it's clear
+        the goal is further than `limit` (or unreachable) -- the caller only
+        needs to know whether it fits."""
+        if start == goal:
+            return 0
+        seen = {start}
+        frontier = deque([(start, 0)])
+        while frontier:
+            node, d = frontier.popleft()
+            if d >= limit:
+                break
+            for nxt in neighbours(node):
+                if nxt == goal:
+                    return d + 1
+                if nxt not in seen:
+                    seen.add(nxt)
+                    frontier.append((nxt, d + 1))
+        return limit + 1
+
+    def _stop_on_deadline_miss(self, builder, deadline_misses):
+        """Run _deadline_misses() at the top of a window; on a miss, log it,
+        record it in `deadline_misses` and return True so the caller stops
+        the windowed loop instead of solving windows that cannot help."""
+        misses = self._deadline_misses(builder)
+        if not misses:
+            return False
+        for m in misses:
+            self.logger.minimal(
+                f"⛔ {m['robot']} cannot reach its goal: {m['steps_needed']} steps "
+                f"needed from {m['position']} at t={m['time']}, {m['steps_left']} "
+                f"left -- stopping at window {m['window']} (windowing stall)."
+            )
+        deadline_misses.extend(misses)
+        return True
 
     def _handle_correction_backoff(
         self, builder, full_sol, invalid_moves, correction_count

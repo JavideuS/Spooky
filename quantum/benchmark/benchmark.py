@@ -175,10 +175,13 @@ class BenchmarkRunner:
             # If invalid, work out whether pre-processing forced the conflict
             # (bypassing K_crash/K_trail entirely) or the solver actually
             # sampled a bitstring that violates a penalty that was present.
-            forced_collisions = solution.get("metadata", {}).get(
-                "forced_collisions", []
+            metadata = solution.get("metadata", {})
+            invalid_cause = _attribute_invalid_cause(
+                validation,
+                metadata.get("forced_collisions", []),
+                window_stats=metadata.get("window_stats"),
+                deadline_misses=metadata.get("deadline_misses"),
             )
-            invalid_cause = _attribute_invalid_cause(validation, forced_collisions)
             if invalid_cause:
                 validation["invalid_cause"] = invalid_cause
 
@@ -690,7 +693,9 @@ def _compute_solution_statistics(
     return stats
 
 
-def _attribute_invalid_cause(validation, forced_collisions):
+def _attribute_invalid_cause(
+    validation, forced_collisions, window_stats=None, deadline_misses=None
+):
     """
     Cross-reference a failed validation's reported conflicts against the
     solver's pre-processing forced-collision log
@@ -718,6 +723,18 @@ def _attribute_invalid_cause(validation, forced_collisions):
     the same mechanism, or "diag_fixing + goal_lock" when one robot was
     still being fixed while the other was an already-finished robot locked
     at its goal.
+
+    Failures that aren't a forced conflict (e.g. goal_not_reached) used to
+    fall through to "solver_sampling" even when no solver ever ran. In order:
+    - deadline_misses (BaseSolver._deadline_misses, from
+      solution["metadata"]) non-empty -> {"origin": "windowing",
+      "deadline_misses": [...]}: a robot was proven unable to reach its goal
+      and the solve stopped; the plan was locally valid window by window.
+    - every window in window_stats reached the solver with 0 variables ->
+      {"origin": "pre_processing", "matches": [], "reason":
+      "solver_never_ran"}: BFS/diagonal fixing decided the whole plan.
+    Both are optional so callers that only have forced_collisions keep the
+    old behaviour.
     """
     if validation.get("valid", True):
         return None
@@ -743,6 +760,16 @@ def _attribute_invalid_cause(validation, forced_collisions):
         matched.extend(forced_by_key.get(key, ()))
 
     if not matched:
+        if deadline_misses:
+            return {"origin": "windowing", "deadline_misses": list(deadline_misses)}
+        if window_stats and all(
+            ws.get("final_variables", 1) == 0 for ws in window_stats
+        ):
+            return {
+                "origin": "pre_processing",
+                "matches": [],
+                "reason": "solver_never_ran",
+            }
         # swap_conflicts have no pre-processing equivalent today (forced_collisions
         # only ever records vertex/clearance/trailing fixes), so any swap_conflict
         # here is necessarily solver-side.
