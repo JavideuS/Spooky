@@ -163,10 +163,15 @@ class PennylaneSolver(BaseSolver):
         needed = 16 * 2**num_qubits
         free = self._free_memory_bytes(self.dev)
         if free is not None and needed > free:
+            fits = max(int(np.log2(free / 16)), 0)
+            advice = f"Lower --var-limit to shrink windows (at most {fits} qubits fit)"
+            mode = getattr(self, "_preprocess_mode", None)
+            if mode is not None and not preprocess_modes.applies_numeric_reduction(mode):
+                advice += ", or use --preprocess greedy to pin more variables"
             raise SimulatorCapacityError(
                 f"window needs {num_qubits} qubits: a {self.dev} statevector "
                 f"takes {needed / 1024**3:.3g} GiB, {free / 1024**3:.3g} GiB free. "
-                "Lower --var-limit (or use --preprocess greedy) to shrink windows."
+                f"{advice}."
             )
 
     def get_shots(self, num_qubits):
@@ -437,6 +442,7 @@ class PennylaneSolver(BaseSolver):
         # `preprocess` accepts the mode strings in quantum.utils.preprocess as
         # well as the legacy booleans (True -> "full", False -> "raw").
         mode = preprocess_modes.normalize(preprocess)
+        self._preprocess_mode = mode  # for _check_simulator_fits' advice
         bfs_variant = preprocess_modes.bfs_variant(mode)
         apply_numeric = preprocess_modes.applies_numeric_reduction(mode)
 

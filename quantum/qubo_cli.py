@@ -1150,6 +1150,7 @@ def main():
 
     logger.minimal(
         f"Builder: {args.builder.upper()} | window_limits={window_limits or 'none'}"
+        f" | preprocess={_resolve_preprocess(args)}"
     )
 
     # -- Solver --------------------------------------------------------------
