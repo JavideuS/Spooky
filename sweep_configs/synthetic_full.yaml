@@ -109,8 +109,9 @@ solvers:
   - name: sa_neal
     backend: dwave
     params: { normalize_scale: 4, num_reads: 4 }
-    penalty_set: crash
+    penalty_set: trailing
     num_runs: 10 # stochastic
+    ablation: { preprocess: [full, bfs_safe] }
 
   - name: qaoa_sim
     backend: pennylane
@@ -120,7 +121,7 @@ solvers:
       layers: 2
       optimizer: QNG
       opt_steps: 30
-    penalty_set: crash
+    penalty_set: trailing
     num_runs: 10 # stochastic
 
 execution:

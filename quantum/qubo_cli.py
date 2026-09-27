@@ -638,6 +638,11 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     viz_g.add_argument(
+        "--viz-plain",
+        action="store_true",
+        help="Plain colored markers and black obstacles, no character images.",
+    )
+    viz_g.add_argument(
         "--viz-discrete",
         action="store_true",
         help=(
@@ -998,14 +1003,15 @@ def run_visualization(args: argparse.Namespace, problem, robot_paths: dict) -> N
         title=f"{args.problem} — {Path(args.map).name}",
     )
     obstacles = problem.grid.obstacles
+    use_images = False if args.viz_plain else None
 
     if mode == "static":
         fig = viz.create_static_plot(
-            obstacles=obstacles, robot_paths=robot_paths, problem=problem
+            obstacles=obstacles, robot_paths=robot_paths, problem=problem, use_images=use_images
         )
     elif mode == "steps":
         fig = viz.create_step_by_step_plot(
-            obstacles, robot_paths=robot_paths, problem=problem
+            obstacles, robot_paths=robot_paths, problem=problem, use_images=use_images
         )
     else:  # animated
         fig = viz.create_animated_plot(
@@ -1013,6 +1019,7 @@ def run_visualization(args: argparse.Namespace, problem, robot_paths: dict) -> N
             robot_paths=robot_paths,
             problem=problem,
             smooth=not args.viz_discrete,
+            use_images=use_images,
         )
 
     if not out:
@@ -1022,7 +1029,7 @@ def run_visualization(args: argparse.Namespace, problem, robot_paths: dict) -> N
     elif out.lower().endswith((".html", ".htm")):
         viz.write_html(fig, out)
     else:
-        viz.write_image(fig, out)
+        viz.write_image(fig, out, format=Path(out).suffix.lstrip(".").lower() or "png")
 
 
 # ---------------------------------------------------------------------------
