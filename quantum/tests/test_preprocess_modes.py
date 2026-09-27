@@ -56,3 +56,51 @@ def test_exact_solvers_get_a_bool_that_is_false_only_for_raw():
     assert pm.applies_bfs_pruning(pm.RAW) is False
     for mode in (pm.BFS_AGGRESSIVE, pm.BFS_SAFE, pm.FULL, pm.FULL_SAFE):
         assert pm.applies_bfs_pruning(mode) is True, mode
+
+
+@pytest.mark.parametrize(
+    "argv, expected",
+    [
+        ([], pm.BFS_SAFE),  # default
+        (["--solver", "pennylane"], pm.FULL),  # statevector-sized windows
+        (["--solver", "pennylane", "--preprocess", "safe"], pm.BFS_SAFE),
+        (["--preprocess", "safe"], pm.BFS_SAFE),
+        (["--preprocess", "greedy"], pm.FULL),
+        (["--preprocess", "raw"], pm.RAW),
+        (["--no-preprocess"], pm.RAW),
+        (["--preprocess", "full_safe"], pm.FULL_SAFE),  # internal names still accepted
+        (["--preprocess", "bfs_aggressive"], pm.BFS_AGGRESSIVE),
+    ],
+)
+def test_cli_preprocess_resolves_to_internal_names(argv, expected):
+    """The CLI short names never leak past the CLI: solvers and recorded
+    results only ever see quantum.utils.preprocess names."""
+    from quantum.qubo_cli import build_parser, _resolve_preprocess
+
+    args = build_parser().parse_args(["--map", "m", "--problem", "p", *argv])
+    assert _resolve_preprocess(args) == expected
+
+
+def test_cli_rejects_contradictory_preprocess_flags():
+    from quantum.qubo_cli import build_parser, _resolve_preprocess
+
+    args = build_parser().parse_args(
+        ["--map", "m", "--problem", "p", "--no-preprocess", "--preprocess", "greedy"]
+    )
+    with pytest.raises(SystemExit):
+        _resolve_preprocess(args)
+
+
+def test_simulator_capacity_guard_raises_instead_of_crashing(monkeypatch):
+    """A window whose statevector can't fit in memory raises a clear error
+    (recorded by the sweep runner as a failure) instead of segfaulting."""
+    from quantum.solvers.Pennylane_solver import PennylaneSolver, SimulatorCapacityError
+
+    solver = PennylaneSolver.__new__(PennylaneSolver)
+    solver.dev = "lightning.qubit"
+    monkeypatch.setattr(PennylaneSolver, "_free_memory_bytes", staticmethod(lambda d: 2**30))
+    solver._check_simulator_fits(20)  # 16 MiB: fits in 1 GiB
+    with pytest.raises(SimulatorCapacityError, match="30 qubits"):
+        solver._check_simulator_fits(30)  # 16 GiB
+    solver.dev = "qiskit.remote"
+    solver._check_simulator_fits(100)  # hardware is sized by _get_backend

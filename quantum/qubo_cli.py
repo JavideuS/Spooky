@@ -65,14 +65,37 @@ _HERE = Path(__file__).parent  # quantum/
 # ---------------------------------------------------------------------------
 
 
+# Short CLI names for the common modes. Only the CLI knows them: every mode
+# is resolved to its quantum.utils.preprocess name before it reaches a solver,
+# so recorded results and sweep configs keep the internal names.
+PREPROCESS_ALIASES = {
+    "safe": preprocess_modes.BFS_SAFE,
+    "greedy": preprocess_modes.FULL,
+}
+PREPROCESS_CHOICES = ["raw", *PREPROCESS_ALIASES] + [
+    m for m in preprocess_modes.MODES if m != preprocess_modes.RAW
+]
+
+
 def _resolve_preprocess(args) -> str:
     """--preprocess wins; --no-preprocess is kept as an alias for 'raw'.
 
     Both are accepted so existing scripts and docs keep working. Passing them
-    contradictorily is an error rather than a silent precedence rule."""
+    contradictorily is an error rather than a silent precedence rule. With
+    neither, the default is 'safe' (bfs_safe): the only pruning that cannot
+    exclude a feasible solution, and the mode where the QUBO makes every
+    decision -- except for pennylane, which defaults to 'greedy' (full). A
+    gate-model window is simulated as a statevector, and safe windows are
+    far too wide for that (66 qubits on 5x5 two_robots, where lightning
+    segfaults) unless --var-limit caps them."""
     mode = getattr(args, "preprocess", None)
     if mode is None:
-        return preprocess_modes.RAW if args.no_preprocess else preprocess_modes.FULL
+        if args.no_preprocess:
+            return preprocess_modes.RAW
+        if getattr(args, "solver", None) == "pennylane":
+            return preprocess_modes.FULL
+        return preprocess_modes.BFS_SAFE
+    mode = PREPROCESS_ALIASES.get(mode, mode)
     if args.no_preprocess and mode != preprocess_modes.RAW:
         raise SystemExit(
             f"--no-preprocess conflicts with --preprocess {mode}. "
@@ -322,16 +345,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sol.add_argument(
         "--preprocess",
-        choices=list(preprocess_modes.MODES),
+        choices=PREPROCESS_CHOICES,
         default=None,
         help=(
-            "Pre-processing mode. 'full' (default) is aggressive BFS pruning "
-            "plus numerical variable fixing; 'bfs_aggressive' and 'bfs_safe' "
-            "keep the windowed loop and the chosen BFS but skip the numerical "
-            "stage; 'full_safe' is monotone BFS plus numerical; 'raw' is the "
-            "old --no-preprocess simple loop. bfs_safe/full_safe are the only "
-            "modes whose pruning cannot exclude a feasible solution, at "
-            "roughly 10-19x the variables. See quantum/utils/preprocess.py."
+            "Pre-processing mode. 'safe' (= bfs_safe; default, except "
+            "'greedy' for pennylane) is monotone BFS "
+            "pruning only, so the solver decides every window; it is the only "
+            "pruning that cannot exclude a feasible solution, at roughly "
+            "10-19x the variables of aggressive BFS. 'greedy' (= full) adds "
+            "aggressive BFS and numerical variable fixing, which can decide "
+            "whole windows before the solver runs. 'raw' is the old "
+            "--no-preprocess simple loop. The internal names (bfs_aggressive, "
+            "bfs_safe, full, full_safe) are also accepted. See "
+            "quantum/utils/preprocess.py."
         ),
     )
     sol.add_argument(
@@ -342,8 +368,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Disable variable reduction (QUBO: BFS logical-variable reduction, "
             "diagonal pruning, and the correction loop, runs the simple "
             "raw-sampler loop instead. ILP: BFS reachability pruning of the "
-            "decision variables, solves the unpruned model instead). Enabled "
-            "by default for both."
+            "decision variables, solves the unpruned model instead). Alias "
+            "for --preprocess raw."
         ),
     )
     sol.add_argument(

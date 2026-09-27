@@ -1,10 +1,15 @@
 import os
+import subprocess
 import pennylane as qml
 from pennylane import numpy as np
 from .base_solver import BaseSolver
 from quantum.utils import preprocess as preprocess_modes
 from quantum.hardware.ibm_session import IBMSessionManager
 import time
+
+
+class SimulatorCapacityError(ValueError):
+    """A window is too wide for the local statevector simulator's memory."""
 
 
 class PennylaneSolver(BaseSolver):
@@ -108,6 +113,61 @@ class PennylaneSolver(BaseSolver):
         # stream and the whole run lands in one basin. BenchmarkRunner sets
         # this per run (see BenchmarkRunner._reseed_run).
         self.device_seed = device_seed
+
+    @staticmethod
+    def _free_memory_bytes(device_name):
+        """Free memory the statevector will live in: GPU memory for
+        lightning.gpu (via nvidia-smi), host RAM otherwise. None if unknown."""
+        if device_name == "lightning.gpu":
+            try:
+                out = subprocess.run(
+                    [
+                        "nvidia-smi",
+                        "--query-gpu=memory.free",
+                        "--format=csv,noheader,nounits",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=True,
+                ).stdout.split()
+                return int(out[0]) * 1024**2 if out else None
+            except (OSError, subprocess.SubprocessError, ValueError):
+                return None
+        # MemAvailable counts reclaimable cache too; the free-page count
+        # alone would reject windows that fit
+        try:
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemAvailable:"):
+                        return int(line.split()[1]) * 1024
+        except (OSError, ValueError):
+            pass
+        try:
+            return os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+        except (ValueError, OSError, AttributeError):
+            return None
+
+    def _check_simulator_fits(self, num_qubits):
+        """Raise SimulatorCapacityError when a window's statevector can't fit.
+
+        A local simulator holds 2**n complex128 amplitudes (16 bytes each).
+        That is only the state itself -- gradients and the simulator's own
+        buffers need more -- so passing this check doesn't promise the window
+        runs, but failing it proves it can't. Without it lightning segfaults
+        instead of raising (66 qubits on 5x5 two_robots under bfs_safe).
+        Hardware backends are sized separately, by _get_backend().
+        """
+        if self.dev in ("qiskit.remote", "qiskit.iqm"):
+            return
+        needed = 16 * 2**num_qubits
+        free = self._free_memory_bytes(self.dev)
+        if free is not None and needed > free:
+            raise SimulatorCapacityError(
+                f"window needs {num_qubits} qubits: a {self.dev} statevector "
+                f"takes {needed / 1024**3:.3g} GiB, {free / 1024**3:.3g} GiB free. "
+                "Lower --var-limit (or use --preprocess greedy) to shrink windows."
+            )
 
     def get_shots(self, num_qubits):
         if self.shots == "auto":
@@ -413,6 +473,7 @@ class PennylaneSolver(BaseSolver):
                 # assignment, which should not be an accident of that layout.
                 wires = sorted(builder.get_wires())
                 self.logger.standard(f"Number of qubits: {len(wires)}")
+                self._check_simulator_fits(len(wires))
 
                 # An empty window has nothing to sample, and handing a
                 # zero-wire device to qml.sample() dies inside custatevec.
@@ -602,6 +663,7 @@ class PennylaneSolver(BaseSolver):
             wires = builder.get_wires()
             num_qubits = len(wires)
             self.logger.standard(f"Number of qubits: {num_qubits}")
+            self._check_simulator_fits(num_qubits)
 
             # Determine if we need to remap wires for qiskit.remote
             if self.dev == "qiskit.remote" or self.dev == "qiskit.iqm":
