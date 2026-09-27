@@ -101,7 +101,15 @@ class IQMHardwareBackend:
             job_total_sec = self._timeline_segment(raw_job, "received", "ready")
 
             circuits, _params = raw_job.payload()
-            two_qubit_depth = iqm_two_qubit_depth(circuits[0].instructions)
+            # payload() returns model_dump()'d circuits (dicts) in current
+            # iqm-client; older versions returned Circuit objects.
+            circuit = circuits[0]
+            instructions = (
+                circuit["instructions"]
+                if isinstance(circuit, dict)
+                else circuit.instructions
+            )
+            two_qubit_depth = iqm_two_qubit_depth(instructions)
 
             extra_timing = {
                 k: v

@@ -23,6 +23,9 @@ class PennylaneSolver(BaseSolver):
         ("garnet", 20),
         ("emerald", 54),
     ]
+    # Server-side cap on Resonance (jobs above it are declined, but only after
+    # queueing). Not queryable from the SDK, so hardcoded.
+    IQM_MAX_SHOTS = 20000
 
     def __init__(
         self,
@@ -175,6 +178,15 @@ class PennylaneSolver(BaseSolver):
             )
 
     def get_shots(self, num_qubits):
+        shots = self._requested_shots(num_qubits)
+        if self.dev == "qiskit.iqm" and shots > self.IQM_MAX_SHOTS:
+            self.logger.minimal(
+                f"⚠️  {shots} shots exceeds IQM limit; capping at {self.IQM_MAX_SHOTS}"
+            )
+            shots = self.IQM_MAX_SHOTS
+        return shots
+
+    def _requested_shots(self, num_qubits):
         if self.shots == "auto":
             if num_qubits <= 9:
                 return 500
@@ -283,7 +295,11 @@ class PennylaneSolver(BaseSolver):
                     device_instance=machine,
                     use_timeslot=False,
                 )
-                self.hardware_qubits = self.backend.num_qubits
+                # Qrisp's IQMBackend doesn't expose num_qubits; fall back to
+                # the tier table so the refresh check above doesn't compare to None.
+                self.hardware_qubits = getattr(
+                    self.backend, "num_qubits", None
+                ) or dict(self.IQM_MACHINE_TIERS).get(machine, num_qubits)
                 backend_time = time.time() - backend_start
                 self.logger.standard(
                     f"✓ Backend selected: {machine} ({self.hardware_qubits} qubits)"
