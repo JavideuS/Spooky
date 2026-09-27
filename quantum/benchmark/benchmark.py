@@ -22,6 +22,7 @@ class BenchmarkRunner:
         level=2,
         preprocess=True,
         seed=None,
+        clip_at_goal=False,
     ):
         """
         Run benchmark on a given solver and problem.
@@ -50,6 +51,9 @@ class BenchmarkRunner:
                 fixed init. run_seed is stored on every run so any single run
                 can be reproduced. None: a fresh entropy-based run_seed per
                 run, still logged.
+            clip_at_goal (bool): trim the *printed* paths once each robot is
+                parked at its goal (qubo_cli --clip-at-goal). Validation and
+                the saved JSON keep the full paths.
         """
         self.builder = qubobuilder
         self.problem = qubobuilder.problem
@@ -57,6 +61,7 @@ class BenchmarkRunner:
         self.solver = solver
         self.num_runs = num_runs
         self.seed = seed
+        self.clip_at_goal = clip_at_goal
         # accepts a mode string or a legacy bool; see quantum.utils.preprocess
         self.preprocess = preprocess_modes.normalize(preprocess)
         self.level = max(1, min(3, level))  # Clamp to 1-3
@@ -443,9 +448,24 @@ class BenchmarkRunner:
                 f"Run {run_id}: {status} | Time: {time_str}"
                 f"{qpu_estimate_str} | Energy: {total_energy:.4f}"
             )
+            printed = {
+                robot_id: (
+                    clip_path_at_goal(robot.path, tuple(robot.goal))
+                    if self.clip_at_goal
+                    else robot.path
+                )
+                for robot_id, robot in self.problem.robots.items()
+            }
+            if self.clip_at_goal:
+                nums = self.problem.get_robot_nums()
+                path = [
+                    ((i, j, t), nums[robot_id])
+                    for robot_id, coords in printed.items()
+                    for i, j, t in coords
+                ]
             self.logger.minimal(f"Path: {path}")
-            for robot_id, robot in self.problem.robots.items():
-                self.logger.minimal(f" Robot {robot_id} path: {robot.path}")
+            for robot_id, coords in printed.items():
+                self.logger.minimal(f" Robot {robot_id} path: {coords}")
 
         avg_solve_time = total_solve_time / self.num_runs if self.num_runs else 0
         self.logger.minimal(

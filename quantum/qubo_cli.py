@@ -1171,6 +1171,7 @@ def main():
             level=args.benchmark_level,
             preprocess=_resolve_preprocess(args),
             seed=args.seed,
+            clip_at_goal=args.clip_at_goal,
         )
         runner.run_build()
 
