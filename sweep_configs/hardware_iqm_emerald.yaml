@@ -3,8 +3,8 @@
 #   spooky-sweep --config sweep_configs/hardware_iqm_emerald.yaml \
 #       --enable-hardware --confirm-hardware-quota "yes-spend-quota"
 #
-# Garnet ran these 29 jobs for 14.5 credits (0.5 credit per started second,
-# every job under 1 s). Emerald's rate is unknown; 3x3 runs first.
+# Two of hardware_iqm.yaml's four problems (the 3x3 ran as a CLI pilot):
+# Emerald bills 0.75 credit per started QPU second vs Garnet's 0.5, ~16 jobs.
 # fail_fast: a declined job (credits out) stops the sweep instead of every
 # later problem queueing and failing too.
 
@@ -15,16 +15,10 @@ sweep:
   output_root: results/sweeps
 
 instances:
-  - map: quantum/maps/synthetic/3x3/obs3x3_standard
-    problems: [baseline]
-    builder: grid
   - map: quantum/maps/synthetic/5x5/no_obs5x5
     problems: [baseline]
     builder: grid
   - map: quantum/maps/synthetic/5x5/obs5x5_easy
-    problems: [baseline]
-    builder: grid
-  - map: quantum/maps/synthetic/5x5/obs5x5_medium
     problems: [baseline]
     builder: grid
 

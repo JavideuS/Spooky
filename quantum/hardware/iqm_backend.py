@@ -20,10 +20,8 @@ from quantum.hardware.qpu_calibration import iqm_two_qubit_depth, record_executi
 from quantum.utils.logger import get_logger
 
 # Resonance credits per started second of QPU execution (execution_started ->
-# execution_ended, rounded up, 1 s minimum). Observed on the Resonance
-# dashboard 2026-09-27 -- 31 Garnet and 2 Emerald jobs matched exactly --
-# not an IQM-documented rule, and no IQM API reports credits, so it is an
-# estimate to check against the dashboard. Update when IQM changes pricing.
+# execution_ended, rounded up, 1 s minimum). It is an estimate to check against
+# the dashboard. Update when IQM changes pricing.
 IQM_CREDITS_PER_QPU_SECOND = {"garnet": 0.5, "emerald": 0.75}
 
 
