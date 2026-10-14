@@ -24,19 +24,19 @@ solvers:
   dwave:
     fast:
       <<: *dwave_defaults
-      normalization_scale: 4.0
+      normalization_scale: 1.0
       num_reads: 4
-      description: "Dwave benefits from big normalizations and small number of reads/shots"
+      description: "Fast D-Wave solver with a small number of reads"
       tags: ["dwave", "fast", "small maps", "<15 qubits"]
     general:
       <<: *dwave_defaults
-      normalization_scale: 4.0
+      normalization_scale: 1.0
       num_reads: 8
       description: "General purpose D-Wave solver"
       tags: ["dwave", "general", "20+ qubits", "Safe"]
     hard:
       <<: *dwave_defaults
-      normalization_scale: 4.0
+      normalization_scale: 1.0
       num_reads: 15
       description: "Usually 15 runs is a safe upper limit, more than that only waste of time"
       tags: ["dwave", "hard", "30+ qubits", "Slow"]

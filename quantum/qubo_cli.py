@@ -385,9 +385,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="N",
         help=(
-            "QUBO normalization scale factor. "
-            "Defaults: dwave=4.0, pennylane=1.0. "
-            "See qubo.py comments for per-qubit guidance."
+            "QUBO normalization scale factor (0 = off). Recommended: 1.0. "
+            "dwave/neal derives its temperature range from the QUBO, so the "
+            "scale has no effect there; for QAOA it is equivalent to rescaling "
+            "gamma, and the default angles were tuned at 1.0. "
+            "Defaults: dwave=1.0, pennylane=1.0, IBM/IQM hardware=4.0."
         ),
     )
     sol.add_argument(
@@ -817,7 +819,7 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
     logger = get_logger()
 
     if args.solver == "dwave":
-        norm_scale = args.normalize_scale if args.normalize_scale is not None else 4.0
+        norm_scale = args.normalize_scale if args.normalize_scale is not None else 1.0
         num_reads = (
             int(args.num_reads) if args.num_reads and args.num_reads != "auto" else 4
         )

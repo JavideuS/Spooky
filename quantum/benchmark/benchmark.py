@@ -99,11 +99,24 @@ class BenchmarkRunner:
 
         np.random.seed(run_seed)
 
-        # PennyLane QAOA: re-draw the layer angles (shape (layers, 2)).
-        # optimization=False replays these verbatim, so without this every
-        # run samples the identical circuit.
-        if hasattr(self.solver, "p") and hasattr(self.solver, "params"):
-            self.solver.params = np.random.rand(self.solver.p, 2)
+        # PennyLane QAOA: re-draw the layer angles (shape (layers, 2)) when
+        # they were random to begin with -- optimization=False replays them
+        # verbatim, so without this every run samples the identical circuit.
+        # Angles passed explicitly (the tuned CLI defaults, --init-params) are
+        # the thing being benchmarked and are kept; runs then differ only in
+        # their shots (device_seed below).
+        if (
+            hasattr(self.solver, "p")
+            and hasattr(self.solver, "params")
+            and not getattr(self.solver, "fixed_params", False)
+        ):
+            # pennylane.numpy, not numpy: a plain array is not trainable and
+            # solve(optimization=True) then fails with "No trainable parameters"
+            from pennylane import numpy as pnp
+
+            self.solver.params = pnp.array(
+                np.random.rand(self.solver.p, 2), requires_grad=True
+            )
 
         # PennyLane simulator devices: the Lightning backends seed their
         # sampler RNG once per process and ignore np.random.seed() after

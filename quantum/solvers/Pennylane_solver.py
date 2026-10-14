@@ -104,7 +104,14 @@ class PennylaneSolver(BaseSolver):
             use_session=use_session, session_max_time=session_max_time
         )
         # Parameters for the QAOA circuit
-        self.params = params if params is not None else np.random.rand(layers, 2)
+        # Explicit angles are kept across benchmark runs (BenchmarkRunner only
+        # re-draws random ones); a list from a sweep YAML works too
+        self.fixed_params = params is not None
+        self.params = (
+            np.array(params, requires_grad=True)
+            if params is not None
+            else np.random.rand(layers, 2)
+        )
         self.optimizer_steps = opt_steps  # Number of optimization steps
         self.shots = num_reads  # Number of shots for sampling
         # Seed forwarded to qml.device() for the simulator backends
