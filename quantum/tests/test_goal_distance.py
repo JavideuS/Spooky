@@ -93,7 +93,9 @@ def test_allow_wait_rewards_staying_and_drops_in_window_backtracking():
         ]
         problem = PathfindingProblem(robots, grid=grid, name="wait")
         builders = [
-            GridQUBOBuilder(problem, penalties=PENALTIES, allow_wait=flag)
+            GridQUBOBuilder(
+                problem, penalties=PENALTIES, allow_wait=flag, goal_objective="legacy"
+            )
             for flag in (False, True)
         ]
         for b in builders:
@@ -113,3 +115,12 @@ def test_allow_wait_rewards_staying_and_drops_in_window_backtracking():
     # b four cells away: nobody to yield to, strict terms unchanged
     off, on = build((4, 0))
     assert on.Q == off.Q
+
+
+def test_goal_objective_default_per_backend():
+    """QAOA keeps the legacy goal term until its tuned angles are retuned on
+    the shaped Hamiltonian; every other QUBO backend gets shaped."""
+    from quantum.builder import default_goal_objective
+
+    assert default_goal_objective("pennylane") == "legacy"
+    assert default_goal_objective("dwave") == "shaped"

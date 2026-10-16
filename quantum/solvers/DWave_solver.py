@@ -2,6 +2,8 @@
 from dimod import BinaryQuadraticModel
 
 # Optimized version is neal AnnealingSampler not dimod one (C++ based)
+import math
+
 from neal import SimulatedAnnealingSampler
 from .base_solver import BaseSolver
 from quantum.utils import preprocess as preprocess_modes
@@ -9,10 +11,16 @@ from quantum.utils import preprocess as preprocess_modes
 
 class DWaveSolver(BaseSolver):
     def __init__(
-        self, normalize_scale=0, num_reads=10, verbose_level=2, seed=None, **kwargs
+        self, normalize_scale=0, num_reads="auto", verbose_level=2, seed=None, **kwargs
     ):
         """
         Args:
+            num_reads: Reads per window, or "auto" to scale them with the
+                window: max(AUTO_MIN_READS, ceil(vars * AUTO_READS_PER_VAR)).
+                A fixed count under-samples long windows -- on the synthetic
+                5x5/10x10 set the chance a read reaches a window's best energy
+                halves roughly every 20-25 variables -- so with fixed reads
+                every window-length comparison also measures sampler capacity.
             seed: Random seed forwarded to neal.SimulatedAnnealingSampler.sample().
                 None (default) leaves annealing non-deterministic run-to-run;
                 set for reproducible sweeps/benchmarks.
@@ -26,6 +34,18 @@ class DWaveSolver(BaseSolver):
             **kwargs,
         )
         self.seed = seed
+
+    AUTO_MIN_READS = 4
+    AUTO_READS_PER_VAR = 0.5
+
+    def reads_for(self, bqm):
+        """Reads for one window's sample() call; see num_reads."""
+        if self.num_reads != "auto":
+            return self.num_reads
+        return max(
+            self.AUTO_MIN_READS,
+            math.ceil(len(bqm.variables) * self.AUTO_READS_PER_VAR),
+        )
 
     def solve(self, builder, optimization=False, preprocess=True):
         """
@@ -65,7 +85,9 @@ class DWaveSolver(BaseSolver):
                 self.logger.standard("Iteration:", builder.iter)
                 bqm = BinaryQuadraticModel.from_qubo(Q)
                 sampler = SimulatedAnnealingSampler()
-                response = sampler.sample(bqm, num_reads=self.num_reads, seed=self.seed)
+                response = sampler.sample(
+                    bqm, num_reads=self.reads_for(bqm), seed=self.seed
+                )
                 first = response.first
                 best_sample.append(first.sample)
                 best_energy.append(response.first.energy)
@@ -139,7 +161,9 @@ class DWaveSolver(BaseSolver):
 
             bqm = BinaryQuadraticModel.from_qubo(builder.Q)
             sampler = SimulatedAnnealingSampler()
-            response = sampler.sample(bqm, num_reads=self.num_reads, seed=self.seed)
+            response = sampler.sample(
+                bqm, num_reads=self.reads_for(bqm), seed=self.seed
+            )
 
             first = response.first
             full_sol, invalid_moves = self._handle_iteration_result(

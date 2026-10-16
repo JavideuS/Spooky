@@ -4,6 +4,18 @@ import numpy as np
 from .base_qubo import BaseQUBO
 
 GOAL_DISTANCES = ("manhattan", "bfs")
+GOAL_OBJECTIVES = ("shaped", "terminal", "legacy")
+
+
+def default_goal_objective(backend):
+    """Goal term a solver backend gets when none is asked for. QAOA keeps
+    "legacy" for now: its fixed angles were tuned on the legacy Hamiltonian,
+    and shaped's ties leave the fixer more variables free (more qubits) --
+    tuned-angle QAOA on the synthetic set falls from 60/70 to 42/66 under
+    shaped. Revisit once the angles are retuned."""
+    return "legacy" if backend == "pennylane" else "shaped"
+
+
 # Fraction of the competing collision penalty a robot's whole-window progress
 # reward may reach (see GridQUBOBuilder.progress_weight_cap)
 PROGRESS_CAP_MARGIN = 0.5
@@ -31,6 +43,7 @@ class GridQUBOBuilder(BaseQUBO):
         name="grid",
         var_limit=156,  # 101 605 1001
         window_max_steps=None,
+        window_sizing="estimate",
         distance_scaling="enhanced_linear",
         robot_window_limits=None,
         verbose_level=2,
@@ -41,6 +54,9 @@ class GridQUBOBuilder(BaseQUBO):
         allow_wait=False,
         approach_weight=0.0,
         approach_radius=None,
+        goal_objective="shaped",
+        goal_weight=0.5,
+        fixer="chain",
     ):
         """
         goal_distance: distance the goal-approach reward is built on.
@@ -76,6 +92,18 @@ class GridQUBOBuilder(BaseQUBO):
             disables. approach_radius: path distance beyond which it is 0;
             None (default) = min(M, N) // 2, so on a small map it doesn't
             reach every robot pair and penalise passes in open space.
+        goal_objective: how the goal is rewarded (see apply_goal_objective).
+            "shaped" (default) and "terminal" price arrival time directly:
+            w per step not at the goal plus the BFS distance left, so a wait
+            costs w and the cost doesn't grow with window length. They replace
+            goal_later, the K_goal_approx curves and K_bt. "legacy" keeps
+            those (goal_later + K_goal_approx + K_bt).
+        goal_weight: w, the price of one step of arrival. A violation pays its
+            hard penalty once and gains w per step it saves, so w must stay
+            well below the cheapest hard penalty; 0.5 was best on the
+            synthetic set with the trailing penalties (1-2 let shortcuts win).
+            goal_distance, obstacle_repulsion and progress_weight only apply
+            to "legacy".
         """
         if goal_distance not in GOAL_DISTANCES:
             raise ValueError(
@@ -89,6 +117,16 @@ class GridQUBOBuilder(BaseQUBO):
             )
         self.progress_weight = progress_weight
         self.allow_wait = allow_wait
+        if goal_objective not in GOAL_OBJECTIVES:
+            raise ValueError(
+                f"goal_objective must be one of {GOAL_OBJECTIVES}, got {goal_objective!r}"
+            )
+        # "terminal"/"shaped" replace goal_later (+ K_goal_approx) and K_bt with
+        # one arrival-time term, see apply_goal_objective()
+        self.goal_objective = goal_objective
+        if float(goal_weight) <= 0:
+            raise ValueError(f"goal_weight must be > 0, got {goal_weight!r}")
+        self.goal_weight = float(goal_weight)
         self.approach_weight = approach_weight
         self.approach_radius = (
             approach_radius
@@ -103,6 +141,8 @@ class GridQUBOBuilder(BaseQUBO):
             name=name,
             var_limit=var_limit,
             window_max_steps=window_max_steps,
+            window_sizing=window_sizing,
+            fixer=fixer,
             distance_scaling=distance_scaling,
             robot_window_limits=robot_window_limits,
             verbose_level=verbose_level,
@@ -243,7 +283,17 @@ class GridQUBOBuilder(BaseQUBO):
                     self.Q[(n, n)] = self.Q.get((n, n), 0) + K_adj
 
                     targets = adjacency[(i, j)]
-                    if self._may_wait(robot_id):
+                    # Staying on the goal is rewarded like a move under the
+                    # arrival-time objectives. grid.adjacency has no self-move,
+                    # so otherwise every stay pays K_adj -- on the goal that
+                    # beats lock + w and the robot steps off; legacy's large
+                    # goal reward hid it. Waits elsewhere keep that cost: it is
+                    # the push that keeps robots moving (rewarding every stay
+                    # measured worse, more stalls).
+                    stay_on_goal = self.goal_objective != "legacy" and (i, j) == tuple(
+                        robot.goal
+                    )
+                    if stay_on_goal or self._may_wait(robot_id):
                         targets = [*targets, (i, j)]
                     for k, l in targets:
                         if self._active_cells is not None and (k, l) not in next_active:
@@ -567,6 +617,62 @@ class GridQUBOBuilder(BaseQUBO):
                         -K_goal * time_factor * window_constant
                     )
 
+    def apply_goal_objective(self):
+        """
+        Arrival-time objective (goal_objective "terminal" or "shaped"):
+        energy = w * (steps in the window not at the goal + BFS distance left).
+
+        - At-goal reward: -w at the goal cell on every step, so arriving a step
+          earlier is worth exactly w (equivalent, under one-hot, to charging w
+          per step away from it).
+        - Distance left, h = goal_distance_map (obstacle-aware BFS):
+            terminal  w * h at the window's last step only.
+            shaped    the same total w spread over every step, c_t ~ (t-start),
+                      so each timestep's cells get their own pull toward the
+                      goal while a shortcut still gains at most w per step saved.
+          If the robot's deadline falls inside the window, its last step also
+          gets K_goal * h: arriving by the deadline is required, not a
+          preference.
+        Waiting costs w per step (one step of lost progress), loops 2w, so K_bt
+        is not used in these modes.
+        """
+        M, N = self.problem.grid.M, self.problem.grid.N
+        robot_nums = self.problem.get_robot_nums()
+        K_goal = self.penalties.get("K_goal", 0)
+
+        for robot_id in self.get_active_robot_in_window():
+            robot = self.problem.robots[robot_id]
+            robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
+            start = max(0, robot.start_time - self.current_T)
+            end_time = robot.T + robot.start_time
+            deadline_in_window = end_time <= self.current_T + self.t_max
+            end = end_time - self.current_T if deadline_in_window else self.t_max
+            steps = list(range(start + 1, end))
+            if not steps:
+                continue
+            w = self.goal_weight
+            goal = tuple(robot.goal)
+            dist = self.goal_distance_map(robot_id)
+            unreachable = max(dist.values(), default=0) + 1
+
+            if self.goal_objective == "shaped":
+                ramp = {t: t - start for t in steps}
+                total = sum(ramp.values())
+                coeff = {t: w * ramp[t] / total for t in steps}
+            else:
+                coeff = {steps[-1]: w}
+            if deadline_in_window:
+                coeff[steps[-1]] = coeff.get(steps[-1], 0) + K_goal
+
+            for t in steps:
+                for i, j in self._cells(robot_id, t):
+                    n = i * N + j + M * N * t + robot_offset
+                    e = coeff.get(t, 0) * dist.get((i, j), unreachable)
+                    if (i, j) == goal:
+                        e -= w
+                    if e:
+                        self.Q[(n, n)] = self.Q.get((n, n), 0) + e
+
     def apply_goal_early_penalty(self):
         """
         Apply early goal penalty: encourage reaching the goal earlier.
@@ -608,6 +714,19 @@ class GridQUBOBuilder(BaseQUBO):
                     continue
                 g_t = e_i * N + e_j + M * N * t + robot_offset
                 g_t_next = e_i * N + e_j + M * N * (t + 1) + robot_offset
+
+                if self.goal_objective != "legacy":
+                    # Same energy under one-hot (x_g,t * sum of the other cells
+                    # at t+1 == x_g,t * (1 - x_g,t+1)) but with no diagonal: the
+                    # +K_lock below makes the goal look like the most expensive
+                    # cell to the diagonal fixer, which then pins it to 0. Legacy
+                    # keeps it because its large goal reward offsets it.
+                    for k, l in self._cells(robot_id, t + 1):
+                        if (k, l) == (e_i, e_j):
+                            continue
+                        m = k * N + l + M * N * (t + 1) + robot_offset
+                        self.Q[(g_t, m)] = self.Q.get((g_t, m), 0) + K_lock
+                    continue
 
                 # Linear term: +K_lock * x_g_t
                 self.Q[(g_t, g_t)] = self.Q.get((g_t, g_t), 0) + K_lock
@@ -1016,6 +1135,12 @@ class GridQUBOBuilder(BaseQUBO):
             # apply_crash_penalty separately — that would double-count it.
             if "trailing" in constraints_to_apply and "crash" in constraints_to_apply:
                 constraints_to_apply.remove("crash")
+            if self.goal_objective != "legacy":
+                constraints_to_apply = [
+                    c
+                    for c in constraints_to_apply
+                    if c not in ("goal_later", "backtracking")
+                ] + ["goal_objective"]
 
         # To clean the QUBO dictionary before building
         # In case there were previous qubo with different constraints/size
@@ -1034,6 +1159,8 @@ class GridQUBOBuilder(BaseQUBO):
             self.apply_goal_early_penalty()
         if "goal_later" in constraints_to_apply:
             self.apply_goal_later_penalty()
+        if "goal_objective" in constraints_to_apply:
+            self.apply_goal_objective()
         if "lock" in constraints_to_apply:
             self.apply_lock_after_goal()
         if "backtracking" in constraints_to_apply:

@@ -27,6 +27,8 @@ class BaseQUBO(ABC):
         name="unnamed",
         var_limit=601,
         window_max_steps=None,
+        window_sizing="estimate",
+        fixer="chain",
         distance_scaling=None,
         robot_window_limits=None,
         verbose_level=2,
@@ -40,6 +42,22 @@ class BaseQUBO(ABC):
         # Per-robot window limits: dict {robot_id: max_steps}
         # If a robot is not in this dict, no specific limit is applied
         self.robot_window_limits = robot_window_limits or {}
+        # Explicit cap on every window, honoured by fit_window_to_var_limit()
+        self.window_max_steps = window_max_steps
+        # How _prepare_window() sizes each window: "estimate" keeps
+        # max_window_size()'s connectivity**step bound, "bfs" fits the window
+        # to var_limit from the real BFS layers (fit_window_to_var_limit()).
+        if window_sizing not in ("estimate", "bfs"):
+            raise ValueError(
+                f"window_sizing must be 'estimate' or 'bfs', got {window_sizing!r}"
+            )
+        self.window_sizing = window_sizing
+        # Diagonal fixer's path discipline (see _process_robot_timesteps):
+        # "chain" pins any step whose pins keep the robot's 1-pins connected;
+        # "prefix" also stops a robot's pinning at its first undecided step.
+        if fixer not in ("chain", "prefix"):
+            raise ValueError(f"fixer must be 'chain' or 'prefix', got {fixer!r}")
+        self.fixer = fixer
         # Windowing/time slicing support
         self.current_T = 0  # This represents the current global time in the problem
         self.total_t = getattr(self.problem, "T", 1)
@@ -256,6 +274,71 @@ class BaseQUBO(ABC):
             result = 2
 
         return result
+
+    def fit_window_to_var_limit(self, bfs_variant=None):
+        """
+        Size the current window from the real BFS layers instead of
+        max_window_size()'s connectivity**step estimate, which overshoots the
+        true reachable set by orders of magnitude and so leaves most of
+        var_limit unused.
+
+        A robot's BFS layers grow outward from its current cell and don't
+        depend on where the window ends, so a window of W steps holds exactly
+        the first W layers of a longer one. That lets one BFS over the longest
+        allowed window serve every candidate W: pick the largest W whose
+        logical variable count fits var_limit, then truncate to it -- no
+        second BFS.
+
+        The ceiling is the rest of the horizon (+1, as in max_window_size(),
+        so the last window carries current_T past total_t), capped by
+        window_max_steps and the active robots' robot_window_limits. The
+        minimum stays 2 so current_T always advances; _prepare_window()
+        raises if even that doesn't fit.
+
+        Sets self.t_max and returns get_logical_variables()'s
+        (fixed_ones, active_cells) for the chosen window.
+        """
+        ceiling = self.total_t - self.current_T + 1
+        caps = [
+            limit
+            for robot_id, limit in self.robot_window_limits.items()
+            if self.problem.robots[robot_id].active
+        ]
+        if self.window_max_steps:
+            caps.append(self.window_max_steps)
+        if caps:
+            ceiling = min(ceiling, min(caps))
+        self.t_max = max(ceiling, 2)
+
+        fixed_ones, active_cells = self.get_logical_variables(bfs_variant)
+
+        per_t = {}
+        for (_, t), cells in active_cells.items():
+            per_t[t] = per_t.get(t, 0) + len(cells)
+        window, running = 2, 0
+        for t in range(self.t_max):
+            running += per_t.get(t, 0)
+            if running > self.var_limit:
+                break
+            window = t + 1
+        window = max(window, 2)
+        if window >= self.t_max:
+            return fixed_ones, active_cells
+
+        self.t_max = window
+        # Window-relative t of a flat index: idx // cells_per_t is
+        # robot * total_t + t.
+        if self.problem.get_format_type() == "graph":
+            cells_per_t = self.num_nodes
+        else:
+            cells_per_t = self.problem.grid.M * self.problem.grid.N
+        fixed_ones = {
+            idx: v
+            for idx, v in fixed_ones.items()
+            if (idx // cells_per_t) % self.total_t < window
+        }
+        active_cells = {k: v for k, v in active_cells.items() if k[1] < window}
+        return fixed_ones, active_cells
 
     def get_active_robot_in_window(self):
         """
@@ -800,6 +883,24 @@ class BaseQUBO(ABC):
                 prev_timestep = t
                 break  # BFS handles all remaining timesteps
             else:
+                # should_validate only checks a 1-pin against the step right
+                # before it. Pins at other steps -- from this pass or an
+                # earlier one -- can still cut the robot's chain: robot at A,
+                # A+2 pinned 1 at t+2 in one pass, then A+1 (the only way
+                # between) pinned 0 at t+1 in the next. Leave the step to the
+                # solver if its pins would disconnect any two consecutive
+                # 1-pins of this robot.
+                if fix_result["fixes"] and not self._chain_connected(
+                    robot_offset, vars_per_time, total_fixed, fix_result["fixes"]
+                ):
+                    fix_result["fixes"] = {}
+                # fixer="prefix": commit a path only as an unbroken run of
+                # 1-pins -- a step without one (a tie for the lowest
+                # coefficient) ends this robot's pinning for the pass; the
+                # next pass resumes once other robots are fixed. Pins less,
+                # which suits SA (more full_safe valid) but costs QAOA qubits.
+                if self.fixer == "prefix" and not any(fix_result["fixes"].values()):
+                    break
                 # Apply normal fixes
                 if fix_result["fixes"]:
                     total_fixed.update(fix_result["fixes"])
@@ -814,6 +915,56 @@ class BaseQUBO(ABC):
                             prev_fixed_pos = var_idx
                             prev_timestep = t
                             break
+
+    def _chain_connected(self, robot_offset, vars_per_time, total_fixed, new_fixes):
+        """Whether, with new_fixes applied on top of total_fixed, every pair of
+        consecutive 1-pins of this robot in the window (its BFS start pin
+        included) is still connected through open cells: at each step in
+        between, a cell is open if it is still in Q or pinned to 1 and not
+        pinned to 0. Moves are to a neighbour or staying put. Grid only -- the
+        graph builder keeps the previous (unchecked) behaviour."""
+        if self.problem.get_format_type() != "grid":
+            return True
+        N = self.problem.grid.N
+        adjacency = self.problem.grid.adjacency
+        span = vars_per_time * self.total_t
+        pinned = {
+            **getattr(self, "_pinned_before_diag", {}),
+            **total_fixed,
+            **new_fixes,
+        }
+
+        def mine(var):
+            return robot_offset <= var < robot_offset + span
+
+        ones = sorted(
+            divmod(var - robot_offset, vars_per_time)
+            for var, val in pinned.items()
+            if val == 1 and mine(var)
+        )
+
+        def is_open(t, cell):
+            var = robot_offset + t * vars_per_time + cell[0] * N + cell[1]
+            if var in pinned:
+                return pinned[var] == 1
+            return (var, var) in self.Q
+
+        for (t0, c0), (t1, c1) in zip(ones, ones[1:]):
+            if t1 == t0:
+                continue
+            frontier = {divmod(c0, N)}
+            for t in range(t0 + 1, t1 + 1):
+                frontier = {
+                    d
+                    for c in frontier
+                    for d in (c, *adjacency.get(c, ()))
+                    if is_open(t, d)
+                }
+                if not frontier:
+                    return False
+            if divmod(c1, N) not in frontier:
+                return False
+        return True
 
     def _collect_timestep_vars(self, robot_offset, vars_per_time, n):
         """Collect current variables grouped by timestep for this robot."""

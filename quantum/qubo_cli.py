@@ -50,7 +50,7 @@ from quantum.pathFormulation import PathfindingProblem, InfeasibleProblemError
 import quantum.config.parser as config_parser
 from quantum.builder import (
     QUBOBuilder, GraphQUBO, GridILPBuilder, GraphILPBuilder,
-    GridCBSBuilder, GraphCBSBuilder,
+    GridCBSBuilder, GraphCBSBuilder, default_goal_objective,
 )
 import quantum.benchmark.benchmark as bm_module
 from quantum.utils.logger import set_verbose_level, get_logger
@@ -187,6 +187,36 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     prob.add_argument(
+        "--goal-objective",
+        choices=["shaped", "terminal", "legacy"],
+        default=None,
+        help=(
+            "Goal term (grid builder only). shaped: arrival time priced at "
+            "--goal-weight per step, BFS distance spread over the window; "
+            "terminal: same, distance at the window end only; legacy: "
+            "goal_later + K_goal_approx + K_bt. Default: shaped, legacy for "
+            "pennylane (its tuned angles predate shaped)"
+        ),
+    )
+    prob.add_argument(
+        "--fixer",
+        choices=["chain", "prefix"],
+        default="chain",
+        help=(
+            "Diagonal fixer path discipline (full/full_safe). chain (default): "
+            "pins must keep each robot's path connected; prefix: also stop at a "
+            "robot's first undecided step -- pins less, better for SA in "
+            "full_safe, worse for QAOA (more qubits)"
+        ),
+    )
+    prob.add_argument(
+        "--goal-weight",
+        type=float,
+        default=0.5,
+        metavar="W",
+        help="Price of one step of arrival for shaped/terminal (default: 0.5)",
+    )
+    prob.add_argument(
         "--approach-radius",
         type=int,
         default=None,
@@ -212,6 +242,16 @@ def build_parser() -> argparse.ArgumentParser:
             "Window step limit. Pass a single integer to cap all robots globally "
             "(e.g. --window-limit 6), or 'robot_id=N' pairs for per-robot limits "
             "(e.g. --window-limit robot_0=5 robot_1=3)."
+        ),
+    )
+    prob.add_argument(
+        "--window-sizing",
+        choices=["estimate", "bfs"],
+        default="estimate",
+        help=(
+            "How each window is sized against --var-limit: 'estimate' "
+            "(default) uses the connectivity**step bound, 'bfs' fits the "
+            "longest window whose real BFS-pruned variable count fits."
         ),
     )
     prob.add_argument(
@@ -398,7 +438,8 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="N|auto",
         help=(
             "Number of solver reads. Pass an integer or 'auto' "
-            "(default: dwave=4, pennylane=auto)"
+            "(default: auto for both). dwave 'auto' scales reads with each "
+            "window: max(4, ceil(vars / 2)); pass e.g. 4 for the fast setting"
         ),
     )
     sol.add_argument(
@@ -820,9 +861,10 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
 
     if args.solver == "dwave":
         norm_scale = args.normalize_scale if args.normalize_scale is not None else 1.0
-        num_reads = (
-            int(args.num_reads) if args.num_reads and args.num_reads != "auto" else 4
-        )
+        if args.num_reads in (None, "auto"):
+            num_reads = "auto"
+        else:
+            num_reads = int(args.num_reads)
         logger.minimal(f"Creating DWave solver (scale={norm_scale}, reads={num_reads})")
         return SolverFactory.create_solver(
             solver="dwave",
@@ -1124,6 +1166,7 @@ def main():
     }
     if args.var_limit is not None:
         builder_kwargs["var_limit"] = args.var_limit
+    builder_kwargs["window_sizing"] = args.window_sizing
 
     if args.solver == "ilp":
         # ILP has no penalty weights, var_limit, or windowing — builder_kwargs
@@ -1150,6 +1193,11 @@ def main():
         builder_kwargs["obstacle_repulsion"] = args.obstacle_repulsion
         builder_kwargs["progress_weight"] = args.progress_weight
         builder_kwargs["allow_wait"] = args.allow_wait
+        builder_kwargs["goal_objective"] = (
+            args.goal_objective or default_goal_objective(args.solver)
+        )
+        builder_kwargs["fixer"] = args.fixer
+        builder_kwargs["goal_weight"] = args.goal_weight
         builder_kwargs["approach_weight"] = args.approach_weight
         builder_kwargs["approach_radius"] = args.approach_radius
         builder = QUBOBuilder(p, **builder_kwargs)

@@ -10,6 +10,7 @@ class GraphQUBO(BaseQUBO):
         name="graph",
         var_limit=156,  # 65 131
         window_max_steps=None,
+        window_sizing="estimate",
         distance_scaling="enhanced_linear",
         robot_window_limits=None,
         log_reductions=True,
@@ -23,6 +24,7 @@ class GraphQUBO(BaseQUBO):
             name=name,
             var_limit=var_limit,
             window_max_steps=window_max_steps,
+            window_sizing=window_sizing,
             distance_scaling=distance_scaling,
             robot_window_limits=robot_window_limits,
             log_reductions=log_reductions,

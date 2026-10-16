@@ -25,6 +25,7 @@ from quantum.utils.paths import RESULTS_DIR
 from quantum.pathFormulation import PathfindingProblem
 from quantum.solvers import SolverFactory
 from quantum.builder import (
+    default_goal_objective,
     QUBOBuilder,
     GraphQUBO,
     GridILPBuilder,
@@ -335,8 +336,14 @@ class SweepRunner:
         penalties = dict(self._penalty_sets[solver_cfg["penalty_set"]])
         penalties.setdefault("name", solver_cfg["penalty_set"])
         builder_kwargs = {"penalties": penalties, "name": problem_name}
-        if "var_limit" in solver_cfg:
-            builder_kwargs["var_limit"] = solver_cfg["var_limit"]
+        for key in ("var_limit", "window_sizing"):
+            if key in solver_cfg:
+                builder_kwargs[key] = solver_cfg[key]
+        if "window_limit" in solver_cfg:
+            # Same as the CLI's --window-limit N: one cap for every robot
+            builder_kwargs["robot_window_limits"] = {
+                robot_id: solver_cfg["window_limit"] for robot_id in problem.robots
+            }
         if builder_kind == "grid":
             # Grid-only goal-term options; absent keys keep QUBOBuilder's defaults
             for key in (
@@ -347,9 +354,13 @@ class SweepRunner:
                 "allow_wait",
                 "approach_weight",
                 "approach_radius",
+                "goal_objective",
+                "goal_weight",
+                "fixer",
             ):
                 if key in solver_cfg:
                     builder_kwargs[key] = solver_cfg[key]
+            builder_kwargs.setdefault("goal_objective", default_goal_objective(backend))
             p = problem.as_grid_only()
             return p, QUBOBuilder(p, **builder_kwargs)
         p = problem.as_graph_only()

@@ -683,13 +683,18 @@ class BaseSolver(ABC):
         import time as timing
 
         t0 = timing.time()
-        fixed_vars, active_cells = builder.get_logical_variables(bfs_variant)
+        if builder.window_sizing == "bfs":
+            fixed_vars, active_cells = builder.fit_window_to_var_limit(bfs_variant)
+        else:
+            fixed_vars, active_cells = builder.get_logical_variables(bfs_variant)
         builder._active_cells = active_cells
         t1 = timing.time()
 
-        # Validate feasibility using actual sparse counts (first 2 active timesteps).
-        # This is the authoritative check — BFS estimates in max_window_size() are only
-        # used for sizing; here we know the real reachable cell counts.
+        # Validate feasibility using actual sparse counts (first 2 active
+        # timesteps). With window_sizing="bfs" the window was already fitted
+        # to var_limit, so this only fires when even the 2-step minimum
+        # doesn't fit; with "estimate" it is the authoritative check, since
+        # max_window_size() is only an estimate.
         if (builder.total_t - builder.current_T) > 0:
             first_two_ts = sorted(set(t for (_, t) in active_cells))[:2]
             min_vars = sum(
