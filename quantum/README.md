@@ -63,38 +63,25 @@ A run that stops because a robot provably cannot reach its goal before its
 deadline (shortest path > steps left) is reported as a windowing stall and
 attributed to `windowing` in benchmark results.
 
-#### Windowed multi-robot options (grid builder)
+#### Goal term and windowed multi-robot options (grid builder)
 
-A window only sees a few steps, so the goal-approach term is what tells it where
-to go, and the penalty balance decides whether robots yield or collide. These
-options are off by default; recommended for multi-robot runs:
+A window only sees a few steps, so the goal term is what tells it where to go,
+and the penalty balance decides whether robots yield or collide. The grid
+builder prices **arrival time**: `--goal-weight` w (default 0.5) per step not
+at the goal, plus each robot's obstacle-aware BFS distance left to its goal
+(`--goal-objective shaped`, the default, spreads that distance over the
+window's steps; `terminal` puts it on the last step). A wait costs w and the
+price doesn't grow with window length.
 
-```bash
-python qubo_cli.py --map maps/synthetic/10x10/obs10x10_hard --problem four_robots \
-    --goal-distance bfs --progress-weight auto --obstacle-repulsion 0 \
-    --allow-wait --approach-weight 3
-```
+The rule behind w: **a soft incentive summed over the window must stay below
+the penalty for the violation it competes with.** A violation (jump,
+collision, leaving the goal) pays its hard penalty once and gains w per step
+of arrival it saves, so w must stay well below the cheapest hard penalty;
+w = 1-2 lets shortcuts win.
 
 | Option | Why |
 |---|---|
-| `--goal-distance bfs` | Per-robot shortest-path distance to the goal instead of Manhattan: sees walls and has no local minima. Identical to Manhattan on obstacle-free maps. |
-| `--progress-weight auto` | Reward linear in progress made this window. The distance-scaling curve alone is nearly flat far from the goal (~0.01 per step at distance 16), too weak to steer anything. |
-| `--obstacle-repulsion 0` | The obstacle potential field only patched Manhattan's blindness to walls; with `bfs` it adds local minima instead. |
-| `--allow-wait` | Lets a robot stay in place when another robot is within the approach radius. Without it waiting costs ~`K_adj + K_bt` per step, far more than a swap's `2·K_trail`, so windows swap instead of yielding. Robots with nobody nearby keep the strict terms. |
-| `--approach-weight 3` | Penalizes robot pairs ending a window heading into each other along their shortest routes. Each window picks between equally short routes independently; for four robots swapping corners on a ring only 2 of 16 such choices avoid a head-on. `--approach-radius` defaults to `min(M, N) // 2`. |
-
-The rule behind `--progress-weight` (and why it is capped even when set by
-hand): **a soft incentive summed over the window must stay below the penalty for
-the violation it competes with.** Yielding one step costs the robot one cell of
-progress at every later window step, so the cap is
-`0.5 · K_trail / Σ_t time_factor(t)` (`K_crash` if there is no `K_trail`);
-`auto` uses the cap itself. Above it the QUBO prefers colliding or swapping to
-yielding; far below it robots lack the drive to finish before their deadline.
-
-On the 17 obstacle problems of `synthetic/5x5` and `synthetic/10x10` (`safe`,
-`trailing` penalty set, 5 seeds each) these options took valid runs from 43/85
-(18 windowing stalls) to 55/85 (none). The weights were tuned on those same
-problems, so treat the numbers as indicative.
+| `--approach-weight 3` | Penalizes robot pairs ending a window heading into each other along their shortest routes. Each window picks between equally short routes independently; for four robots swapping corners on a ring only 2 of 16 such choices avoid a head-on. `--approach-radius` defaults to `min(M, N) // 2`. Off by default. |
 
 `--benchmark` results, and the sweep/analysis tooling under `benchmark/`,
 always write to `<repo>/results/` (`benchmarks/`, `sweeps/`) no matter which

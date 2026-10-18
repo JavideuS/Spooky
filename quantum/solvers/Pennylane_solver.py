@@ -18,11 +18,9 @@ class SimulatorCapacityError(ValueError):
 TUNED_ANGLES_2_LAYERS = [[0.969, 2.528], [-0.396, -0.233]]
 
 # num_reads="auto": (max qubits, shots). From quantum.benchmark.calibration
-# shots on those windows with TUNED_ANGLES_2_LAYERS: 3x the worst window's
-# shots for a 99% chance of hitting its exact minimum, rounded up to a power of
-# two (worst windows needed 24 / 97 / 330 / 396). Measured up to 20 qubits in
-# exact simulation; above that it is an extrapolation, and hardware noise
-# weakens concentration -- recalibrate there and whenever angles change.
+# Measured up to 20 qubits in exact simulation; above that it is an extrapolation,
+# and hardware noise weakens concentration
+# Recalibrate there and whenever angles change.
 AUTO_SHOTS = ((9, 128), (12, 512), (16, 1024), (20, 2048))
 AUTO_SHOTS_ABOVE = 4096
 

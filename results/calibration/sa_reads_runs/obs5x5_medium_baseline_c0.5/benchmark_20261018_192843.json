@@ -1,0 +1,536 @@
+{
+  "metadata": {
+    "problem": {
+      "name": "obs5x5_medium_baseline",
+      "T": 20,
+      "robots": {
+        "Lucia": {
+          "robot_id": "Lucia",
+          "start": [
+            4,
+            0
+          ],
+          "goal": [
+            0,
+            4
+          ],
+          "priority": 1.0,
+          "robot_radius": 0.5,
+          "inflation": 0.0,
+          "current_position": [
+            4,
+            0
+          ],
+          "path": [],
+          "active": true
+        }
+      },
+      "grid": {
+        "M": 5,
+        "N": 5,
+        "obstacles": [
+          [
+            1,
+            1
+          ],
+          [
+            2,
+            2
+          ],
+          [
+            3,
+            3
+          ]
+        ],
+        "adjacency": {
+          "(0, 0)": [
+            [
+              1,
+              0
+            ],
+            [
+              0,
+              1
+            ]
+          ],
+          "(0, 1)": [
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              2
+            ]
+          ],
+          "(0, 2)": [
+            [
+              1,
+              2
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "(0, 3)": [
+            [
+              1,
+              3
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              0,
+              4
+            ]
+          ],
+          "(0, 4)": [
+            [
+              1,
+              4
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "(1, 0)": [
+            [
+              0,
+              0
+            ],
+            [
+              2,
+              0
+            ]
+          ],
+          "(1, 1)": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              1
+            ],
+            [
+              1,
+              0
+            ],
+            [
+              1,
+              2
+            ]
+          ],
+          "(1, 2)": [
+            [
+              0,
+              2
+            ],
+            [
+              1,
+              3
+            ]
+          ],
+          "(1, 3)": [
+            [
+              0,
+              3
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              1,
+              2
+            ],
+            [
+              1,
+              4
+            ]
+          ],
+          "(1, 4)": [
+            [
+              0,
+              4
+            ],
+            [
+              2,
+              4
+            ],
+            [
+              1,
+              3
+            ]
+          ],
+          "(2, 0)": [
+            [
+              1,
+              0
+            ],
+            [
+              3,
+              0
+            ],
+            [
+              2,
+              1
+            ]
+          ],
+          "(2, 1)": [
+            [
+              3,
+              1
+            ],
+            [
+              2,
+              0
+            ]
+          ],
+          "(2, 2)": [
+            [
+              1,
+              2
+            ],
+            [
+              3,
+              2
+            ],
+            [
+              2,
+              1
+            ],
+            [
+              2,
+              3
+            ]
+          ],
+          "(2, 3)": [
+            [
+              1,
+              3
+            ],
+            [
+              2,
+              4
+            ]
+          ],
+          "(2, 4)": [
+            [
+              1,
+              4
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              2,
+              3
+            ]
+          ],
+          "(3, 0)": [
+            [
+              2,
+              0
+            ],
+            [
+              4,
+              0
+            ],
+            [
+              3,
+              1
+            ]
+          ],
+          "(3, 1)": [
+            [
+              2,
+              1
+            ],
+            [
+              4,
+              1
+            ],
+            [
+              3,
+              0
+            ],
+            [
+              3,
+              2
+            ]
+          ],
+          "(3, 2)": [
+            [
+              4,
+              2
+            ],
+            [
+              3,
+              1
+            ]
+          ],
+          "(3, 3)": [
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              3
+            ],
+            [
+              3,
+              2
+            ],
+            [
+              3,
+              4
+            ]
+          ],
+          "(3, 4)": [
+            [
+              2,
+              4
+            ],
+            [
+              4,
+              4
+            ]
+          ],
+          "(4, 0)": [
+            [
+              3,
+              0
+            ],
+            [
+              4,
+              1
+            ]
+          ],
+          "(4, 1)": [
+            [
+              3,
+              1
+            ],
+            [
+              4,
+              0
+            ],
+            [
+              4,
+              2
+            ]
+          ],
+          "(4, 2)": [
+            [
+              3,
+              2
+            ],
+            [
+              4,
+              1
+            ],
+            [
+              4,
+              3
+            ]
+          ],
+          "(4, 3)": [
+            [
+              4,
+              2
+            ],
+            [
+              4,
+              4
+            ]
+          ],
+          "(4, 4)": [
+            [
+              3,
+              4
+            ],
+            [
+              4,
+              3
+            ]
+          ]
+        },
+        "resolution": 1.0,
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "solver": {
+      "solver": "dwave",
+      "normalization_scale": 1,
+      "num_reads": "auto",
+      "max_corrections": 3,
+      "seed": 42
+    },
+    "penalty_set": {
+      "K_hot": 9,
+      "K_adj": 4.8,
+      "K_start": 6.5,
+      "K_goal": 3,
+      "K_lock": 4,
+      "K_bt": 2.3,
+      "K_tp": 1.2,
+      "K_goal_approx": 0.7,
+      "K_obs": 0,
+      "K_crash": 2.7,
+      "K_trail": 3,
+      "name": "trailing"
+    },
+    "benchmark_level": 1,
+    "num_runs": 5,
+    "base_seed": 42,
+    "timestamp": "2026-10-18T19:28:42.617151"
+  },
+  "runs": [
+    {
+      "run_id": 1,
+      "run_seed": 43,
+      "timestamp": "2026-10-18T19:28:42.935337",
+      "valid": true,
+      "energy": -9.558641975307694,
+      "build_time_sec": 2e-06,
+      "execution_time_sec": 0.318025,
+      "variable_stats": {
+        "total_initial_variables": 214,
+        "total_variables_reduced": 0,
+        "total_final_variables": 214,
+        "average_reduction_ratio": 0.0,
+        "num_windows": 2,
+        "max_solver_variables": 110,
+        "var_limit": 156,
+        "max_window_size": 9,
+        "mean_window_size": 9.0,
+        "total_dense_variables": 450,
+        "total_logical_variables": 214,
+        "logical_reduction_ratio": 0.5244,
+        "numeric_reduction_ratio": 0.0,
+        "total_reduction_ratio": 0.5244
+      }
+    },
+    {
+      "run_id": 2,
+      "run_seed": 44,
+      "timestamp": "2026-10-18T19:28:43.220080",
+      "valid": true,
+      "energy": -9.682870370368505,
+      "build_time_sec": 3e-06,
+      "execution_time_sec": 0.284526,
+      "variable_stats": {
+        "total_initial_variables": 214,
+        "total_variables_reduced": 0,
+        "total_final_variables": 214,
+        "average_reduction_ratio": 0.0,
+        "num_windows": 2,
+        "max_solver_variables": 110,
+        "var_limit": 156,
+        "max_window_size": 9,
+        "mean_window_size": 9.0,
+        "total_dense_variables": 450,
+        "total_logical_variables": 214,
+        "logical_reduction_ratio": 0.5244,
+        "numeric_reduction_ratio": 0.0,
+        "total_reduction_ratio": 0.5244
+      }
+    },
+    {
+      "run_id": 3,
+      "run_seed": 45,
+      "timestamp": "2026-10-18T19:28:43.376479",
+      "valid": true,
+      "energy": -4.824074074073053,
+      "build_time_sec": 3e-06,
+      "execution_time_sec": 0.156199,
+      "variable_stats": {
+        "total_initial_variables": 104,
+        "total_variables_reduced": 0,
+        "total_final_variables": 104,
+        "average_reduction_ratio": 0.0,
+        "num_windows": 1,
+        "max_solver_variables": 104,
+        "var_limit": 156,
+        "max_window_size": 9,
+        "mean_window_size": 9.0,
+        "total_dense_variables": 225,
+        "total_logical_variables": 104,
+        "logical_reduction_ratio": 0.5378,
+        "numeric_reduction_ratio": 0.0,
+        "total_reduction_ratio": 0.5378
+      }
+    },
+    {
+      "run_id": 4,
+      "run_seed": 46,
+      "timestamp": "2026-10-18T19:28:43.650066",
+      "valid": true,
+      "energy": -9.800154320984632,
+      "build_time_sec": 3e-06,
+      "execution_time_sec": 0.27339,
+      "variable_stats": {
+        "total_initial_variables": 214,
+        "total_variables_reduced": 0,
+        "total_final_variables": 214,
+        "average_reduction_ratio": 0.0,
+        "num_windows": 2,
+        "max_solver_variables": 110,
+        "var_limit": 156,
+        "max_window_size": 9,
+        "mean_window_size": 9.0,
+        "total_dense_variables": 450,
+        "total_logical_variables": 214,
+        "logical_reduction_ratio": 0.5244,
+        "numeric_reduction_ratio": 0.0,
+        "total_reduction_ratio": 0.5244
+      }
+    },
+    {
+      "run_id": 5,
+      "run_seed": 47,
+      "timestamp": "2026-10-18T19:28:43.980349",
+      "valid": true,
+      "energy": -9.739197530861645,
+      "build_time_sec": 3e-06,
+      "execution_time_sec": 0.330075,
+      "variable_stats": {
+        "total_initial_variables": 214,
+        "total_variables_reduced": 0,
+        "total_final_variables": 214,
+        "average_reduction_ratio": 0.0,
+        "num_windows": 2,
+        "max_solver_variables": 110,
+        "var_limit": 156,
+        "max_window_size": 9,
+        "mean_window_size": 9.0,
+        "total_dense_variables": 450,
+        "total_logical_variables": 214,
+        "logical_reduction_ratio": 0.5244,
+        "numeric_reduction_ratio": 0.0,
+        "total_reduction_ratio": 0.5244
+      }
+    }
+  ],
+  "summary": {
+    "valid_runs": 5,
+    "total_runs": 5,
+    "accuracy": 1.0,
+    "average_solve_time_sec": 0.2724
+  }
+}

@@ -1,0 +1,623 @@
+{
+  "metadata": {
+    "problem": {
+      "name": "obs5x5_hard_two_robots",
+      "T": 20,
+      "robots": {
+        "robot_0": {
+          "robot_id": "robot_0",
+          "start": [
+            0,
+            0
+          ],
+          "goal": [
+            4,
+            4
+          ],
+          "priority": 1.0,
+          "robot_radius": 0.5,
+          "inflation": 0.0,
+          "current_position": [
+            0,
+            0
+          ],
+          "path": [],
+          "active": true
+        },
+        "robot_1": {
+          "robot_id": "robot_1",
+          "start": [
+            0,
+            4
+          ],
+          "goal": [
+            4,
+            0
+          ],
+          "priority": 1.0,
+          "robot_radius": 0.5,
+          "inflation": 0.0,
+          "current_position": [
+            0,
+            4
+          ],
+          "path": [],
+          "active": true
+        }
+      },
+      "grid": {
+        "M": 5,
+        "N": 5,
+        "obstacles": [
+          [
+            1,
+            3
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            3
+          ],
+          [
+            4,
+            2
+          ]
+        ],
+        "adjacency": {
+          "(0, 0)": [
+            [
+              1,
+              0
+            ],
+            [
+              0,
+              1
+            ]
+          ],
+          "(0, 1)": [
+            [
+              1,
+              1
+            ],
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              2
+            ]
+          ],
+          "(0, 2)": [
+            [
+              1,
+              2
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "(0, 3)": [
+            [
+              0,
+              2
+            ],
+            [
+              0,
+              4
+            ]
+          ],
+          "(0, 4)": [
+            [
+              1,
+              4
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "(1, 0)": [
+            [
+              0,
+              0
+            ],
+            [
+              2,
+              0
+            ],
+            [
+              1,
+              1
+            ]
+          ],
+          "(1, 1)": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              1
+            ],
+            [
+              1,
+              0
+            ],
+            [
+              1,
+              2
+            ]
+          ],
+          "(1, 2)": [
+            [
+              0,
+              2
+            ],
+            [
+              2,
+              2
+            ],
+            [
+              1,
+              1
+            ]
+          ],
+          "(1, 3)": [
+            [
+              0,
+              3
+            ],
+            [
+              1,
+              2
+            ],
+            [
+              1,
+              4
+            ]
+          ],
+          "(1, 4)": [
+            [
+              0,
+              4
+            ],
+            [
+              2,
+              4
+            ]
+          ],
+          "(2, 0)": [
+            [
+              1,
+              0
+            ],
+            [
+              3,
+              0
+            ],
+            [
+              2,
+              1
+            ]
+          ],
+          "(2, 1)": [
+            [
+              1,
+              1
+            ],
+            [
+              3,
+              1
+            ],
+            [
+              2,
+              0
+            ],
+            [
+              2,
+              2
+            ]
+          ],
+          "(2, 2)": [
+            [
+              1,
+              2
+            ],
+            [
+              3,
+              2
+            ],
+            [
+              2,
+              1
+            ]
+          ],
+          "(2, 3)": [
+            [
+              2,
+              2
+            ],
+            [
+              2,
+              4
+            ]
+          ],
+          "(2, 4)": [
+            [
+              1,
+              4
+            ],
+            [
+              3,
+              4
+            ]
+          ],
+          "(3, 0)": [
+            [
+              2,
+              0
+            ],
+            [
+              4,
+              0
+            ],
+            [
+              3,
+              1
+            ]
+          ],
+          "(3, 1)": [
+            [
+              2,
+              1
+            ],
+            [
+              4,
+              1
+            ],
+            [
+              3,
+              0
+            ],
+            [
+              3,
+              2
+            ]
+          ],
+          "(3, 2)": [
+            [
+              2,
+              2
+            ],
+            [
+              3,
+              1
+            ]
+          ],
+          "(3, 3)": [
+            [
+              4,
+              3
+            ],
+            [
+              3,
+              2
+            ],
+            [
+              3,
+              4
+            ]
+          ],
+          "(3, 4)": [
+            [
+              2,
+              4
+            ],
+            [
+              4,
+              4
+            ]
+          ],
+          "(4, 0)": [
+            [
+              3,
+              0
+            ],
+            [
+              4,
+              1
+            ]
+          ],
+          "(4, 1)": [
+            [
+              3,
+              1
+            ],
+            [
+              4,
+              0
+            ]
+          ],
+          "(4, 2)": [
+            [
+              3,
+              2
+            ],
+            [
+              4,
+              1
+            ],
+            [
+              4,
+              3
+            ]
+          ],
+          "(4, 3)": [
+            [
+              4,
+              4
+            ]
+          ],
+          "(4, 4)": [
+            [
+              3,
+              4
+            ],
+            [
+              4,
+              3
+            ]
+          ]
+        },
+        "resolution": 1.0,
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "solver": {
+      "solver": "dwave",
+      "normalization_scale": 1,
+      "num_reads": "auto",
+      "max_corrections": 3,
+      "seed": 42
+    },
+    "penalty_set": {
+      "K_hot": 9,
+      "K_adj": 4.8,
+      "K_start": 6.5,
+      "K_goal": 3,
+      "K_lock": 4,
+      "K_bt": 2.3,
+      "K_tp": 1.2,
+      "K_goal_approx": 0.7,
+      "K_obs": 0,
+      "K_crash": 2.7,
+      "K_trail": 3,
+      "name": "trailing"
+    },
+    "benchmark_level": 1,
+    "num_runs": 5,
+    "base_seed": 42,
+    "timestamp": "2026-10-18T19:28:41.120515"
+  },
+  "runs": [
+    {
+      "run_id": 1,
+      "run_seed": 43,
+      "timestamp": "2026-10-18T19:28:41.198226",
+      "valid": false,
+      "energy": -22.186111111109923,
+      "build_time_sec": 4e-06,
+      "execution_time_sec": 0.077449,
+      "invalid_cause": {
+        "origin": "windowing",
+        "deadline_misses": [
+          {
+            "robot": "robot_1",
+            "window": 4,
+            "time": 16,
+            "position": [
+              2,
+              2
+            ],
+            "steps_needed": 4,
+            "steps_left": 3
+          }
+        ]
+      },
+      "variable_stats": {
+        "total_initial_variables": 280,
+        "total_variables_reduced": 0,
+        "total_final_variables": 280,
+        "average_reduction_ratio": 0.0,
+        "num_windows": 4,
+        "max_solver_variables": 82,
+        "var_limit": 156,
+        "max_window_size": 5,
+        "mean_window_size": 5.0,
+        "total_dense_variables": 1000,
+        "total_logical_variables": 280,
+        "logical_reduction_ratio": 0.72,
+        "numeric_reduction_ratio": 0.0,
+        "total_reduction_ratio": 0.72
+      }
+    },
+    {
+      "run_id": 2,
+      "run_seed": 44,
+      "timestamp": "2026-10-18T19:28:41.255181",
+      "valid": false,
+      "energy": -15.927777777776605,
+      "build_time_sec": 4e-06,
+      "execution_time_sec": 0.056688,
+      "invalid_cause": {
+        "origin": "windowing",
+        "deadline_misses": [
+          {
+            "robot": "robot_1",
+            "window": 3,
+            "time": 12,
+            "position": [
+              2,
+              4
+            ],
+            "steps_needed": 8,
+            "steps_left": 7
+          }
+        ]
+      },
+      "variable_stats": {
+        "total_initial_variables": 207,
+        "total_variables_reduced": 0,
+        "total_final_variables": 207,
+        "average_reduction_ratio": 0.0,
+        "num_windows": 3,
+        "max_solver_variables": 75,
+        "var_limit": 156,
+        "max_window_size": 5,
+        "mean_window_size": 5.0,
+        "total_dense_variables": 750,
+        "total_logical_variables": 207,
+        "logical_reduction_ratio": 0.724,
+        "numeric_reduction_ratio": 0.0,
+        "total_reduction_ratio": 0.724
+      }
+    },
+    {
+      "run_id": 3,
+      "run_seed": 45,
+      "timestamp": "2026-10-18T19:28:41.402859",
+      "valid": true,
+      "energy": -19.259210526312458,
+      "build_time_sec": 3e-06,
+      "execution_time_sec": 0.147344,
+      "variable_stats": {
+        "total_initial_variables": 323,
+        "total_variables_reduced": 0,
+        "total_final_variables": 323,
+        "average_reduction_ratio": 0.0,
+        "num_windows": 4,
+        "max_solver_variables": 99,
+        "var_limit": 156,
+        "max_window_size": 9,
+        "mean_window_size": 6.0,
+        "total_dense_variables": 950,
+        "total_logical_variables": 323,
+        "logical_reduction_ratio": 0.66,
+        "numeric_reduction_ratio": 0.0,
+        "total_reduction_ratio": 0.66
+      }
+    },
+    {
+      "run_id": 4,
+      "run_seed": 46,
+      "timestamp": "2026-10-18T19:28:41.482674",
+      "valid": false,
+      "energy": -15.8833333333328,
+      "build_time_sec": 3e-06,
+      "execution_time_sec": 0.079584,
+      "invalid_cause": {
+        "origin": "windowing",
+        "deadline_misses": [
+          {
+            "robot": "robot_0",
+            "window": 3,
+            "time": 12,
+            "position": [
+              0,
+              0
+            ],
+            "steps_needed": 8,
+            "steps_left": 7
+          },
+          {
+            "robot": "robot_1",
+            "window": 3,
+            "time": 12,
+            "position": [
+              0,
+              4
+            ],
+            "steps_needed": 8,
+            "steps_left": 7
+          }
+        ]
+      },
+      "variable_stats": {
+        "total_initial_variables": 189,
+        "total_variables_reduced": 0,
+        "total_final_variables": 189,
+        "average_reduction_ratio": 0.0,
+        "num_windows": 3,
+        "max_solver_variables": 63,
+        "var_limit": 156,
+        "max_window_size": 5,
+        "mean_window_size": 5.0,
+        "total_dense_variables": 750,
+        "total_logical_variables": 189,
+        "logical_reduction_ratio": 0.748,
+        "numeric_reduction_ratio": 0.0,
+        "total_reduction_ratio": 0.748
+      }
+    },
+    {
+      "run_id": 5,
+      "run_seed": 47,
+      "timestamp": "2026-10-18T19:28:41.581604",
+      "valid": false,
+      "energy": -15.525617283948655,
+      "build_time_sec": 3e-06,
+      "execution_time_sec": 0.098695,
+      "invalid_cause": {
+        "origin": "windowing",
+        "deadline_misses": [
+          {
+            "robot": "robot_0",
+            "window": 3,
+            "time": 16,
+            "position": [
+              0,
+              2
+            ],
+            "steps_needed": 4,
+            "steps_left": 3
+          }
+        ]
+      },
+      "variable_stats": {
+        "total_initial_variables": 271,
+        "total_variables_reduced": 0,
+        "total_final_variables": 271,
+        "average_reduction_ratio": 0.0,
+        "num_windows": 3,
+        "max_solver_variables": 120,
+        "var_limit": 156,
+        "max_window_size": 9,
+        "mean_window_size": 6.33,
+        "total_dense_variables": 725,
+        "total_logical_variables": 271,
+        "logical_reduction_ratio": 0.6262,
+        "numeric_reduction_ratio": 0.0,
+        "total_reduction_ratio": 0.6262
+      }
+    }
+  ],
+  "summary": {
+    "valid_runs": 1,
+    "total_runs": 5,
+    "accuracy": 0.2,
+    "average_solve_time_sec": 0.092
+  }
+}

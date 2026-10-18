@@ -1,0 +1,304 @@
+{
+  "metadata": {
+    "problem": {
+      "name": "obs3x3_standard_baseline",
+      "T": 12,
+      "robots": {
+        "Lucia": {
+          "robot_id": "Lucia",
+          "start": [
+            2,
+            0
+          ],
+          "goal": [
+            0,
+            2
+          ],
+          "priority": 1.0,
+          "robot_radius": 0.5,
+          "inflation": 0.0,
+          "current_position": [
+            2,
+            0
+          ],
+          "path": [],
+          "active": true
+        }
+      },
+      "grid": {
+        "M": 3,
+        "N": 3,
+        "obstacles": [
+          [
+            1,
+            1
+          ]
+        ],
+        "adjacency": {
+          "(0, 0)": [
+            [
+              1,
+              0
+            ],
+            [
+              0,
+              1
+            ]
+          ],
+          "(0, 1)": [
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              2
+            ]
+          ],
+          "(0, 2)": [
+            [
+              1,
+              2
+            ],
+            [
+              0,
+              1
+            ]
+          ],
+          "(1, 0)": [
+            [
+              0,
+              0
+            ],
+            [
+              2,
+              0
+            ]
+          ],
+          "(1, 1)": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              1
+            ],
+            [
+              1,
+              0
+            ],
+            [
+              1,
+              2
+            ]
+          ],
+          "(1, 2)": [
+            [
+              0,
+              2
+            ],
+            [
+              2,
+              2
+            ]
+          ],
+          "(2, 0)": [
+            [
+              1,
+              0
+            ],
+            [
+              2,
+              1
+            ]
+          ],
+          "(2, 1)": [
+            [
+              2,
+              0
+            ],
+            [
+              2,
+              2
+            ]
+          ],
+          "(2, 2)": [
+            [
+              1,
+              2
+            ],
+            [
+              2,
+              1
+            ]
+          ]
+        },
+        "resolution": 1.0,
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "solver": {
+      "solver": "dwave",
+      "normalization_scale": 1,
+      "num_reads": "auto",
+      "max_corrections": 3,
+      "seed": 42
+    },
+    "penalty_set": {
+      "K_hot": 9,
+      "K_adj": 4.8,
+      "K_start": 6.5,
+      "K_goal": 3,
+      "K_lock": 4,
+      "K_bt": 2.3,
+      "K_tp": 1.2,
+      "K_goal_approx": 0.7,
+      "K_obs": 0,
+      "K_crash": 2.7,
+      "K_trail": 3,
+      "name": "trailing"
+    },
+    "benchmark_level": 1,
+    "num_runs": 5,
+    "base_seed": 42,
+    "timestamp": "2026-10-18T19:28:37.205746"
+  },
+  "runs": [
+    {
+      "run_id": 1,
+      "run_seed": 43,
+      "timestamp": "2026-10-18T19:28:37.389442",
+      "valid": true,
+      "energy": -6.579124579124475,
+      "build_time_sec": 2e-06,
+      "execution_time_sec": 0.183574,
+      "variable_stats": {
+        "total_initial_variables": 80,
+        "total_variables_reduced": 0,
+        "total_final_variables": 80,
+        "average_reduction_ratio": 0.0,
+        "num_windows": 1,
+        "max_solver_variables": 80,
+        "var_limit": 156,
+        "max_window_size": 13,
+        "mean_window_size": 13.0,
+        "total_dense_variables": 108,
+        "total_logical_variables": 80,
+        "logical_reduction_ratio": 0.2593,
+        "numeric_reduction_ratio": 0.0,
+        "total_reduction_ratio": 0.2593
+      }
+    },
+    {
+      "run_id": 2,
+      "run_seed": 44,
+      "timestamp": "2026-10-18T19:28:37.509515",
+      "valid": true,
+      "energy": -6.579124579124475,
+      "build_time_sec": 3e-06,
+      "execution_time_sec": 0.119913,
+      "variable_stats": {
+        "total_initial_variables": 80,
+        "total_variables_reduced": 0,
+        "total_final_variables": 80,
+        "average_reduction_ratio": 0.0,
+        "num_windows": 1,
+        "max_solver_variables": 80,
+        "var_limit": 156,
+        "max_window_size": 13,
+        "mean_window_size": 13.0,
+        "total_dense_variables": 108,
+        "total_logical_variables": 80,
+        "logical_reduction_ratio": 0.2593,
+        "numeric_reduction_ratio": 0.0,
+        "total_reduction_ratio": 0.2593
+      }
+    },
+    {
+      "run_id": 3,
+      "run_seed": 45,
+      "timestamp": "2026-10-18T19:28:37.629943",
+      "valid": true,
+      "energy": -6.579124579124475,
+      "build_time_sec": 3e-06,
+      "execution_time_sec": 0.120269,
+      "variable_stats": {
+        "total_initial_variables": 80,
+        "total_variables_reduced": 0,
+        "total_final_variables": 80,
+        "average_reduction_ratio": 0.0,
+        "num_windows": 1,
+        "max_solver_variables": 80,
+        "var_limit": 156,
+        "max_window_size": 13,
+        "mean_window_size": 13.0,
+        "total_dense_variables": 108,
+        "total_logical_variables": 80,
+        "logical_reduction_ratio": 0.2593,
+        "numeric_reduction_ratio": 0.0,
+        "total_reduction_ratio": 0.2593
+      }
+    },
+    {
+      "run_id": 4,
+      "run_seed": 46,
+      "timestamp": "2026-10-18T19:28:37.750627",
+      "valid": true,
+      "energy": -6.579124579124475,
+      "build_time_sec": 3e-06,
+      "execution_time_sec": 0.120526,
+      "variable_stats": {
+        "total_initial_variables": 80,
+        "total_variables_reduced": 0,
+        "total_final_variables": 80,
+        "average_reduction_ratio": 0.0,
+        "num_windows": 1,
+        "max_solver_variables": 80,
+        "var_limit": 156,
+        "max_window_size": 13,
+        "mean_window_size": 13.0,
+        "total_dense_variables": 108,
+        "total_logical_variables": 80,
+        "logical_reduction_ratio": 0.2593,
+        "numeric_reduction_ratio": 0.0,
+        "total_reduction_ratio": 0.2593
+      }
+    },
+    {
+      "run_id": 5,
+      "run_seed": 47,
+      "timestamp": "2026-10-18T19:28:37.871303",
+      "valid": true,
+      "energy": -6.579124579124475,
+      "build_time_sec": 3e-06,
+      "execution_time_sec": 0.12052,
+      "variable_stats": {
+        "total_initial_variables": 80,
+        "total_variables_reduced": 0,
+        "total_final_variables": 80,
+        "average_reduction_ratio": 0.0,
+        "num_windows": 1,
+        "max_solver_variables": 80,
+        "var_limit": 156,
+        "max_window_size": 13,
+        "mean_window_size": 13.0,
+        "total_dense_variables": 108,
+        "total_logical_variables": 80,
+        "logical_reduction_ratio": 0.2593,
+        "numeric_reduction_ratio": 0.0,
+        "total_reduction_ratio": 0.2593
+      }
+    }
+  ],
+  "summary": {
+    "valid_runs": 5,
+    "total_runs": 5,
+    "accuracy": 1.0,
+    "average_solve_time_sec": 0.133
+  }
+}

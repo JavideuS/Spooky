@@ -1,0 +1,8 @@
+pyomo==<version>
+numpy==<version>
+dwave-neal
+numpy==<version>
+dwave-ocean-sdk==<version>
+dwave_networkx==<version>
+minorminer==<version>
+dimod==<version>

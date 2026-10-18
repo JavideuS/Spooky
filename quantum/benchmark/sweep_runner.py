@@ -346,11 +346,6 @@ class SweepRunner:
         if builder_kind == "grid":
             # Grid-only goal-term options; absent keys keep QUBOBuilder's defaults
             for key in (
-                "distance_scaling",
-                "goal_distance",
-                "obstacle_repulsion",
-                "progress_weight",
-                "allow_wait",
                 "approach_weight",
                 "approach_radius",
                 "goal_objective",

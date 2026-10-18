@@ -38,7 +38,7 @@ problem = PathfindingProblem.from_map_config(
 # Choose QUBO builder based on problem format:
 # For grid problems:
 p_grid = problem.as_grid_only()
-builder = QUBOBuilder(p_grid, penalties=penalties_conf, name="standard", distance_scaling="enhanced_linear", robot_window_limits={"robot_0": 5})
+builder = QUBOBuilder(p_grid, penalties=penalties_conf, name="standard", robot_window_limits={"robot_0": 5})
 
 # For graph problems:
 # p_graph = problem.as_graph_only()

@@ -1,0 +1,315 @@
+{
+  "metadata": {
+    "problem": {
+      "name": "no_obs3x3_elev_baseline",
+      "T": 12,
+      "robots": {
+        "Lucia": {
+          "robot_id": "Lucia",
+          "start": [
+            2,
+            0
+          ],
+          "goal": [
+            0,
+            2
+          ],
+          "priority": 1.0,
+          "robot_radius": 0.5,
+          "inflation": 0.0,
+          "current_position": [
+            2,
+            0
+          ],
+          "path": [],
+          "active": true
+        }
+      },
+      "grid": {
+        "M": 3,
+        "N": 3,
+        "obstacles": [],
+        "adjacency": {
+          "(0, 0)": [
+            [
+              1,
+              0
+            ],
+            [
+              0,
+              1
+            ]
+          ],
+          "(0, 1)": [
+            [
+              1,
+              1
+            ],
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              2
+            ]
+          ],
+          "(0, 2)": [
+            [
+              1,
+              2
+            ],
+            [
+              0,
+              1
+            ]
+          ],
+          "(1, 0)": [
+            [
+              0,
+              0
+            ],
+            [
+              2,
+              0
+            ],
+            [
+              1,
+              1
+            ]
+          ],
+          "(1, 1)": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              1
+            ],
+            [
+              1,
+              0
+            ],
+            [
+              1,
+              2
+            ]
+          ],
+          "(1, 2)": [
+            [
+              0,
+              2
+            ],
+            [
+              2,
+              2
+            ],
+            [
+              1,
+              1
+            ]
+          ],
+          "(2, 0)": [
+            [
+              1,
+              0
+            ],
+            [
+              2,
+              1
+            ]
+          ],
+          "(2, 1)": [
+            [
+              1,
+              1
+            ],
+            [
+              2,
+              0
+            ],
+            [
+              2,
+              2
+            ]
+          ],
+          "(2, 2)": [
+            [
+              1,
+              2
+            ],
+            [
+              2,
+              1
+            ]
+          ]
+        },
+        "resolution": 1.0,
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "solver": {
+      "solver": "dwave",
+      "normalization_scale": 1,
+      "num_reads": "auto",
+      "max_corrections": 3,
+      "seed": 42
+    },
+    "penalty_set": {
+      "K_hot": 9,
+      "K_adj": 4.8,
+      "K_start": 6.5,
+      "K_goal": 3,
+      "K_lock": 4,
+      "K_bt": 2.3,
+      "K_tp": 1.2,
+      "K_goal_approx": 0.7,
+      "K_obs": 0,
+      "K_crash": 2.7,
+      "K_trail": 3,
+      "name": "trailing"
+    },
+    "benchmark_level": 1,
+    "num_runs": 5,
+    "base_seed": 42,
+    "timestamp": "2026-10-18T19:28:36.763807"
+  },
+  "runs": [
+    {
+      "run_id": 1,
+      "run_seed": 43,
+      "timestamp": "2026-10-18T19:28:36.809036",
+      "valid": true,
+      "energy": -6.450336700335946,
+      "build_time_sec": 2e-06,
+      "execution_time_sec": 0.045112,
+      "variable_stats": {
+        "total_initial_variables": 90,
+        "total_variables_reduced": 0,
+        "total_final_variables": 90,
+        "average_reduction_ratio": 0.0,
+        "num_windows": 1,
+        "max_solver_variables": 90,
+        "var_limit": 156,
+        "max_window_size": 13,
+        "mean_window_size": 13.0,
+        "total_dense_variables": 108,
+        "total_logical_variables": 90,
+        "logical_reduction_ratio": 0.1667,
+        "numeric_reduction_ratio": 0.0,
+        "total_reduction_ratio": 0.1667
+      }
+    },
+    {
+      "run_id": 2,
+      "run_seed": 44,
+      "timestamp": "2026-10-18T19:28:36.854415",
+      "valid": true,
+      "energy": -6.450336700335974,
+      "build_time_sec": 3e-06,
+      "execution_time_sec": 0.045219,
+      "variable_stats": {
+        "total_initial_variables": 90,
+        "total_variables_reduced": 0,
+        "total_final_variables": 90,
+        "average_reduction_ratio": 0.0,
+        "num_windows": 1,
+        "max_solver_variables": 90,
+        "var_limit": 156,
+        "max_window_size": 13,
+        "mean_window_size": 13.0,
+        "total_dense_variables": 108,
+        "total_logical_variables": 90,
+        "logical_reduction_ratio": 0.1667,
+        "numeric_reduction_ratio": 0.0,
+        "total_reduction_ratio": 0.1667
+      }
+    },
+    {
+      "run_id": 3,
+      "run_seed": 45,
+      "timestamp": "2026-10-18T19:28:36.899956",
+      "valid": true,
+      "energy": -6.454545454544707,
+      "build_time_sec": 3e-06,
+      "execution_time_sec": 0.045373,
+      "variable_stats": {
+        "total_initial_variables": 90,
+        "total_variables_reduced": 0,
+        "total_final_variables": 90,
+        "average_reduction_ratio": 0.0,
+        "num_windows": 1,
+        "max_solver_variables": 90,
+        "var_limit": 156,
+        "max_window_size": 13,
+        "mean_window_size": 13.0,
+        "total_dense_variables": 108,
+        "total_logical_variables": 90,
+        "logical_reduction_ratio": 0.1667,
+        "numeric_reduction_ratio": 0.0,
+        "total_reduction_ratio": 0.1667
+      }
+    },
+    {
+      "run_id": 4,
+      "run_seed": 46,
+      "timestamp": "2026-10-18T19:28:36.945685",
+      "valid": true,
+      "energy": -6.384259259258492,
+      "build_time_sec": 3e-06,
+      "execution_time_sec": 0.045561,
+      "variable_stats": {
+        "total_initial_variables": 90,
+        "total_variables_reduced": 0,
+        "total_final_variables": 90,
+        "average_reduction_ratio": 0.0,
+        "num_windows": 1,
+        "max_solver_variables": 90,
+        "var_limit": 156,
+        "max_window_size": 13,
+        "mean_window_size": 13.0,
+        "total_dense_variables": 108,
+        "total_logical_variables": 90,
+        "logical_reduction_ratio": 0.1667,
+        "numeric_reduction_ratio": 0.0,
+        "total_reduction_ratio": 0.1667
+      }
+    },
+    {
+      "run_id": 5,
+      "run_seed": 47,
+      "timestamp": "2026-10-18T19:28:36.991157",
+      "valid": true,
+      "energy": -6.518097643096972,
+      "build_time_sec": 3e-06,
+      "execution_time_sec": 0.045291,
+      "variable_stats": {
+        "total_initial_variables": 90,
+        "total_variables_reduced": 0,
+        "total_final_variables": 90,
+        "average_reduction_ratio": 0.0,
+        "num_windows": 1,
+        "max_solver_variables": 90,
+        "var_limit": 156,
+        "max_window_size": 13,
+        "mean_window_size": 13.0,
+        "total_dense_variables": 108,
+        "total_logical_variables": 90,
+        "logical_reduction_ratio": 0.1667,
+        "numeric_reduction_ratio": 0.0,
+        "total_reduction_ratio": 0.1667
+      }
+    }
+  ],
+  "summary": {
+    "valid_runs": 5,
+    "total_runs": 5,
+    "accuracy": 1.0,
+    "average_solve_time_sec": 0.0453
+  }
+}

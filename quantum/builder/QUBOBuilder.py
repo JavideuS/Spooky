@@ -1,30 +1,8 @@
 from collections import deque
 
-import numpy as np
 from .base_qubo import BaseQUBO
 
-GOAL_DISTANCES = ("manhattan", "bfs")
-GOAL_OBJECTIVES = ("shaped", "terminal", "legacy")
-
-
-
-# Fraction of the competing collision penalty a robot's whole-window progress
-# reward may reach (see GridQUBOBuilder.progress_weight_cap)
-PROGRESS_CAP_MARGIN = 0.5
-
-
-def compute_obstacle_potential_field(M, N, obstacles, sigma=1.5):
-    """
-    Compute a 2D potential field where each obstacle contributes
-    a Gaussian bump. Sum over all obstacles.
-    """
-    P = np.zeros((M, N))
-    for oi, oj in obstacles:
-        # Create grid of distances
-        ii, jj = np.meshgrid(np.arange(M), np.arange(N), indexing="ij")
-        dist_sq = (ii - oi) ** 2 + (jj - oj) ** 2
-        P += np.exp(-dist_sq / (2 * sigma**2))
-    return P
+GOAL_OBJECTIVES = ("shaped", "terminal")
 
 
 class GridQUBOBuilder(BaseQUBO):
@@ -36,14 +14,9 @@ class GridQUBOBuilder(BaseQUBO):
         var_limit=156,  # 101 605 1001
         window_max_steps=None,
         window_sizing="estimate",
-        distance_scaling="enhanced_linear",
         robot_window_limits=None,
         verbose_level=2,
         log_reductions=True,
-        goal_distance="manhattan",
-        obstacle_repulsion=0.4,
-        progress_weight=0.0,
-        allow_wait=False,
         approach_weight=0.0,
         approach_radius=None,
         goal_objective="shaped",
@@ -51,70 +24,26 @@ class GridQUBOBuilder(BaseQUBO):
         fixer="chain",
     ):
         """
-        goal_distance: distance the goal-approach reward is built on.
-            "manhattan" (default, the original term) ignores obstacles;
-            "bfs" is each robot's true shortest-path distance to its goal
-            over the static map and its own clearance keep-out (see
-            goal_distance_map). Identical on obstacle-free maps.
-        obstacle_repulsion: weight of the P_obs potential-field push away
-            from obstacles in the same term. It exists to patch Manhattan's
-            blindness to walls; with "bfs" it may be redundant (0 disables).
-        progress_weight: alpha of a reward linear in progress made this
-            window, alpha * (d0 - d(cell)), with d0 the robot's distance at
-            the window start. Unlike the distance_scaling curve, which is
-            nearly flat far from the goal, it is worth the same per step at
-            any distance, and it is bounded by the window length. 0 disables.
-            Always capped so the reward a robot can collect over a window
-            stays below the collision penalty it competes with (see
-            progress_weight_cap); "auto" uses the cap itself.
-        allow_wait: let a robot stay in place when it may need to yield, i.e.
-            another active robot is within approach_radius at the window
-            start (see _may_wait). Staying is then rewarded like a move in the
-            adjacency term, and backtracking pairs inside the window are
-            dropped -- a pairwise term can't tell "stayed" from "left and came
-            back", and the progress term already gives a bounce no net gain.
-            Revisits of cells from earlier windows keep K_bt. Off, a wait
-            costs roughly K_adj + K_bt per step, far more than a swap's
-            2 * K_trail, so windowed multi-robot plans swap instead of yield.
-            A robot with nobody near keeps the strict terms: allowing it to
-            wait only flattens its landscape.
         approach_weight: soft penalty on two robots ending the window heading
             into each other (see apply_approach_penalty) -- lets a short
             window coordinate route choices it can't see the end of. 0
             disables. approach_radius: path distance beyond which it is 0;
             None (default) = min(M, N) // 2, so on a small map it doesn't
             reach every robot pair and penalise passes in open space.
-        goal_objective: how the goal is rewarded (see apply_goal_objective).
-            "shaped" (default) and "terminal" price arrival time directly:
+        goal_objective: how arrival is priced (see apply_goal_objective):
             w per step not at the goal plus the BFS distance left, so a wait
-            costs w and the cost doesn't grow with window length. They replace
-            goal_later, the K_goal_approx curves and K_bt. "legacy" keeps
-            those (goal_later + K_goal_approx + K_bt).
+            costs w and the cost doesn't grow with window length. "shaped"
+            (default) spreads the distance over the window's steps, giving the
+            sampler a pull at every step; "terminal" puts it on the last step.
         goal_weight: w, the price of one step of arrival. A violation pays its
             hard penalty once and gains w per step it saves, so w must stay
             well below the cheapest hard penalty; 0.5 was best on the
             synthetic set with the trailing penalties (1-2 let shortcuts win).
-            goal_distance, obstacle_repulsion and progress_weight only apply
-            to "legacy".
         """
-        if goal_distance not in GOAL_DISTANCES:
-            raise ValueError(
-                f"goal_distance must be one of {GOAL_DISTANCES}, got {goal_distance!r}"
-            )
-        self.goal_distance = goal_distance
-        self.obstacle_repulsion = obstacle_repulsion
-        if progress_weight != "auto" and float(progress_weight) < 0:
-            raise ValueError(
-                f"progress_weight must be >= 0 or 'auto', got {progress_weight!r}"
-            )
-        self.progress_weight = progress_weight
-        self.allow_wait = allow_wait
         if goal_objective not in GOAL_OBJECTIVES:
             raise ValueError(
                 f"goal_objective must be one of {GOAL_OBJECTIVES}, got {goal_objective!r}"
             )
-        # "terminal"/"shaped" replace goal_later (+ K_goal_approx) and K_bt with
-        # one arrival-time term, see apply_goal_objective()
         self.goal_objective = goal_objective
         if float(goal_weight) <= 0:
             raise ValueError(f"goal_weight must be > 0, got {goal_weight!r}")
@@ -135,18 +64,12 @@ class GridQUBOBuilder(BaseQUBO):
             window_max_steps=window_max_steps,
             window_sizing=window_sizing,
             fixer=fixer,
-            distance_scaling=distance_scaling,
             robot_window_limits=robot_window_limits,
             verbose_level=verbose_level,
             log_reductions=log_reductions,
         )
         self.initial_num_vars = (
             problem.grid.M * problem.grid.N * problem.num_robots * problem.T
-        )
-        self.P_obs = compute_obstacle_potential_field(
-            self.problem.grid.M,
-            self.problem.grid.N,
-            self.problem.grid.obstacles,
         )
         M, N = problem.grid.M, problem.grid.N
         self._all_grid_cells = [(i, j) for i in range(M) for j in range(N)]
@@ -161,55 +84,6 @@ class GridQUBOBuilder(BaseQUBO):
             return self._active_cells.get((robot_id, t), [])
         return self._all_grid_cells
 
-    def calculate_manhattan_penalty(self, raw_dist, K_goal_approx, time_factor):
-        """
-        Calculate Manhattan distance penalty using the specified scaling method.
-
-        Args:
-            raw_dist: Raw Manhattan distance
-            K_goal_approx: Goal approximation penalty coefficient
-            time_factor: Time-based scaling factor
-
-        Returns:
-            K_dis: Calculated distance penalty
-        """
-        if self.distance_scaling == "enhanced_linear":
-            # Enhanced linear scaling for small grids
-            dist_to_goal = raw_dist * 0.165
-            K_dis = K_goal_approx * (1 / (0.7 + dist_to_goal)) * time_factor
-
-        elif self.distance_scaling == "exponential":
-            # Exponential scaling for medium grids
-            dist_to_goal = raw_dist * 1.2
-            K_dis = K_goal_approx * (1 / (1 + dist_to_goal)) * time_factor
-        elif self.distance_scaling == "quadratic":
-            dist_to_goal = raw_dist**1.3
-            K_dis = K_goal_approx * (1 / (1 + dist_to_goal)) * time_factor
-
-        elif self.distance_scaling == "logarithmic":
-            # Logarithmic scaling for balanced approach
-            dist_to_goal = np.log(1 + raw_dist * 2)
-            K_dis = K_goal_approx * (1 / (1 + dist_to_goal)) * time_factor
-
-        elif self.distance_scaling == "adaptive":
-            # Grid-size adaptive scaling
-            grid_size = max(self.problem.grid.M, self.problem.grid.N)
-            if grid_size <= 3:
-                dist_to_goal = raw_dist * 0.4
-                K_dis = K_goal_approx * (1 / (0.2 + dist_to_goal)) * time_factor
-            elif grid_size <= 5:
-                dist_to_goal = raw_dist * 0.8
-                K_dis = K_goal_approx * (1 / (0.4 + dist_to_goal)) * time_factor
-            else:
-                dist_to_goal = raw_dist * 1.2
-                K_dis = K_goal_approx * (1 / (0.8 + dist_to_goal)) * time_factor
-
-        else:  # Default to original formula
-            dist_to_goal = raw_dist * 2
-            K_dis = K_goal_approx * (1 / (1 + dist_to_goal)) * time_factor
-        return K_dis
-
-    # Must have exactly one position per time step
     def apply_one_hot(self):
         """
         Apply one-hot encoding constraint: exactly one position per time step.
@@ -275,15 +149,11 @@ class GridQUBOBuilder(BaseQUBO):
                     self.Q[(n, n)] = self.Q.get((n, n), 0) + K_adj
 
                     targets = adjacency[(i, j)]
-                    # Staying on the goal is rewarded like a move under the
-                    # arrival-time objectives. grid.adjacency has no self-move,
-                    # so otherwise every stay pays K_adj.
+                    # Staying on the goal is rewarded like a move. grid.adjacency
+                    # has no self-move, so otherwise every stay pays K_adj.
                     # Waits elsewhere keep that cost: it is the push that keeps
                     # robots moving (rewarding every stay measured worse, more stalls).
-                    stay_on_goal = self.goal_objective != "legacy" and (i, j) == tuple(
-                        robot.goal
-                    )
-                    if stay_on_goal or self._may_wait(robot_id):
+                    if (i, j) == tuple(robot.goal):
                         targets = [*targets, (i, j)]
                     for k, l in targets:
                         if self._active_cells is not None and (k, l) not in next_active:
@@ -351,63 +221,6 @@ class GridQUBOBuilder(BaseQUBO):
             self.Q[(start_idx, start_idx)] = (
                 self.Q.get((start_idx, start_idx), 0) - K_start
             )
-
-    def _goal_time_factor(self, t, start):
-        """Weight of window step t in the goal-approach term: grows to ~2.5x
-        at the window's last step, so the end state counts most."""
-        return 1.2 ** (5 * (t - start) / (self.t_max - start))
-
-    def progress_weight_cap(self, start=0):
-        """Largest progress weight for which yielding can never cost more
-        than PROGRESS_CAP_MARGIN times the collision penalty it avoids (K_trail
-        if set, else K_crash). The rule: a soft incentive summed over the
-        window must never outweigh the penalty for the violation it could buy
-        -- otherwise the QUBO prefers colliding to yielding.
-
-        Yielding one step (waiting instead of colliding) leaves the robot one
-        cell behind at every later window step, so it forfeits
-        alpha * sum_t time_factor(t) -- not the whole window's progress,
-        which grows with the square of the window length and would shrink
-        alpha towards 0 on long windows (0.04 at t_max=7, where a lone robot
-        on a forced detour just bounced in place)."""
-        limit = self.penalties.get("K_trail") or self.penalties.get("K_crash") or 0
-        steps = sum(
-            self._goal_time_factor(t, start) for t in range(start + 1, self.t_max)
-        )
-        if not limit or not steps:
-            return 0.0
-        return PROGRESS_CAP_MARGIN * limit / steps
-
-    def effective_progress_weight(self, start=0):
-        """progress_weight clipped to progress_weight_cap ("auto" = the cap)."""
-        if not self.progress_weight:
-            return 0.0
-        cap = self.progress_weight_cap(start)
-        if self.progress_weight == "auto":
-            return cap
-        return min(float(self.progress_weight), cap)
-
-    def _goal_dist(self, robot_id, cell):
-        """Distance from `cell` to the robot's goal under goal_distance
-        (inf for a cell BFS can't route from)."""
-        cell = tuple(cell)
-        if self.goal_distance == "bfs":
-            return self.goal_distance_map(robot_id).get(cell, float("inf"))
-        return self.problem.manhattan_distance(cell, self.problem.robots[robot_id].goal)
-
-    def _may_wait(self, robot_id):
-        """allow_wait, but only for a robot with another active robot within
-        approach_radius of it at the window start: waiting exists for
-        yielding, and a robot with nobody to yield to only gets a flatter
-        landscape from it (a lone robot on a forced detour bounced in place)."""
-        if not self.allow_wait:
-            return False
-        near = self.cell_distance_map(self.problem.robots[robot_id].current_position)
-        return any(
-            tuple(self.problem.robots[other].current_position) in near
-            for other in self.get_active_robot_in_window()
-            if other != robot_id
-        )
 
     def cell_distance_map(self, cell):
         """{cell: steps} BFS distances from `cell` over grid.adjacency
@@ -504,109 +317,6 @@ class GridQUBOBuilder(BaseQUBO):
             self._goal_distance_maps[robot_id] = dist
         return self._goal_distance_maps[robot_id]
 
-    def apply_goal_approximation_penalty(self, robot_id):
-        """
-        Apply goal approximation penalty: encourage getting near the goal.
-        This is used when reaching goal is not possible in a single window.
-        Uses a more balanced approach between goal attraction and obstacle
-        avoidance.
-        """
-        M, N = self.problem.grid.M, self.problem.grid.N
-        K_goal_approx = self.penalties["K_goal_approx"]
-        K_obs_repel = self.obstacle_repulsion
-        robot_nums = self.problem.get_robot_nums()
-
-        robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
-
-        robot = self.problem.robots[robot_id]
-
-        start_time = robot.start_time
-        start = 0
-        if self.current_T < start_time:
-            start = start_time - self.current_T
-
-        d0 = self._goal_dist(robot_id, robot.current_position)
-        alpha = self.effective_progress_weight(start)
-
-        for t in range(start + 1, self.t_max):
-            time_factor = self._goal_time_factor(t, start)
-            for i, j in self._cells(robot_id, t):
-                n = i * N + j + M * N * t + robot_offset
-
-                # Skip obstacle cells entirely - let explicit obstacle
-                # constraint handle them
-                if (i, j) in self.problem.grid.obstacles:
-                    continue
-
-                # Goal progress (time-weighted), shaped by distance_scaling
-                raw_dist = self._goal_dist(robot_id, (i, j))
-                K_dis = self.calculate_manhattan_penalty(
-                    raw_dist, K_goal_approx, time_factor
-                )
-                if alpha and max(d0, raw_dist) != float("inf"):
-                    K_dis += alpha * time_factor * (d0 - raw_dist)
-
-                # Soft obstacle avoidance using potential field
-                # (for nearby obstacles)
-
-                K_obs = K_obs_repel * self.P_obs[i, j]
-                self.Q[(n, n)] = self.Q.get((n, n), 0.0) - K_dis + K_obs
-
-    def apply_goal_fix_penalty(self):
-        """
-        Apply goal position penalty: encourage reaching the goal.
-        This is equally applied at all time steps after the start.
-        """
-        M, N = self.problem.grid.M, self.problem.grid.N
-        e_i, e_j = self.problem.end
-        K_goal = self.penalties["K_goal"]
-
-        # We start at time step 1 to not conflict with the start position
-        for t in range(1, self.T):
-            goal_idx = e_i * N + e_j + M * N * t
-            self.Q[(goal_idx, goal_idx)] += -K_goal
-
-    def apply_goal_later_penalty(self):
-        """
-        At each iteration it increases the penalty for not reaching the goal.
-        This helps to avoid getting stuck in local minima. And found goal at later time
-        Without forcing a teleportation at start position.
-        """
-        M, N = self.problem.grid.M, self.problem.grid.N
-        K_goal = self.penalties["K_goal"]
-        robot_nums = self.problem.get_robot_nums()
-
-        for robot_id in self.get_active_robot_in_window():
-            robot = self.problem.robots[robot_id]
-            start_time = robot.start_time
-            end_time = robot.T + start_time
-
-            if end_time > self.current_T + self.t_max:
-                # Had to make it single robot, else it would conflict with no approximation robots
-                self.apply_goal_approximation_penalty(robot_id)
-            else:
-                robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
-                e_i, e_j = robot.goal
-
-                start = 0
-                if self.current_T < start_time:
-                    start = start_time - self.current_T
-
-                end = end_time - self.current_T
-                # This is used because in immediate goals and big windows the goal is not strong enough
-                window_constant = 1 + (end / 10)
-                # print("hola", robot_id)
-                for t in range(start + 1, end):
-                    goal_idx = e_i * N + e_j + M * N * t + robot_offset
-                    if (goal_idx, goal_idx) not in self.Q:
-                        continue  # goal not reachable at this timestep — nothing to bias
-                    # Note that since I initially considered all this time factor for single robot starting in t=-
-                    # I adjust to keep the same growth by reducing time start to both)
-                    time_factor = 1 + ((t - start) / (end - start))
-                    self.Q[(goal_idx, goal_idx)] += (
-                        -K_goal * time_factor * window_constant
-                    )
-
     def apply_goal_objective(self):
         """
         Arrival-time objective (goal_objective "terminal" or "shaped"):
@@ -623,8 +333,8 @@ class GridQUBOBuilder(BaseQUBO):
           If the robot's deadline falls inside the window, its last step also
           gets K_goal * h: arriving by the deadline is required, not a
           preference.
-        Waiting costs w per step (one step of lost progress), loops 2w, so K_bt
-        is not used in these modes.
+        Off the goal, a wait costs w here plus K_adj from the adjacency term
+        (which rewards staying only on the goal); a loop costs 2w.
         """
         M, N = self.problem.grid.M, self.problem.grid.N
         robot_nums = self.problem.get_robot_nums()
@@ -663,19 +373,6 @@ class GridQUBOBuilder(BaseQUBO):
                     if e:
                         self.Q[(n, n)] = self.Q.get((n, n), 0) + e
 
-    def apply_goal_early_penalty(self):
-        """
-        Apply early goal penalty: encourage reaching the goal earlier.
-        It's stronger early and then decreases over time (till it reaches normal goal penalty).
-        """
-        M, N = self.problem.grid.M, self.problem.grid.N
-        e_i, e_j = self.problem.end
-        K_goal = self.penalties["K_goal"]
-        for t in range(1, self.T):
-            goal_idx = e_i * N + e_j + M * N * t
-            time_factor = 1 + (self.T - t) / self.T
-            self.Q[(goal_idx, goal_idx)] += -K_goal * time_factor
-
     def apply_lock_after_goal(self):
         """
         Apply lock after goal: discourage leaving the goal position once reached.
@@ -703,87 +400,15 @@ class GridQUBOBuilder(BaseQUBO):
                 if (e_i, e_j) not in self._cells(robot_id, t):
                     continue
                 g_t = e_i * N + e_j + M * N * t + robot_offset
-                g_t_next = e_i * N + e_j + M * N * (t + 1) + robot_offset
-
-                if self.goal_objective != "legacy":
-                    # Same energy under one-hot (x_g,t * sum of the other cells
-                    # at t+1 == x_g,t * (1 - x_g,t+1)) but with no diagonal: the
-                    # +K_lock below makes the goal look like the most expensive
-                    # cell to the diagonal fixer, which then pins it to 0. Legacy
-                    # keeps it because its large goal reward offsets it.
-                    for k, l in self._cells(robot_id, t + 1):
-                        if (k, l) == (e_i, e_j):
-                            continue
-                        m = k * N + l + M * N * (t + 1) + robot_offset
-                        self.Q[(g_t, m)] = self.Q.get((g_t, m), 0) + K_lock
-                    continue
-
-                # Linear term: +K_lock * x_g_t
-                self.Q[(g_t, g_t)] = self.Q.get((g_t, g_t), 0) + K_lock
-
-                # Quadratic term: -K_lock * x_g_t * x_g_t_next
-                self.Q[(g_t, g_t_next)] = self.Q.get((g_t, g_t_next), 0) - K_lock
-
-    def apply_backtracking_penalty(self):
-        """
-        Apply backtracking penalty: discourage moving back to the previous position.
-        """
-        # Constraint: No backtracking (except at goal)
-        M, N = self.problem.grid.M, self.problem.grid.N
-        K_bt = self.penalties["K_bt"]
-        robot_nums = self.problem.get_robot_nums()
-
-        for robot_id in self.get_active_robot_in_window():
-            robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
-            robot = self.problem.robots[robot_id]
-
-            start_time = robot.start_time
-            start = 0
-            if self.current_T < start_time:
-                start = start_time - self.current_T
-            end_time = robot.T + start_time
-            end = end_time - self.current_T
-            if end_time > self.current_T + self.t_max:
-                end = self.t_max
-
-            e_i, e_j = robot.goal  # Use robot's own goal
-
-            # Per-timestep active sets for O(1) membership checks
-            active_sets = {t: set(self._cells(robot_id, t)) for t in range(start, end)}
-
-            all_reachable = set()
-            for t in range(start, end):
-                all_reachable.update(active_sets[t])
-
-            for i, j in all_reachable:
-                # Skip goal — allow multiple visits
-                if i == e_i and j == e_j:
-                    continue
-
-                # With aggressive BFS each cell appears at exactly one timestep, so
-                # iterating range(start, end) blindly would create phantom Q entries for
-                # timesteps where the cell is not active, leaking variables into the QUBO.
-                active_ts = [t for t in range(start, end) if (i, j) in active_sets[t]]
-                if self._may_wait(robot_id):
-                    active_ts = []  # see allow_wait in __init__
-                for idx1, t1 in enumerate(active_ts):
-                    g_t = i * N + j + M * N * t1 + robot_offset
-                    for t2 in active_ts[idx1 + 1 :]:
-                        g_t2 = i * N + j + M * N * t2 + robot_offset
-                        self.Q[(g_t, g_t2)] = self.Q.get((g_t, g_t2), 0) + K_bt
-
-            if robot.active and robot.path:
-                len_sol = len(robot.path)
-                for t in range(start, end):
-                    for p_idx, pos in enumerate(robot.path):
-                        i, j = pos[:2]
-                        if (i, j) not in active_sets[t]:
-                            continue
-                        idx = i * N + j + M * N * t + robot_offset
-                        time_factor = (1 + (len_sol - p_idx)) / len_sol
-                        self.Q[(idx, idx)] = (
-                            self.Q.get((idx, idx), 0) + K_bt * time_factor
-                        )
+                # K_lock * x_g,t * (sum of the other cells at t+1): under one-hot
+                # the same as K_lock * x_g,t * (1 - x_g,t+1), but with no
+                # diagonal -- a +K_lock there made the goal look like the most
+                # expensive cell to the diagonal fixer, which pinned it to 0.
+                for k, l in self._cells(robot_id, t + 1):
+                    if (k, l) == (e_i, e_j):
+                        continue
+                    m = k * N + l + M * N * (t + 1) + robot_offset
+                    self.Q[(g_t, m)] = self.Q.get((g_t, m), 0) + K_lock
 
     def apply_tp_penalty(self):
         """
@@ -1107,9 +732,8 @@ class GridQUBOBuilder(BaseQUBO):
                 "K_hot": "one_hot",
                 "K_adj": "adjacency_reward",
                 "K_start": "start",
-                "K_goal": "goal_later",
+                "K_goal": "goal_objective",
                 "K_lock": "lock",
-                "K_bt": "backtracking",
                 "K_tp": "tp",
                 "K_ter": "terrain",
                 "K_elev": "elevation",
@@ -1125,12 +749,6 @@ class GridQUBOBuilder(BaseQUBO):
             # apply_crash_penalty separately — that would double-count it.
             if "trailing" in constraints_to_apply and "crash" in constraints_to_apply:
                 constraints_to_apply.remove("crash")
-            if self.goal_objective != "legacy":
-                constraints_to_apply = [
-                    c
-                    for c in constraints_to_apply
-                    if c not in ("goal_later", "backtracking")
-                ] + ["goal_objective"]
 
         # To clean the QUBO dictionary before building
         # In case there were previous qubo with different constraints/size
@@ -1143,18 +761,10 @@ class GridQUBOBuilder(BaseQUBO):
             self.apply_adjacency_penalty()
         if "start" in constraints_to_apply:
             self.apply_start_penalty()
-        if "goal_fix" in constraints_to_apply:
-            self.apply_goal_fix_penalty()
-        if "goal_early" in constraints_to_apply:
-            self.apply_goal_early_penalty()
-        if "goal_later" in constraints_to_apply:
-            self.apply_goal_later_penalty()
         if "goal_objective" in constraints_to_apply:
             self.apply_goal_objective()
         if "lock" in constraints_to_apply:
             self.apply_lock_after_goal()
-        if "backtracking" in constraints_to_apply:
-            self.apply_backtracking_penalty()
         if "tp" in constraints_to_apply:
             self.apply_tp_penalty()
         if "terrain" in constraints_to_apply:
