@@ -11,7 +11,6 @@ import quantum.config.hdf5parser as h5parser
 import quantum.config.parser as config_parser
 from quantum import map
 from quantum.builder import (
-    default_goal_objective,
     QUBOBuilder,
     GraphQUBO,
     GridILPBuilder,
@@ -64,12 +63,7 @@ def _select_builder(solver, problem, fmt: str, penalties, name: str):
         return cls(problem, name=name)
     if fmt == "graph":
         return GraphQUBO(problem, penalties=penalties, name=name)
-    return QUBOBuilder(
-        problem,
-        penalties=penalties,
-        name=name,
-        goal_objective=default_goal_objective(backend),
-    )
+    return QUBOBuilder(problem, penalties=penalties, name=name)
 
 
 def _reject_if_infeasible(cost, solution, solver_key):

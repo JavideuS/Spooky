@@ -90,7 +90,7 @@ def main():
     print("\n[4/5] Configuring Qiskit hardware solver...")
     
     # Initial parameters for QAOA
-    init_params = np.array([[1.70579, 0.70321062], [0.49879231, 0.49412656]], requires_grad=True)
+    init_params = np.array([[0.969, 2.528], [-0.396, -0.233]], requires_grad=True)
     
     # Create solver with Qiskit remote backend
     try:

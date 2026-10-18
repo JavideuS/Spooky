@@ -25,7 +25,6 @@ from quantum.utils.paths import RESULTS_DIR
 from quantum.pathFormulation import PathfindingProblem
 from quantum.solvers import SolverFactory
 from quantum.builder import (
-    default_goal_objective,
     QUBOBuilder,
     GraphQUBO,
     GridILPBuilder,
@@ -360,7 +359,6 @@ class SweepRunner:
             ):
                 if key in solver_cfg:
                     builder_kwargs[key] = solver_cfg[key]
-            builder_kwargs.setdefault("goal_objective", default_goal_objective(backend))
             p = problem.as_grid_only()
             return p, QUBOBuilder(p, **builder_kwargs)
         p = problem.as_graph_only()

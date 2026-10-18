@@ -12,6 +12,12 @@ class SimulatorCapacityError(ValueError):
     """A window is too wide for the local statevector simulator's memory."""
 
 
+# Fixed 2-layer angles [[gamma1, gamma2], [beta1, beta2]], used when no params
+# are given. Tuned on 272 recorded full-mode windows (2-20 qubits, shaped goal
+# term, QUBO normalized to scale 1) to maximise how much the circuit
+TUNED_ANGLES_2_LAYERS = [[0.969, 2.528], [-0.396, -0.233]]
+
+
 class PennylaneSolver(BaseSolver):
     # (name, num_qubits), ascending — smallest machine that fits wins, to
     # spend quota on the cheapest device that can run the window.
@@ -103,14 +109,17 @@ class PennylaneSolver(BaseSolver):
         self._session_manager = IBMSessionManager(
             use_session=use_session, session_max_time=session_max_time
         )
-        # Parameters for the QAOA circuit
-        # Explicit angles are kept across benchmark runs (BenchmarkRunner only
-        # re-draws random ones); a list from a sweep YAML works too
+        # QAOA angles, shape (2, layers): row 0 the gammas, row 1 the betas
+        # (create_ansatz hands qml.layer params[0] and params[1]). Explicit or
+        # tuned angles are kept across benchmark runs (BenchmarkRunner only
+        # re-draws random ones); a list from a sweep YAML works too.
+        if params is None and layers == 2:
+            params = TUNED_ANGLES_2_LAYERS
         self.fixed_params = params is not None
         self.params = (
             np.array(params, requires_grad=True)
             if params is not None
-            else np.random.rand(layers, 2)
+            else np.random.rand(2, layers)
         )
         self.optimizer_steps = opt_steps  # Number of optimization steps
         self.shots = num_reads  # Number of shots for sampling

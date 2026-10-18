@@ -55,7 +55,9 @@ dwave_solver = SolverFactory.create_solver(solver="dwave", normalize_scale=4, nu
 
 # init_params = np.array([[1.182179, 0.78571062], [0.36629231, 0.59672656]], requires_grad=True)
 # init_params = np.array([[1.702179, 0.74571062], [0.45629231, 0.49672656]], requires_grad=True)
-init_params = np.array([[1.70579, 0.70321062], [0.49879231, 0.49412656]], requires_grad=True)
+# init_params = np.array([[1.70579, 0.70321062], [0.49879231, 0.49412656]], requires_grad=True)
+# Tuned on recorded shaped-goal windows (see PennylaneSolver.TUNED_ANGLES_2_LAYERS)
+init_params = np.array([[0.969, 2.528], [-0.396, -0.233]], requires_grad=True)
 pennylane_solver = SolverFactory.create_solver(
         solver="pennylane", normalize_scale=1.0, num_reads="auto",
         layers=2, optimizer="QNG", opt_steps=30,

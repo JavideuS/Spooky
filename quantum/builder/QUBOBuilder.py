@@ -7,14 +7,6 @@ GOAL_DISTANCES = ("manhattan", "bfs")
 GOAL_OBJECTIVES = ("shaped", "terminal", "legacy")
 
 
-def default_goal_objective(backend):
-    """Goal term a solver backend gets when none is asked for. QAOA keeps
-    "legacy" for now: its fixed angles were tuned on the legacy Hamiltonian,
-    and shaped's ties leave the fixer more variables free (more qubits) --
-    tuned-angle QAOA on the synthetic set falls from 60/70 to 42/66 under
-    shaped. Revisit once the angles are retuned."""
-    return "legacy" if backend == "pennylane" else "shaped"
-
 
 # Fraction of the competing collision penalty a robot's whole-window progress
 # reward may reach (see GridQUBOBuilder.progress_weight_cap)
@@ -285,11 +277,9 @@ class GridQUBOBuilder(BaseQUBO):
                     targets = adjacency[(i, j)]
                     # Staying on the goal is rewarded like a move under the
                     # arrival-time objectives. grid.adjacency has no self-move,
-                    # so otherwise every stay pays K_adj -- on the goal that
-                    # beats lock + w and the robot steps off; legacy's large
-                    # goal reward hid it. Waits elsewhere keep that cost: it is
-                    # the push that keeps robots moving (rewarding every stay
-                    # measured worse, more stalls).
+                    # so otherwise every stay pays K_adj.
+                    # Waits elsewhere keep that cost: it is the push that keeps
+                    # robots moving (rewarding every stay measured worse, more stalls).
                     stay_on_goal = self.goal_objective != "legacy" and (i, j) == tuple(
                         robot.goal
                     )

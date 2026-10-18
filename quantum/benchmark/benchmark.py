@@ -99,7 +99,7 @@ class BenchmarkRunner:
 
         np.random.seed(run_seed)
 
-        # PennyLane QAOA: re-draw the layer angles (shape (layers, 2)) when
+        # PennyLane QAOA: re-draw the layer angles (shape (2, layers)) when
         # they were random to begin with -- optimization=False replays them
         # verbatim, so without this every run samples the identical circuit.
         # Angles passed explicitly (the tuned CLI defaults, --init-params) are
@@ -115,7 +115,7 @@ class BenchmarkRunner:
             from pennylane import numpy as pnp
 
             self.solver.params = pnp.array(
-                np.random.rand(self.solver.p, 2), requires_grad=True
+                np.random.rand(2, self.solver.p), requires_grad=True
             )
 
         # PennyLane simulator devices: the Lightning backends seed their

@@ -50,7 +50,7 @@ from quantum.pathFormulation import PathfindingProblem, InfeasibleProblemError
 import quantum.config.parser as config_parser
 from quantum.builder import (
     QUBOBuilder, GraphQUBO, GridILPBuilder, GraphILPBuilder,
-    GridCBSBuilder, GraphCBSBuilder, default_goal_objective,
+    GridCBSBuilder, GraphCBSBuilder,
 )
 import quantum.benchmark.benchmark as bm_module
 from quantum.utils.logger import set_verbose_level, get_logger
@@ -189,13 +189,12 @@ def build_parser() -> argparse.ArgumentParser:
     prob.add_argument(
         "--goal-objective",
         choices=["shaped", "terminal", "legacy"],
-        default=None,
+        default="shaped",
         help=(
-            "Goal term (grid builder only). shaped: arrival time priced at "
-            "--goal-weight per step, BFS distance spread over the window; "
-            "terminal: same, distance at the window end only; legacy: "
-            "goal_later + K_goal_approx + K_bt. Default: shaped, legacy for "
-            "pennylane (its tuned angles predate shaped)"
+            "Goal term (grid builder only). shaped (default): arrival time "
+            "priced at --goal-weight per step, BFS distance spread over the "
+            "window; terminal: same, distance at the window end only; legacy: "
+            "goal_later + K_goal_approx + K_bt"
         ),
     )
     prob.add_argument(
@@ -886,11 +885,7 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
             init_params = np.array(init_params, requires_grad=True)
             logger.minimal(f"Loaded init_params from {args.init_params}")
         else:
-            # Default params tuned for 2-layer QAOA (see qubo.py for context)
-            init_params = np.array(
-                [[1.70579, 0.70321062], [0.49879231, 0.49412656]],
-                requires_grad=True,
-            )
+            init_params = None  # PennylaneSolver's tuned 2-layer angles
 
         logger.minimal(
             f"Creating PennyLane solver (device={args.device}, "
@@ -930,10 +925,7 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
             init_params = np.array(init_params, requires_grad=True)
             logger.minimal(f"Loaded init_params from {args.init_params}")
         else:
-            init_params = np.array(
-                [[1.70579, 0.70321062], [0.49879231, 0.49412656]],
-                requires_grad=True,
-            )
+            init_params = None  # PennylaneSolver's tuned 2-layer angles
 
         logger.minimal(
             f"Creating Qiskit-remote solver via PennyLane "
@@ -970,10 +962,7 @@ def build_solver(args: argparse.Namespace, verbose_level: int):
             init_params = np.array(init_params, requires_grad=True)
             logger.minimal(f"Loaded init_params from {args.init_params}")
         else:
-            init_params = np.array(
-                [[1.70579, 0.70321062], [0.49879231, 0.49412656]],
-                requires_grad=True,
-            )
+            init_params = None  # PennylaneSolver's tuned 2-layer angles
 
         logger.minimal(
             f"Creating IQM solver via PennyLane "
@@ -1193,9 +1182,7 @@ def main():
         builder_kwargs["obstacle_repulsion"] = args.obstacle_repulsion
         builder_kwargs["progress_weight"] = args.progress_weight
         builder_kwargs["allow_wait"] = args.allow_wait
-        builder_kwargs["goal_objective"] = (
-            args.goal_objective or default_goal_objective(args.solver)
-        )
+        builder_kwargs["goal_objective"] = args.goal_objective
         builder_kwargs["fixer"] = args.fixer
         builder_kwargs["goal_weight"] = args.goal_weight
         builder_kwargs["approach_weight"] = args.approach_weight
