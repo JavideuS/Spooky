@@ -254,9 +254,7 @@ def test_deadline_guard_silent_on_solvable_problem():
     problem = PathfindingProblem.from_map_config(
         "quantum/maps/synthetic/10x10/obs10x10_easy", "four_robots"
     ).as_grid_only()
-    # Legacy goal term: this checks the guard, and it needs a run that is
-    # valid at seed 0 (shaped solves this instance 9/10, but not at seed 0)
-    builder = GridQUBOBuilder(problem, penalties=PENALTIES, goal_objective="legacy")
+    builder = GridQUBOBuilder(problem, penalties=PENALTIES)
     solver = DWaveSolver(normalize_scale=4, num_reads=4, seed=0)
     solution = solver.solve(builder, preprocess="full")
 

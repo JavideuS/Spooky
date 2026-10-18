@@ -1,0 +1,101 @@
+# Full solver comparison across every hand-authored 3x3/5x5/10x10 map and
+# problem currently in the repo (32 instance/problem pairs). Run from the
+# repo root:
+#   spooky-sweep --config sweep_configs/full_comparison.yaml --dry-run
+#   spooky-sweep --config sweep_configs/full_comparison.yaml
+#
+# Deliberately excludes, for now (add back in when you're ready to spend the
+# extra runtime/quota — see the notes below each):
+#   - 50x50/100x100/1000x1000 maps: exact solvers (ilp/cbs) still scale to
+#     these, but a like-for-like comparison against dwave/pennylane needs
+#     windowing decisions (var_limit, robot_window_limits) those solvers
+#     don't need — worth its own config once the small-scale comparison
+#     looks right.
+#   - pennylane/QAOA: qubit-budget-sensitive (robot_window_limits per
+#     instance), needs more careful per-instance tuning than a flat config
+#     entry gives you here. Add a `backend: pennylane` solver entry
+#     (mirroring qubo.py's simulated defaults: normalize_scale=1.0,
+#     layers=2, optimizer=QNG, num_reads="auto") once you want it in.
+#   - hardware (qiskit.remote/qiskit.iqm): commented out below. Uncomment
+#     and add `hardware: true`, then run with both
+#     --enable-hardware --confirm-hardware-quota "yes-spend-quota" —
+#     the two-flag gate is deliberate (see manifest.py/sweep_runner.py),
+#     don't bypass it.
+#
+# Runtime shape: ilp/cbs are each 32 instances x {preprocess True,False} x
+# 1 run = 64 runs (deterministic, so 1 run is enough). dwave is 32 x 10
+# runs = 320 runs (num_runs=10 to get a meaningful per-instance mean for
+# Wilcoxon — see aggregate.py's docstring) with no preprocess ablation by
+# default to keep that number sane; add
+# `ablation: {preprocess: [true, false]}` to the dwave entry too if you
+# want the pruning-impact comparison there as well (doubles its run count).
+
+sweep:
+  id: null # auto-generated sweep_<timestamp>_<hex8> if omitted
+  seed: 42
+  enable_hardware: false
+  output_root: results/sweeps
+
+instances:
+  - map: quantum/maps/synthetic/3x3/obs3x3_standard
+    problems: [baseline]
+    builder: grid
+
+  - map: quantum/maps/synthetic/5x5/no_obs5x5
+    problems: [baseline, easyv3]
+    builder: grid
+  - map: quantum/maps/synthetic/5x5/obs5x5_easy
+    problems: [baseline, two_robots, three_robots, four_robots_corners]
+    builder: grid
+  - map: quantum/maps/synthetic/5x5/obs5x5_medium
+    problems: [baseline, easy, two_robots, three_robots]
+    builder: grid
+  - map: quantum/maps/synthetic/5x5/obs5x5_hard
+    problems: [baseline, hard, hard_alt, two_robots, three_robots, five_robots]
+    builder: grid
+
+  - map: quantum/maps/synthetic/10x10/no_obs10x10
+    problems: [baseline, two_robots]
+    builder: grid
+  - map: quantum/maps/synthetic/10x10/obs10x10_easy
+    problems: [baseline, two_robots, four_robots, six_robots]
+    builder: grid
+  - map: quantum/maps/synthetic/10x10/obs10x10_medium
+    problems: [baseline, two_robots, four_robots, eight_robots]
+    builder: grid
+  - map: quantum/maps/synthetic/10x10/obs10x10_hard
+    problems: [baseline, two_robots, four_robots, six_robots, ten_robots]
+    builder: grid
+
+solvers:
+  - name: ilp_highs
+    backend: ilp
+    params: { time_limit: 60 }
+    num_runs: 1 # deterministic — HiGHS gives the same answer every time
+    ablation: { preprocess: [true, false] }
+
+  - name: cbs
+    backend: cbs
+    params: { node_limit: 5000, time_limit: 60 }
+    num_runs: 1 # deterministic — see CBS's tie-breaking note in cbs_algorithm.py
+    ablation: { preprocess: [true, false] }
+
+  - name: dwave_general
+    backend: dwave
+    # normalize_scale/num_reads match qubo.py's dwave_solver defaults.
+    # seed is auto-injected from sweep.seed above (see sweep_runner.py) —
+    # no need to set it here.
+    params: { normalize_scale: 4, num_reads: 4 }
+    penalty_set: crash
+    num_runs: 10 # stochastic -> repeat for a meaningful per-instance mean
+
+  # - name: qaoa_ibm_hardware
+  #   backend: pennylane
+  #   params: { device: qiskit.remote, num_reads: 3000, layers: 2 }
+  #   penalty_set: crash
+  #   num_runs: 1
+  #   hardware: true # requires --enable-hardware --confirm-hardware-quota "yes-spend-quota"
+
+execution:
+  preprocess_default: true
+  fail_fast: false

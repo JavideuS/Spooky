@@ -50,6 +50,8 @@ quantum/paper/paper_figures/
 # calibration logs meant to be committed, not auto-generated run output)
 results/benchmarks/
 results/sweeps/
+results/window_study/
+results/_goal_distance_exp/
 # BenchmarkRunner/sweeps write "results/..." relative to the cwd; running a
 # solver script from quantum/ (as the docs say to) put a stray copy here.
 quantum/results/

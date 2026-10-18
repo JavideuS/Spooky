@@ -1,0 +1,65 @@
+{
+  "command": "shots",
+  "args": {
+    "cmd": "shots",
+    "windows": "/home/javideus/quantum_ws/quantum_nav/results/calibration/windows_full",
+    "max_qubits": 20,
+    "angles": [
+      0.969,
+      2.528,
+      -0.396,
+      -0.233
+    ],
+    "target": 0.99,
+    "margin": 3.0
+  },
+  "git_commit": "fa911ffa6f3517cda345b56d5e7f9e2279d3ab2a",
+  "git_dirty": true,
+  "machine": {
+    "host": "javideusarch",
+    "cpu": "",
+    "cores_used": 12
+  },
+  "timestamp": "20261018_192641",
+  "results": {
+    "amplification": 1.1794620847498174,
+    "table": [
+      {
+        "qubits": "2-9",
+        "windows": 190,
+        "median": 7,
+        "p95": 15,
+        "max": 24,
+        "uniform_median": 72,
+        "suggested": 128
+      },
+      {
+        "qubits": "10-12",
+        "windows": 48,
+        "median": 11,
+        "p95": 63,
+        "max": 97,
+        "uniform_median": 391,
+        "suggested": 512
+      },
+      {
+        "qubits": "13-16",
+        "windows": 27,
+        "median": 20,
+        "p95": 153,
+        "max": 330,
+        "uniform_median": 2356,
+        "suggested": 1024
+      },
+      {
+        "qubits": "17-20",
+        "windows": 21,
+        "median": 37,
+        "p95": 311,
+        "max": 396,
+        "uniform_median": 18861,
+        "suggested": 2048
+      }
+    ]
+  }
+}

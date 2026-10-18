@@ -1,6 +1,6 @@
 """
-QUBOBuilder goal_distance="bfs": the goal-approach reward built on each
-robot's obstacle-aware shortest-path distance instead of Manhattan.
+The grid builder's arrival-time goal term: the BFS goal distance it is built
+on, and the encodings around it that the diagonal fixer depends on.
 """
 
 import pytest
@@ -12,24 +12,13 @@ from quantum.builder.QUBOBuilder import GridQUBOBuilder
 from quantum.tests.test_qubo_clearance import PENALTIES
 
 
-def _problem(obstacles):
+def _problem(obstacles, goal_a=(0, 4)):
     grid = Grid(5, 5, obstacles=obstacles)
     robots = [
-        RobotConfig("a", (0, 0), (0, 4), start_time=0, expected_duration=14),
+        RobotConfig("a", (0, 0), goal_a, start_time=0, expected_duration=14),
         RobotConfig("b", (4, 0), (4, 4), start_time=0, expected_duration=14),
     ]
     return PathfindingProblem(robots, grid=grid, name="goal_distance")
-
-
-def test_bfs_equals_manhattan_without_obstacles():
-    """On an open grid the shortest path is the Manhattan distance, so the
-    two options must build byte-identical Q."""
-    problem = _problem([])
-    manhattan = GridQUBOBuilder(problem, penalties=PENALTIES)
-    bfs = GridQUBOBuilder(problem, penalties=PENALTIES, goal_distance="bfs")
-    manhattan.build()
-    bfs.build()
-    assert manhattan.Q == bfs.Q
 
 
 def test_bfs_distance_goes_around_a_wall():
@@ -37,7 +26,7 @@ def test_bfs_distance_goes_around_a_wall():
     goal (0, 4) by Manhattan but 11 steps by the only route: down 4, under
     the wall 2, up 4, right 1."""
     wall = [(0, 2), (1, 2), (2, 2), (3, 2)]
-    builder = GridQUBOBuilder(_problem(wall), penalties=PENALTIES, goal_distance="bfs")
+    builder = GridQUBOBuilder(_problem(wall), penalties=PENALTIES)
     dist = builder.goal_distance_map("a")
 
     assert dist[(0, 4)] == 0
@@ -50,69 +39,31 @@ def test_bfs_distance_goes_around_a_wall():
             assert any(dist.get(n) == d - 1 for n in adjacency[cell]), cell
 
 
-def test_unknown_goal_distance_rejected():
+def test_invalid_goal_options_rejected():
     with pytest.raises(ValueError):
-        GridQUBOBuilder(_problem([]), penalties=PENALTIES, goal_distance="euclid")
-
-
-def test_progress_weight_capped_below_collision_penalty():
-    """The rule behind the cap: what a robot gives up by yielding one step
-    must stay below the collision penalty it avoids, or the QUBO prefers
-    colliding (or swapping) to yielding."""
-    from quantum.builder.QUBOBuilder import PROGRESS_CAP_MARGIN
-
-    builder = GridQUBOBuilder(_problem([]), penalties=PENALTIES, progress_weight=10.0)
-    alpha = builder.effective_progress_weight()
-    assert alpha == builder.progress_weight_cap() < 10.0
-    # cost of yielding one step from the start: one cell behind at every later step
-    yield_cost = sum(
-        alpha * builder._goal_time_factor(t, 0) for t in range(1, builder.t_max)
-    )
-    assert yield_cost == pytest.approx(PROGRESS_CAP_MARGIN * PENALTIES["K_trail"])
-
-    auto = GridQUBOBuilder(_problem([]), penalties=PENALTIES, progress_weight="auto")
-    assert auto.effective_progress_weight() == pytest.approx(alpha)
-    small = GridQUBOBuilder(_problem([]), penalties=PENALTIES, progress_weight=0.01)
-    assert small.effective_progress_weight() == 0.01  # under the cap: untouched
-
+        GridQUBOBuilder(_problem([]), penalties=PENALTIES, goal_objective="legacy")
     with pytest.raises(ValueError):
-        GridQUBOBuilder(_problem([]), penalties=PENALTIES, progress_weight=-1)
+        GridQUBOBuilder(_problem([]), penalties=PENALTIES, goal_weight=0)
 
 
-def test_allow_wait_rewards_staying_and_drops_in_window_backtracking():
-    """Waiting is enabled only for a robot with another robot near it (the
-    only reason to wait is to yield); then staying is rewarded like a move and
-    in-window backtracking pairs are dropped. A robot on its own keeps the
-    strict terms."""
-    grid = Grid(5, 5, obstacles=[])
-
-    def build(b_start):
-        robots = [
-            RobotConfig("a", (0, 0), (0, 4), start_time=0, expected_duration=14),
-            RobotConfig("b", b_start, (4, 4), start_time=0, expected_duration=14),
-        ]
-        problem = PathfindingProblem(robots, grid=grid, name="wait")
-        builders = [
-            GridQUBOBuilder(
-                problem, penalties=PENALTIES, allow_wait=flag, goal_objective="legacy"
-            )
-            for flag in (False, True)
-        ]
-        for b in builders:
-            b.build()
-        return builders
-
+def test_staying_rewarded_only_on_the_goal():
+    """grid.adjacency has no self-move, so a stay would pay K_adj; on the goal
+    it is rewarded like a move (else the robot steps off its goal), anywhere
+    else it keeps that cost."""
     N, MN = 5, 25
-    stay = (0 * N + 1, MN + 0 * N + 1)  # robot "a" at (0, 1) for t=0 -> t=1
-    move = (0 * N + 1, MN + 0 * N + 2)
+    b = GridQUBOBuilder(_problem([], goal_a=(0, 1)), penalties=PENALTIES)
+    b.build(["adjacency_reward"])
+    stay_on_goal = (0 * N + 1, MN + 0 * N + 1)  # a at its goal (0, 1), t=0 -> 1
+    stay_elsewhere = (0 * N + 0, MN + 0 * N + 0)  # a at (0, 0), t=0 -> 1
+    assert b.Q[stay_on_goal] == pytest.approx(-PENALTIES["K_adj"])
+    assert stay_elsewhere not in b.Q
 
-    # b one cell away (radius is min(5, 5) // 2 = 2): a may wait
-    off, on = build((1, 0))
-    assert off.Q.get(stay, 0) == pytest.approx(PENALTIES["K_bt"])  # stay charged
-    assert on.Q.get(stay, 0) == pytest.approx(-PENALTIES["K_adj"])  # stay = move
-    assert on.Q[move] == off.Q[move] == pytest.approx(-PENALTIES["K_adj"])
 
-    # b four cells away: nobody to yield to, strict terms unchanged
-    off, on = build((4, 0))
-    assert on.Q == off.Q
-
+def test_lock_has_no_diagonal():
+    """The lock is written as goal-then-any-other-cell pairs: the old
+    +K_lock on the goal's diagonal made the diagonal fixer read the goal as
+    the most expensive cell and pin it to 0."""
+    b = GridQUBOBuilder(_problem([]), penalties=PENALTIES)
+    b.build(["lock"])
+    assert b.Q and all(i != j for i, j in b.Q)
+    assert all(v == pytest.approx(PENALTIES["K_lock"]) for v in b.Q.values())

@@ -142,40 +142,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="QUBO builder type: 'grid' (QUBOBuilder) or 'graph' (GraphQUBO) (default: grid)",
     )
     prob.add_argument(
-        "--distance-scaling",
-        default="enhanced_linear",
-        metavar="MODE",
-        help="Distance scaling mode passed to QUBOBuilder (default: enhanced_linear)",
-    )
-    prob.add_argument(
-        "--goal-distance",
-        default="manhattan",
-        choices=["manhattan", "bfs"],
-        help=(
-            "Distance the goal-approach reward uses: 'manhattan' ignores "
-            "obstacles, 'bfs' is the obstacle-aware shortest path (grid builder "
-            "only; default: manhattan)"
-        ),
-    )
-    prob.add_argument(
-        "--obstacle-repulsion",
-        type=float,
-        default=0.4,
-        metavar="W",
-        help="Weight of the obstacle potential-field repulsion, 0 disables (grid builder only; default: 0.4)",
-    )
-    prob.add_argument(
-        "--progress-weight",
-        type=lambda v: v if v == "auto" else float(v),
-        default=0.0,
-        metavar="ALPHA",
-        help=(
-            "Reward per step of progress toward the goal within a window, "
-            "capped so it can never outweigh the collision penalty; 'auto' "
-            "uses that cap. 0 disables (grid builder only; default: 0)"
-        ),
-    )
-    prob.add_argument(
         "--approach-weight",
         type=float,
         default=0.0,
@@ -188,13 +154,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     prob.add_argument(
         "--goal-objective",
-        choices=["shaped", "terminal", "legacy"],
+        choices=["shaped", "terminal"],
         default="shaped",
         help=(
-            "Goal term (grid builder only). shaped (default): arrival time "
-            "priced at --goal-weight per step, BFS distance spread over the "
-            "window; terminal: same, distance at the window end only; legacy: "
-            "goal_later + K_goal_approx + K_bt"
+            "Goal term (grid builder only): arrival time priced at "
+            "--goal-weight per step plus the BFS distance left; shaped "
+            "(default) spreads the distance over the window, terminal puts it "
+            "on the last step"
         ),
     )
     prob.add_argument(
@@ -221,16 +187,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="CELLS",
         help="Path distance beyond which --approach-weight is 0 (default: min(M, N) // 2)",
-    )
-    prob.add_argument(
-        "--allow-wait",
-        action="store_true",
-        help=(
-            "Let a robot stay in place when another robot is within the "
-            "approach radius (reward staying like a move, drop in-window "
-            "backtracking pairs). Needed for multi-robot yielding (grid "
-            "builder only)"
-        ),
     )
     prob.add_argument(
         "--window-limit",
@@ -1177,11 +1133,6 @@ def main():
             builder = GraphCBSBuilder(p, name=args.problem, verbose_level=verbose_level)
     elif args.builder == "grid":
         p = problem.as_grid_only()
-        builder_kwargs["distance_scaling"] = args.distance_scaling
-        builder_kwargs["goal_distance"] = args.goal_distance
-        builder_kwargs["obstacle_repulsion"] = args.obstacle_repulsion
-        builder_kwargs["progress_weight"] = args.progress_weight
-        builder_kwargs["allow_wait"] = args.allow_wait
         builder_kwargs["goal_objective"] = args.goal_objective
         builder_kwargs["fixer"] = args.fixer
         builder_kwargs["goal_weight"] = args.goal_weight

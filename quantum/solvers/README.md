@@ -174,21 +174,12 @@ Lessons from calibrating them:
 - **Tune on a family, check on held-out problems.** Angles optimised on one
   instance (or a few) fit those Hamiltonians and can cancel the minimum on
   others. The previous hand-tuned angles concentrated some windows ~10x and
-  sent the minimum's probability to ~0 on others -- on held-out windows they
-  scored about the same as uniform sampling.
+  sent the minimum's probability to ~0 on others
 - **Score concentration, not hit rate.** "Did any shot hit the minimum"
   saturates: most windows are small enough that a few thousand shots cover
   the whole space whatever the circuit does, so unrelated angle sets tie at
   100%. `angles` maximises the mean log10 ratio of the minimum's probability
   to uniform sampling's, clipped so a blind spot costs a fixed amount.
-- **Shots follow the angles.** The old shot table (500-25,000) was sized for
-  brute-force coverage. With angles that concentrate, the worst window up to
-  20 qubits needs ~400 shots for a 99% hit, so the table is ~10x smaller.
-- **Check out of family, not just held-out problems.** A held-out split from
-  the same family can't see distribution shift (other maps, robot counts,
-  penalties). `--split size` trains on maps of at most 25 cells and tests on
-  larger ones: the angles came out the same (gammas [1.045, 2.611], betas
-  [-0.441, -0.238], test +1.17), so they track the formulation, not the sample.
 - **Recalibrate** whenever the goal term, penalties, preprocessing or angles
   change -- angles transfer across similar Hamiltonians (the same optimum
   came out of the legacy and shaped goal terms), but that has to be checked,

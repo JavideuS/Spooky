@@ -1,0 +1,573 @@
+{
+  "IQM-garnet": [
+    {
+      "shots": 500,
+      "two_qubit_depth": 78,
+      "execution_time_sec": 1.556093,
+      "rate_layers_per_sec": 25062.769384606192,
+      "compile_time_sec": 0.089856,
+      "validation_time_sec": 0.006368,
+      "job_total_sec": 1.812783
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 91,
+      "execution_time_sec": 0.474861,
+      "rate_layers_per_sec": 95817.51291430545,
+      "compile_time_sec": 0.088483,
+      "validation_time_sec": 0.006304,
+      "job_total_sec": 0.737177
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 78,
+      "execution_time_sec": 0.61052,
+      "rate_layers_per_sec": 63879.971172115576,
+      "compile_time_sec": 0.086923,
+      "validation_time_sec": 0.009089,
+      "job_total_sec": 0.843777
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 87,
+      "execution_time_sec": 0.473606,
+      "rate_layers_per_sec": 91848.49854098132,
+      "compile_time_sec": 0.057484,
+      "validation_time_sec": 0.004729,
+      "job_total_sec": 0.670761
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 69,
+      "execution_time_sec": 0.425863,
+      "rate_layers_per_sec": 81011.96863780136,
+      "compile_time_sec": 0.086563,
+      "validation_time_sec": 0.006146,
+      "job_total_sec": 0.671356
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 71,
+      "execution_time_sec": 0.459372,
+      "rate_layers_per_sec": 77279.41624652786,
+      "compile_time_sec": 0.086263,
+      "validation_time_sec": 0.006518,
+      "job_total_sec": 0.705867
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 93,
+      "execution_time_sec": 0.436481,
+      "rate_layers_per_sec": 106533.8468341119,
+      "compile_time_sec": 0.086147,
+      "validation_time_sec": 0.006608,
+      "job_total_sec": 0.717759
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 28,
+      "execution_time_sec": 0.320779,
+      "rate_layers_per_sec": 43643.754734568036,
+      "compile_time_sec": 0.069274,
+      "validation_time_sec": 0.002151,
+      "job_total_sec": 0.535693
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 52,
+      "execution_time_sec": 0.356823,
+      "rate_layers_per_sec": 72865.25812517692,
+      "compile_time_sec": 0.073841,
+      "validation_time_sec": 0.003699,
+      "job_total_sec": 0.594857
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 52,
+      "execution_time_sec": 0.341164,
+      "rate_layers_per_sec": 76209.6821470026,
+      "compile_time_sec": 0.074247,
+      "validation_time_sec": 0.002903,
+      "job_total_sec": 0.594294
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 52,
+      "execution_time_sec": 0.334236,
+      "rate_layers_per_sec": 77789.34644981391,
+      "compile_time_sec": 0.073081,
+      "validation_time_sec": 0.002815,
+      "job_total_sec": 0.578069
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 33,
+      "execution_time_sec": 0.306552,
+      "rate_layers_per_sec": 53824.4734987865,
+      "compile_time_sec": 0.0678,
+      "validation_time_sec": 0.002232,
+      "job_total_sec": 0.524605
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 41,
+      "execution_time_sec": 0.293379,
+      "rate_layers_per_sec": 69875.48529376676,
+      "compile_time_sec": 0.079643,
+      "validation_time_sec": 0.002942,
+      "job_total_sec": 0.492791
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 51,
+      "execution_time_sec": 0.287755,
+      "rate_layers_per_sec": 88617.05270108252,
+      "compile_time_sec": 0.045171,
+      "validation_time_sec": 0.003108,
+      "job_total_sec": 0.473332
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 4,
+      "execution_time_sec": 0.264789,
+      "rate_layers_per_sec": 7553.183855824826,
+      "compile_time_sec": 0.06306,
+      "validation_time_sec": 0.000943,
+      "job_total_sec": 0.464102
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 23,
+      "execution_time_sec": 0.302224,
+      "rate_layers_per_sec": 38051.24675737201,
+      "compile_time_sec": 0.04184,
+      "validation_time_sec": 0.002169,
+      "job_total_sec": 0.496053
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 54,
+      "execution_time_sec": 0.295579,
+      "rate_layers_per_sec": 91346.13758081596,
+      "compile_time_sec": 0.071947,
+      "validation_time_sec": 0.002646,
+      "job_total_sec": 0.512656
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 54,
+      "execution_time_sec": 0.315148,
+      "rate_layers_per_sec": 85674.03251805501,
+      "compile_time_sec": 0.246154,
+      "validation_time_sec": 0.001965,
+      "job_total_sec": 0.712342
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 45,
+      "execution_time_sec": 0.348012,
+      "rate_layers_per_sec": 64652.943001965454,
+      "compile_time_sec": 0.073294,
+      "validation_time_sec": 0.00301,
+      "job_total_sec": 0.579464
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 22,
+      "execution_time_sec": 0.318033,
+      "rate_layers_per_sec": 34587.605688717835,
+      "compile_time_sec": 0.069809,
+      "validation_time_sec": 0.002306,
+      "job_total_sec": 0.534915
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 51,
+      "execution_time_sec": 0.309779,
+      "rate_layers_per_sec": 82316.74839159529,
+      "compile_time_sec": 0.071245,
+      "validation_time_sec": 0.003585,
+      "job_total_sec": 0.520599
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 28,
+      "execution_time_sec": 0.321574,
+      "rate_layers_per_sec": 43535.85799847002,
+      "compile_time_sec": 0.266131,
+      "validation_time_sec": 0.001212,
+      "job_total_sec": 0.724597
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 4,
+      "execution_time_sec": 0.267785,
+      "rate_layers_per_sec": 7468.678230670127,
+      "compile_time_sec": 0.273956,
+      "validation_time_sec": 0.001307,
+      "job_total_sec": 0.683055
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 28,
+      "execution_time_sec": 0.282932,
+      "rate_layers_per_sec": 49481.854297145605,
+      "compile_time_sec": 0.070462,
+      "validation_time_sec": 0.003213,
+      "job_total_sec": 0.527364
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 52,
+      "execution_time_sec": 0.307995,
+      "rate_layers_per_sec": 84416.95482069513,
+      "compile_time_sec": 0.071964,
+      "validation_time_sec": 0.003461,
+      "job_total_sec": 0.534975
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 52,
+      "execution_time_sec": 0.289395,
+      "rate_layers_per_sec": 89842.60267108968,
+      "compile_time_sec": 0.072782,
+      "validation_time_sec": 0.002901,
+      "job_total_sec": 0.509647
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 28,
+      "execution_time_sec": 0.318792,
+      "rate_layers_per_sec": 43915.782077341966,
+      "compile_time_sec": 0.068317,
+      "validation_time_sec": 0.002232,
+      "job_total_sec": 0.532601
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 33,
+      "execution_time_sec": 0.280505,
+      "rate_layers_per_sec": 58822.480882693715,
+      "compile_time_sec": 0.070525,
+      "validation_time_sec": 0.002479,
+      "job_total_sec": 0.497287
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 28,
+      "execution_time_sec": 0.292245,
+      "rate_layers_per_sec": 47905.01120635084,
+      "compile_time_sec": 0.278701,
+      "validation_time_sec": 0.002034,
+      "job_total_sec": 0.715224
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 51,
+      "execution_time_sec": 0.28394,
+      "rate_layers_per_sec": 89807.7058533493,
+      "compile_time_sec": 0.072557,
+      "validation_time_sec": 0.003124,
+      "job_total_sec": 0.515488
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 4,
+      "execution_time_sec": 0.251718,
+      "rate_layers_per_sec": 7945.399216583637,
+      "compile_time_sec": 0.063363,
+      "validation_time_sec": 0.000947,
+      "job_total_sec": 0.450006
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 31,
+      "execution_time_sec": 0.479694,
+      "rate_layers_per_sec": 32312.265736073412,
+      "compile_time_sec": 0.045479,
+      "validation_time_sec": 0.001904,
+      "job_total_sec": 8.293487
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 52,
+      "execution_time_sec": 0.346428,
+      "rate_layers_per_sec": 75051.67018832195,
+      "compile_time_sec": 0.05324,
+      "validation_time_sec": 0.002414,
+      "job_total_sec": 0.521846
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 45,
+      "execution_time_sec": 0.416575,
+      "rate_layers_per_sec": 54011.88261417512,
+      "compile_time_sec": 0.081691,
+      "validation_time_sec": 0.004312,
+      "job_total_sec": 0.666995
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 28,
+      "execution_time_sec": 0.380212,
+      "rate_layers_per_sec": 36821.56270712129,
+      "compile_time_sec": 0.077022,
+      "validation_time_sec": 0.003461,
+      "job_total_sec": 0.600144
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 45,
+      "execution_time_sec": 0.448154,
+      "rate_layers_per_sec": 50205.955988343296,
+      "compile_time_sec": 0.080697,
+      "validation_time_sec": 0.002361,
+      "job_total_sec": 0.676096
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 28,
+      "execution_time_sec": 0.316773,
+      "rate_layers_per_sec": 44195.68586969217,
+      "compile_time_sec": 0.06411,
+      "validation_time_sec": 0.001813,
+      "job_total_sec": 0.506077
+    },
+    {
+      "shots": 2500,
+      "two_qubit_depth": 55,
+      "execution_time_sec": 1.082653,
+      "rate_layers_per_sec": 127002.83470327056,
+      "compile_time_sec": 0.085641,
+      "validation_time_sec": 0.005604,
+      "job_total_sec": 1.345148
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 42,
+      "execution_time_sec": 0.459119,
+      "rate_layers_per_sec": 45739.77552660639,
+      "compile_time_sec": 0.081828,
+      "validation_time_sec": 0.004345,
+      "job_total_sec": 0.707744
+    },
+    {
+      "shots": 2500,
+      "two_qubit_depth": 53,
+      "execution_time_sec": 1.0711,
+      "rate_layers_per_sec": 123704.60274484176,
+      "compile_time_sec": 0.08168,
+      "validation_time_sec": 0.007191,
+      "job_total_sec": 1.3257
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 51,
+      "execution_time_sec": 0.401694,
+      "rate_layers_per_sec": 63481.15729883942,
+      "compile_time_sec": 0.081941,
+      "validation_time_sec": 0.004249,
+      "job_total_sec": 0.6425
+    },
+    {
+      "shots": 2500,
+      "two_qubit_depth": 64,
+      "execution_time_sec": 1.054167,
+      "rate_layers_per_sec": 151778.60813324642,
+      "compile_time_sec": 0.082961,
+      "validation_time_sec": 0.005481,
+      "job_total_sec": 1.319239
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 28,
+      "execution_time_sec": 0.376132,
+      "rate_layers_per_sec": 37220.97561494369,
+      "compile_time_sec": 0.076085,
+      "validation_time_sec": 0.00322,
+      "job_total_sec": 0.610469
+    },
+    {
+      "shots": 2500,
+      "two_qubit_depth": 72,
+      "execution_time_sec": 1.044113,
+      "rate_layers_per_sec": 172395.1334769321,
+      "compile_time_sec": 0.083331,
+      "validation_time_sec": 0.005047,
+      "job_total_sec": 1.309915
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 41,
+      "execution_time_sec": 0.410977,
+      "rate_layers_per_sec": 49881.13690060515,
+      "compile_time_sec": 0.080126,
+      "validation_time_sec": 0.004238,
+      "job_total_sec": 0.65085
+    }
+  ],
+  "IQM-emerald": [
+    {
+      "shots": 500,
+      "two_qubit_depth": 78,
+      "execution_time_sec": 0.622382,
+      "rate_layers_per_sec": 62662.48059873197,
+      "compile_time_sec": 0.164862,
+      "validation_time_sec": 0.006442,
+      "job_total_sec": 1.245432
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 87,
+      "execution_time_sec": 0.734884,
+      "rate_layers_per_sec": 59193.01549632323,
+      "compile_time_sec": 0.168167,
+      "validation_time_sec": 0.006805,
+      "job_total_sec": 1.39137
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 28,
+      "execution_time_sec": 0.534331,
+      "rate_layers_per_sec": 26200.987777239203,
+      "compile_time_sec": 0.495748,
+      "validation_time_sec": 0.002531,
+      "job_total_sec": 1.51405
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 52,
+      "execution_time_sec": 0.590863,
+      "rate_layers_per_sec": 44003.43226771688,
+      "compile_time_sec": 0.152953,
+      "validation_time_sec": 0.003305,
+      "job_total_sec": 1.204597
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 52,
+      "execution_time_sec": 0.581179,
+      "rate_layers_per_sec": 44736.64740123095,
+      "compile_time_sec": 0.151801,
+      "validation_time_sec": 0.003665,
+      "job_total_sec": 1.203149
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 52,
+      "execution_time_sec": 0.619876,
+      "rate_layers_per_sec": 41943.87264549684,
+      "compile_time_sec": 0.154908,
+      "validation_time_sec": 0.002466,
+      "job_total_sec": 1.221525
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 33,
+      "execution_time_sec": 0.599483,
+      "rate_layers_per_sec": 27523.716268851662,
+      "compile_time_sec": 0.152362,
+      "validation_time_sec": 0.002263,
+      "job_total_sec": 1.218226
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 41,
+      "execution_time_sec": 0.615262,
+      "rate_layers_per_sec": 33319.13883841356,
+      "compile_time_sec": 0.1564,
+      "validation_time_sec": 0.003126,
+      "job_total_sec": 1.244591
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 51,
+      "execution_time_sec": 0.618898,
+      "rate_layers_per_sec": 41202.26596305046,
+      "compile_time_sec": 0.155287,
+      "validation_time_sec": 0.002919,
+      "job_total_sec": 1.264987
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 4,
+      "execution_time_sec": 0.558981,
+      "rate_layers_per_sec": 3577.93914283312,
+      "compile_time_sec": 0.147249,
+      "validation_time_sec": 0.001361,
+      "job_total_sec": 1.156027
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 23,
+      "execution_time_sec": 0.608214,
+      "rate_layers_per_sec": 18907.818629627072,
+      "compile_time_sec": 0.150532,
+      "validation_time_sec": 0.001795,
+      "job_total_sec": 1.205338
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 45,
+      "execution_time_sec": 0.633553,
+      "rate_layers_per_sec": 35513.99803962731,
+      "compile_time_sec": 0.157172,
+      "validation_time_sec": 0.002827,
+      "job_total_sec": 1.250371
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 45,
+      "execution_time_sec": 1.445743,
+      "rate_layers_per_sec": 15562.932001054129,
+      "compile_time_sec": 0.154554,
+      "validation_time_sec": 0.004324,
+      "job_total_sec": 2.067452
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 45,
+      "execution_time_sec": 0.630838,
+      "rate_layers_per_sec": 35666.84315149055,
+      "compile_time_sec": 0.157855,
+      "validation_time_sec": 0.002926,
+      "job_total_sec": 1.235122
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 22,
+      "execution_time_sec": 0.620508,
+      "rate_layers_per_sec": 17727.4104443456,
+      "compile_time_sec": 0.154953,
+      "validation_time_sec": 0.002364,
+      "job_total_sec": 1.241961
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 51,
+      "execution_time_sec": 0.608507,
+      "rate_layers_per_sec": 41905.844961520575,
+      "compile_time_sec": 0.156557,
+      "validation_time_sec": 0.002422,
+      "job_total_sec": 1.232632
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 28,
+      "execution_time_sec": 0.640098,
+      "rate_layers_per_sec": 21871.65090345541,
+      "compile_time_sec": 0.445857,
+      "validation_time_sec": 0.003453,
+      "job_total_sec": 1.539807
+    },
+    {
+      "shots": 500,
+      "two_qubit_depth": 4,
+      "execution_time_sec": 0.566397,
+      "rate_layers_per_sec": 3531.09214914627,
+      "compile_time_sec": 0.146163,
+      "validation_time_sec": 0.001396,
+      "job_total_sec": 1.166831
+    }
+  ]
+}
