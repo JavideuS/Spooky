@@ -17,6 +17,15 @@ class SimulatorCapacityError(ValueError):
 # term, QUBO normalized to scale 1) to maximise how much the circuit
 TUNED_ANGLES_2_LAYERS = [[0.969, 2.528], [-0.396, -0.233]]
 
+# num_reads="auto": (max qubits, shots). From quantum.benchmark.calibration
+# shots on those windows with TUNED_ANGLES_2_LAYERS: 3x the worst window's
+# shots for a 99% chance of hitting its exact minimum, rounded up to a power of
+# two (worst windows needed 24 / 97 / 330 / 396). Measured up to 20 qubits in
+# exact simulation; above that it is an extrapolation, and hardware noise
+# weakens concentration -- recalibrate there and whenever angles change.
+AUTO_SHOTS = ((9, 128), (12, 512), (16, 1024), (20, 2048))
+AUTO_SHOTS_ABOVE = 4096
+
 
 class PennylaneSolver(BaseSolver):
     # (name, num_qubits), ascending — smallest machine that fits wins, to
@@ -204,16 +213,10 @@ class PennylaneSolver(BaseSolver):
 
     def _requested_shots(self, num_qubits):
         if self.shots == "auto":
-            if num_qubits <= 9:
-                return 500
-            elif num_qubits <= 12:
-                return 2500
-            elif num_qubits <= 16:
-                return 10000  # 15000 safer
-            elif num_qubits <= 18:
-                return 17000
-            else:
-                return 25000
+            for max_qubits, shots in AUTO_SHOTS:
+                if num_qubits <= max_qubits:
+                    return shots
+            return AUTO_SHOTS_ABOVE
         return self.shots
 
     @classmethod

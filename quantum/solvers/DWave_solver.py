@@ -21,6 +21,9 @@ class DWaveSolver(BaseSolver):
                 5x5/10x10 set the chance a read reaches a window's best energy
                 halves roughly every 20-25 variables -- so with fixed reads
                 every window-length comparison also measures sampler capacity.
+                AUTO_READS_PER_VAR is calibrated with
+                `python -m quantum.benchmark.calibration sa-reads` (see the
+                solvers README).
             seed: Random seed forwarded to neal.SimulatedAnnealingSampler.sample().
                 None (default) leaves annealing non-deterministic run-to-run;
                 set for reproducible sweeps/benchmarks.
