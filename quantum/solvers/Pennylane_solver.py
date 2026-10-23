@@ -223,7 +223,7 @@ class PennylaneSolver(BaseSolver):
         Create a PennylaneSolver instance from a configuration dictionary.
         """
         norm_scale = config.get("normalization_scale", 0)
-        num_reads = config.get("num_reads", 10)
+        num_reads = config.get("num_reads", "auto")
         layers = config.get("layers", 2)
         optimizer = config.get("optimizer", "GradientDescent")
         device = config.get("device", "default.qubit")

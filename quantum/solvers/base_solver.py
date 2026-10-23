@@ -55,7 +55,7 @@ class BaseSolver(ABC):
             Solver instance
         """
         norm_scale = config.get("normalization_scale", 0)
-        num_reads = config.get("num_reads", 15)
+        num_reads = config.get("num_reads", "auto")
         max_corrections = config.get("max_corrections", 3)
 
         # Extract solver-specific parameters

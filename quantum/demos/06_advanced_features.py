@@ -102,8 +102,8 @@ def main():
     print("\n  Creating DynamicSolver...")
     solver = DynamicSolver(
         initial_solver="dwave",
-        normalize_scale=4,
-        num_reads=10
+        normalize_scale=1,
+        num_reads="auto"
     )
     print(f"    ✓ DynamicSolver created with DWave backend")
     print(f"    ✓ Current solver: {solver.current_solver}")

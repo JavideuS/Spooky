@@ -110,8 +110,8 @@ def main():
     
     solver = SolverFactory.create_solver(
         solver="dwave",
-        normalize_scale=4,
-        num_reads=15  # More reads for multi-robot problems
+        normalize_scale=1,
+        num_reads="auto"  # reads scale with each window's size
     )
     
     solution = solver.solve(builder)

@@ -46,8 +46,9 @@ builder = QUBOBuilder(p_grid, penalties=penalties_conf, name="standard", robot_w
 # builder = GraphQUBO(p_graph, penalties=penalties_conf, name="graph_problem", robot_window_limits={"robot_0": 5})
 
 # Solver (Quantum annealing)
-dwave_solver = SolverFactory.create_solver(solver="dwave", normalize_scale=4, num_reads=4)
-# Smart reads with pre-processing
+dwave_solver = SolverFactory.create_solver(solver="dwave", normalize_scale=1, num_reads="auto")
+# "auto" = max(4, vars/2) reads per window (quantum.benchmark.calibration sa-reads);
+# normalize_scale has no effect on neal. Older hand-tuned notes, kept for reference:
 # < 9 qubits -> 9 reads (Still not perfect)
 # <= 18 qubits -> 12 reads
 # Note that 9 reads also work fine for 18 qubits (12 errors on 1k attempts), but dwave tend to always fail even a bit

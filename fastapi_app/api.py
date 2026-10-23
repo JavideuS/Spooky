@@ -106,7 +106,7 @@ TEMPLATES = {
     "default": {},
     "mobile-robot": {"active_solver": "classic.ilp"},
     "quantum-agent": {"active_solver": "dwave.general"},
-    "research-qaoa": {"active_solver": "pennylane.train.qaoa_QNG"},
+    "research-qaoa": {"active_solver": "pennylane.inference.qaoa_GPU_general"},
     "exact-planner": {"active_solver": "classic.ilp"},
 }
 

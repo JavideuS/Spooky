@@ -128,8 +128,8 @@ def main():
     
     solver = SolverFactory.create_solver(
         solver="dwave",
-        normalize_scale=4,
-        num_reads=5
+        normalize_scale=1,
+        num_reads="auto"
     )
     
     builder.build()

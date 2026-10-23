@@ -112,7 +112,7 @@ the working directory at startup.
 ## Config
 
 - `config/solvers.yaml` — named solver profiles (`dwave.general`,
-  `pennylane.qaoa_QNG`, ...), keyed `backend.name`. No aliases — one
+  `pennylane.inference.qaoa_GPU_general`, ...), keyed by their dotted path. No aliases — one
   canonical name per solver. Loaded into `global_solver_configs` at startup
   (`config_api.py`).
 - `config/maps.yaml` — named map registry (`map_id -> {path, description}`),

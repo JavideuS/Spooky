@@ -57,7 +57,7 @@ def main():
     p_graph = problem.as_graph_only()
     builder = GraphQUBO(p_graph, penalties=penalties_conf, name="viz_demo")
     
-    solver = SolverFactory.create_solver(solver="dwave", normalize_scale=4, num_reads=10)
+    solver = SolverFactory.create_solver(solver="dwave", normalize_scale=1, num_reads="auto")
 
     solution = solver.solve(builder)
     

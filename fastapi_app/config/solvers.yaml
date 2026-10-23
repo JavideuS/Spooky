@@ -26,20 +26,14 @@ solvers:
       <<: *dwave_defaults
       normalization_scale: 1.0
       num_reads: 4
-      description: "Fast D-Wave solver with a small number of reads"
-      tags: ["dwave", "fast", "small maps", "<15 qubits"]
+      description: "Speed over accuracy: 4 reads per window whatever its size"
+      tags: ["dwave", "fast", "small maps"]
     general:
       <<: *dwave_defaults
       normalization_scale: 1.0
-      num_reads: 8
-      description: "General purpose D-Wave solver"
-      tags: ["dwave", "general", "20+ qubits", "Safe"]
-    hard:
-      <<: *dwave_defaults
-      normalization_scale: 1.0
-      num_reads: 15
-      description: "Usually 15 runs is a safe upper limit, more than that only waste of time"
-      tags: ["dwave", "hard", "30+ qubits", "Slow"]
+      num_reads: "auto"
+      description: "Calibrated read budget: max(4, vars/2) reads per window"
+      tags: ["dwave", "general", "Safe"]
 
   pennylane:
     inference:
@@ -59,63 +53,23 @@ solvers:
         tags: ["pennylane", "iqm", "real hardware"]
         description: "To test circuits and scenarios on real IQM hardware via Resonance (auto-picks the smallest machine that fits — Garnet or Emerald; Sirius isn't supported yet). Requires IQM_TOKEN in your environment/.env. Set 'machine' to pin a specific device instead of auto-picking."
 
-      qaoa_GPU_fast:
-        <<: *pennylane_gpu_defaults
-        normalization_scale: 2.0
-        num_reads: 500
-        layers: 2
-        tags: ["pennylane", "fast", "small maps", "<10 qubits"]
+      # Simulators run the tuned 2-layer angles (TUNED_ANGLES_2_LAYERS), which
+      # assume scale 1, and the calibrated shot table (num_reads "auto").
       qaoa_GPU_general:
         <<: *pennylane_gpu_defaults
-        normalization_scale: 2.0
-        num_reads: 5000
+        normalization_scale: 1.0
+        num_reads: "auto"
         layers: 2
-        tags: ["pennylane", "general", "15+ qubits", "Safe"]
-      qaoa_GPU_hard:
-        <<: *pennylane_gpu_defaults
-        normalization_scale: 2.0
-        num_reads: 10000
-        layers: 3
-        tags: ["pennylane", "hard", "20+ qubits", "Slow"]
-        description: "With more than 25+ qubits the memory starts to become troublesome"
-
-      qaoa_CPU_fast:
-        <<: *pennylane_cpu_defaults
-        normalization_scale: 2.0
-        num_reads: 500
-        layers: 2
-        tags: ["pennylane", "fast", "small maps", "<10 qubits", "CPU"]
-        description: "lightning.qubit equivalent of qaoa_GPU_fast, for Windows/CPU only devices"
+        tags: ["pennylane", "general", "<25 qubits"]
+        description: "Statevector memory becomes the limit past ~25 qubits"
       qaoa_CPU_general:
         <<: *pennylane_cpu_defaults
-        normalization_scale: 2.0
-        num_reads: 5000
+        normalization_scale: 1.0
+        num_reads: "auto"
         layers: 2
-        tags: ["pennylane", "general", "15+ qubits", "Safe", "CPU"]
+        tags: ["pennylane", "general", "<25 qubits", "CPU"]
         description: "lightning.qubit equivalent of qaoa_GPU_general, for Windows/CPU only devices"
-      qaoa_CPU_hard:
-        <<: *pennylane_cpu_defaults
-        normalization_scale: 2.0
-        num_reads: 10000
-        layers: 3
-        tags: ["pennylane", "hard", "20+ qubits", "Slow", "CPU"]
-        description: "lightning.qubit equivalent of qaoa_GPU_hard, for Windows/CPU only devices"
-    train:
-      # To find optimal parameters/ Initial angles. Result: initial_angles.json
-      qaoa_QNG:
-        <<: *pennylane_gpu_defaults
-        normalization_scale: 2.0
-        num_reads: 800
-        layers: 2
-        optimizer: "QNG"
-        opt_steps: 30
-      qaoa_SPSA:
-        <<: *pennylane_gpu_defaults
-        normalization_scale: 2.0
-        num_reads: 800
-        layers: 2
-        optimizer: "SPSA"
-        opt_steps: 30
+
   classic:
     ilp:
       <<: *ilp_defaults

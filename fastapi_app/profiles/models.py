@@ -158,7 +158,7 @@ class PlanResponse(BaseModel):
     coordinate_format: str = "matrix"
     cost: float                     # best energy/cost
     map_id: str                     # which map was used
-    solver_used: str                # e.g., "dwave.general", "pennylane.train.qaoa_QNG"
+    solver_used: str                # e.g., "dwave.general", "pennylane.inference.qaoa_GPU_general"
 
     # Optional: solver-specific details (only if requested)
     solver_details: Optional[Dict[str, Any]] = None

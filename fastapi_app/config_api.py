@@ -9,7 +9,7 @@ def _flatten_solvers(node: dict, prefix: str, out: dict) -> None:
     Recursively flatten solvers.yaml into dotted keys. A dict is a leaf solver
     config once it has a "backend" key (injected by the _defaults anchors);
     anything else is treated as a grouping level (e.g. dwave.fast, or the
-    extra pennylane.inference / pennylane.train grouping) and recursed into.
+    extra pennylane.inference grouping) and recursed into.
     """
     for name, value in node.items():
         path = f"{prefix}.{name}" if prefix else name
