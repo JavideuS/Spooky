@@ -113,15 +113,7 @@ class GraphQUBO(BaseQUBO):
             robot_offset = robot_nums[robot_id] * (self.num_nodes * self.total_t)
             robot = self.problem.robots[robot_id]
 
-            start_time = robot.start_time
-            start = 0
-            if self.current_T < start_time:
-                start = start_time - self.current_T
-
-            end_time = robot.T + robot.start_time
-            end = end_time - self.current_T
-            if end_time > self.current_T + self.t_max:
-                end = self.t_max
+            start, end = self.window_steps(robot_id)
 
             start_node, goal_node = self.problem.get_graph_robot_current_goal(robot_id)
             start_idx = start_node + (self.num_nodes * start) + robot_offset
@@ -155,17 +147,8 @@ class GraphQUBO(BaseQUBO):
 
         for robot_id in self.get_active_robot_in_window():
             robot_offset = robot_nums[robot_id] * (self.num_nodes * self.total_t)
-            robot = self.problem.robots[robot_id]
 
-            start_time = robot.start_time
-            start = 0
-            if self.current_T < start_time:
-                start = start_time - self.current_T
-
-            end_time = robot.T + start_time
-            end = end_time - self.current_T
-            if end_time > self.current_T + self.t_max:
-                end = self.t_max
+            start, end = self.window_steps(robot_id)
 
             for t in range(start, end):
                 indices = [
@@ -240,17 +223,8 @@ class GraphQUBO(BaseQUBO):
 
         for robot_id in self.get_active_robot_in_window():
             robot_offset = robot_nums[robot_id] * (self.num_nodes * self.total_t)
-            robot = self.problem.robots[robot_id]
 
-            start_time = robot.start_time
-            start = 0
-            if self.current_T < start_time:
-                start = start_time - self.current_T
-
-            end_time = robot.T + start_time
-            end = end_time - self.current_T
-            if end_time > self.current_T + self.t_max:
-                end = self.t_max
+            start, end = self.window_steps(robot_id)
 
             # Get goal node for this robot
             goal_node = self.problem.get_graph_robot_current_goal(robot_id)[1]
@@ -278,17 +252,8 @@ class GraphQUBO(BaseQUBO):
 
         for robot_id in self.get_active_robot_in_window():
             robot_offset = robot_nums[robot_id] * (self.num_nodes * self.total_t)
-            robot = self.problem.robots[robot_id]
 
-            start_time = robot.start_time
-            start = 0
-            if self.current_T < start_time:
-                start = start_time - self.current_T
-
-            end_time = robot.T + start_time
-            end = end_time - self.current_T
-            if end_time > self.current_T + self.t_max:
-                end = self.t_max
+            start, end = self.window_steps(robot_id)
 
             for t in range(start, end - 1):
                 next_active = set(self._nodes(robot_id, t + 1))
@@ -313,17 +278,8 @@ class GraphQUBO(BaseQUBO):
 
         for robot_id in self.get_active_robot_in_window():
             robot_offset = robot_nums[robot_id] * (self.num_nodes * self.total_t)
-            robot = self.problem.robots[robot_id]
 
-            start_time = robot.start_time
-            start = 0
-            if self.current_T < start_time:
-                start = start_time - self.current_T
-
-            end_time = robot.T + start_time
-            end = end_time - self.current_T
-            if end_time > self.current_T + self.t_max:
-                end = self.t_max
+            start, end = self.window_steps(robot_id)
 
             for t in range(start, end - 1):
                 next_active = set(self._nodes(robot_id, t + 1))
@@ -593,15 +549,7 @@ class GraphQUBO(BaseQUBO):
             robot_offset = robot_nums[robot_id] * (self.num_nodes * self.total_t)
             robot = self.problem.robots[robot_id]
 
-            start_time = robot.start_time
-            start = 0
-            if self.current_T < start_time:
-                start = start_time - self.current_T
-
-            end_time = robot.T + start_time
-            end = end_time - self.current_T
-            if end_time > self.current_T + self.t_max:
-                end = self.t_max
+            start, end = self.window_steps(robot_id)
 
             goal_node = self.problem.get_graph_robot_current_goal(robot_id)[1]
 
@@ -769,7 +717,8 @@ class GraphQUBO(BaseQUBO):
         current = {start_node}
         reachable = {start_time: set(current)}
         for t in range(start_time + 1, end_time):
-            grown = current | {n for node in current for n in adjacency.get(node, [])}
+            # adjacency holds (neighbour, weight) pairs
+            grown = current | {n for node in current for n, _ in adjacency.get(node, [])}
             if len(grown) == len(current):
                 for rest in range(t, end_time):
                     reachable[rest] = set(current)
