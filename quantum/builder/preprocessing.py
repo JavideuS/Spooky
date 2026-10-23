@@ -70,22 +70,26 @@ def reachable_aggressive(
     return reachable
 
 
-def reachable_safe(start, neighbours, start_time, end_time):
+def reachable_safe(start, neighbours, start_time, end_time, blocked=None):
     """
     Monotone reachability: the set at t is the set at t-1 plus its
     neighbours, so staying put and revisiting are both allowed. Same
     semantics as ILPBuilder.bfs_reachable_sets(), and the only variant that
     can't exclude a feasible solution -- reachable_aggressive() forbids
     waiting, which is how robots yield. Stops growing once it saturates.
+    `blocked` ({t: {position, ...}}) is removed from the set at t (cells a
+    parked robot holds, BaseQUBO.parked_cells).
 
     Returns:
         {t: {position, ...}} for every step in [start_time, end_time).
     """
+    blocked = blocked or {}
     current = {start}
     reachable = {start_time: set(current)}
     for t in range(start_time + 1, end_time):
         grown = current | {n for pos in current for n in neighbours(pos)}
-        if len(grown) == len(current):
+        grown -= blocked.get(t, set())
+        if not blocked and len(grown) == len(current):
             for rest in range(t, end_time):
                 reachable[rest] = set(current)
             break
@@ -411,8 +415,8 @@ class DiagonalFixer:
         blocks, so a whole shell is routed around at once instead of one
         cell per retry.
 
-        Not covered: robots that went inactive earlier (no variables in this
-        window); _flag_forced_collisions still reports that handoff case.
+        Robots parked on their goal (no variables from their arrival or
+        deadline on) are kept out through BaseQUBO.parked_cells() instead.
         """
         keepout = set()
         committed = {**getattr(self, "_pinned_before_diag", {}), **(total_fixed or {})}
@@ -684,6 +688,8 @@ class DiagonalFixer:
             start_pos = self.problem.graph.get_node_from_position((prev_i, prev_j))
 
         blocked = {t: set(cells) for t, cells in (blocked or {}).items()}
+        for t_block, cells in self.parked_cells(robot_id).items():
+            blocked.setdefault(t_block, set()).update(cells)
         wait_at = set()
         own_robot_num = self.problem.get_robot_nums()[robot_id]
         last_fixed_var = None

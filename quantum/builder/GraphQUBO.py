@@ -97,6 +97,8 @@ class GraphQUBO(BaseQUBO):
             self.apply_crash_penalty()
         if "trailing" in constraints_to_apply:
             self.apply_trailing_penalty()
+        if "crash" in constraints_to_apply or "trailing" in constraints_to_apply:
+            self.apply_parked_penalty()
 
         return self.Q
 
@@ -249,19 +251,22 @@ class GraphQUBO(BaseQUBO):
     def goal_distance_map(self, robot_id):
         """{node: steps} shortest path in edges from every node to the robot's
         goal (BFS backwards over graph.adjacency; one edge per timestep, so
-        weights don't enter). Nodes that can't reach the goal are absent."""
-        if robot_id not in self._goal_distance_maps:
+        weights don't enter), around nodes other robots are parked on by the
+        window's end. Nodes that can't reach the goal are absent."""
+        parked = frozenset(self.parked_cells(robot_id).get(self.t_max - 1, ()))
+        key = (robot_id, parked)
+        if key not in self._goal_distance_maps:
             goal = self.problem.get_graph_robot_current_goal(robot_id)[1]
             dist = {goal: 0}
             frontier = deque([goal])
             while frontier:
                 node = frontier.popleft()
                 for nxt in self._neighbour_nodes(node):
-                    if nxt not in dist:
+                    if nxt not in dist and nxt not in parked:
                         dist[nxt] = dist[node] + 1
                         frontier.append(nxt)
-            self._goal_distance_maps[robot_id] = dist
-        return self._goal_distance_maps[robot_id]
+            self._goal_distance_maps[key] = dist
+        return self._goal_distance_maps[key]
 
     def apply_goal_objective(self):
         """
@@ -417,9 +422,13 @@ class GraphQUBO(BaseQUBO):
                         idx2 = node_i + (self.num_nodes * t_next_window) + robot_offset2
                         self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_trail
 
-    def reachable_positions_safe(self, robot, start_node, start_time, end_time):
+    def reachable_positions_safe(
+        self, robot, start_node, start_time, end_time, blocked=None
+    ):
         """Monotone reachability over nodes; see preprocessing.reachable_safe."""
-        return reachable_safe(start_node, self._neighbour_nodes, start_time, end_time)
+        return reachable_safe(
+            start_node, self._neighbour_nodes, start_time, end_time, blocked
+        )
 
     def _neighbour_nodes(self, node):
         """graph.adjacency holds (neighbour, weight) pairs; reachability

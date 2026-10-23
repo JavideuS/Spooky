@@ -349,6 +349,67 @@ class BaseQUBO(DiagonalFixer, ABC):
             return start, self.t_max
         return start, end_time - self.current_T
 
+    def parked_cells(self, robot_id):
+        """Hold-goal: {window-relative t: cells} robot_id must stay off
+        because another robot is parked on its goal there, from the window
+        start if it finished in an earlier window, or from its deadline if
+        that falls inside this window (it has no variables after it). On a
+        grid the pair's clearance shell around the goal is included."""
+        is_graph = self.problem.get_format_type() == "graph"
+        clearance_table = {} if is_graph else self.problem.get_clearance_table()
+        blocked = {}
+        for other_id, other in self.problem.robots.items():
+            if other_id == robot_id:
+                continue
+            if other.active:
+                _, from_t = self.window_steps(other_id)
+                if not 0 < from_t < self.t_max:
+                    continue
+            elif other.is_at_goal():
+                from_t = 0
+            else:
+                continue
+            if is_graph:
+                cells = {self.problem.get_graph_robot_current_goal(other_id)[1]}
+            else:
+                gi, gj = other.goal
+                M, N = self.problem.grid.M, self.problem.grid.N
+                D = clearance_table.get((robot_id, other_id)) or {(0, 0)}
+                cells = {
+                    (gi + di, gj + dj)
+                    for di, dj in D
+                    if 0 <= gi + di < M and 0 <= gj + dj < N
+                }
+            for t in range(from_t, self.t_max):
+                blocked.setdefault(t, set()).update(cells)
+        return blocked
+
+    def _var_index(self, robot_id, t, pos):
+        """Flat variable index of robot_id at window-relative t on pos."""
+        if self.problem.get_format_type() == "graph":
+            per_t, local = self.num_nodes, pos
+        else:
+            N = self.problem.grid.N
+            per_t, local = self.problem.grid.M * N, pos[0] * N + pos[1]
+        robot_num = self.problem.get_robot_nums()[robot_id]
+        return robot_num * per_t * self.total_t + t * per_t + local
+
+    def apply_parked_penalty(self):
+        """K_crash on cells another robot is parked on (parked_cells). Only
+        for builds without BFS-pruned cells (raw mode): the pruned ones never
+        offer those cells in the first place."""
+        if self._active_cells is not None:
+            return
+        K_crash = self.penalties.get("K_crash", 0)
+        for robot_id in self.get_active_robot_in_window():
+            start, end = self.window_steps(robot_id)
+            for t, cells in self.parked_cells(robot_id).items():
+                if not start <= t < end:
+                    continue
+                for pos in cells:
+                    n = self._var_index(robot_id, t, pos)
+                    self.Q[(n, n)] = self.Q.get((n, n), 0) + K_crash
+
     def get_active_robot_in_window(self):
         """
         Get list of robot IDs that are active in the current window.
@@ -657,7 +718,9 @@ class BaseQUBO(DiagonalFixer, ABC):
         pass
 
     @abstractmethod
-    def reachable_positions_safe(self, robot, start, start_time, end_time):
+    def reachable_positions_safe(
+        self, robot, start, start_time, end_time, blocked=None
+    ):
         """
         Monotone reachability: the set at t is the set at t-1 unioned with its
         neighbours, so staying in place and revisiting are both allowed.
@@ -685,6 +748,11 @@ class BaseQUBO(DiagonalFixer, ABC):
         Defaults to the aggressive policy so a builder driven directly (a
         script, a test) behaves as it did before the modes existed.
         """
+        blocked = self.parked_cells(robot.robot_id)
         if variant == preprocess_modes.BFS_VARIANT_SAFE:
-            return self.reachable_positions_safe(robot, start, start_time, end_time)
-        return self.reachable_positions_aggressive(robot, start, start_time, end_time)
+            return self.reachable_positions_safe(
+                robot, start, start_time, end_time, blocked
+            )
+        return self.reachable_positions_aggressive(
+            robot, start, start_time, end_time, blocked
+        )

@@ -178,12 +178,9 @@ def test_preprocessing_routes_around_clearance_shell():
         path = solver.decode_path(solution["solution"], problem)
         result = is_solution_valid(path, problem)
         assert result["valid"], (mode, result.get("message", result))
-        # Only while b still has a path: after that b is inactive at its goal
-        # and, under the current disappear-at-goal semantics, its shell is no
-        # longer kept out -- whether parked robots should hold their cell for
-        # the whole horizon is an open question.
-        b_until = max(cell[2] for cell, robot in path if robot == 1)
-        a_cells = [cell[:2] for cell, robot in path if robot == 0 and cell[2] <= b_until]
+        # b holds its goal for the whole plan (hold-goal), so a never enters
+        # its shell, also after b has gone inactive.
+        a_cells = [cell[:2] for cell, robot in path if robot == 0]
         assert all(_cheb(c, (1, 3)) > reach for c in a_cells), (mode, a_cells)
 
 

@@ -15,10 +15,11 @@ Two-level search:
   that robot.
 
 Paths returned by the high level are padded with repeated goal positions
-from first arrival through each robot's own deadline (start_time + T - 1) —
-this matches ILPSolver's goal_lock semantics (a robot occupies/blocks its
-goal cell for the rest of its own active window, not indefinitely), which is
-what CBSSolver's cost-equivalence with ILPSolver depends on. Cost (sum of
+from first arrival through the robot's hold_until (the end of the plan;
+falls back to its own deadline) — hold-goal semantics, matching ILPSolver's
+goal_lock: a finished robot stays on, and blocks, its goal cell until the
+last robot is done. CBSSolver's cost-equivalence with ILPSolver depends on
+this. Cost (sum of
 arrival offsets) is computed from the trimmed, unpadded arrival time, not
 the padded path length, for the same reason.
 """
@@ -87,18 +88,19 @@ class SpaceTimeAStar:
         goal: int,
         arrival_time: int,
         start_time: int,
-        deadline: int,
+        hold_until: int,
         forbidden_vertices: Set[Tuple[int, int]],
         legal_cells: Optional[List[Set[int]]],
     ) -> bool:
         """Whether arriving at goal at arrival_time is actually a valid
-        stopping point — i.e. the robot can then sit there through its own
-        deadline (what the caller's padding step does) without violating
+        stopping point — i.e. the robot can then sit there through
+        hold_until (what the caller's padding step does) without violating
         any constraint at any of those held timesteps, not just the
         constraints that apply during the search up to arrival_time itself.
         legal_cells is indexed by step count from start_time (same
         convention as the neighbor-expansion loop below), not absolute
-        time, hence the `t - start_time`. Edge constraints don't need
+        time, hence the `t - start_time`; steps past its end are held steps,
+        where only the goal is ever legal. Edge constraints don't need
         checking here: every edge constraint this codebase ever generates
         has from_node != to_node (see ConflictBasedSearch._all_conflicts's
         edge-conflict branch), so a "stay in place" transition — the padded
@@ -107,9 +109,10 @@ class SpaceTimeAStar:
             (goal, t) not in forbidden_vertices
             and (
                 legal_cells is None
-                or (t - start_time < len(legal_cells) and goal in legal_cells[t - start_time])
+                or t - start_time >= len(legal_cells)
+                or goal in legal_cells[t - start_time]
             )
-            for t in range(arrival_time, deadline + 1)
+            for t in range(arrival_time, hold_until + 1)
         )
 
     def find_path(
@@ -122,10 +125,11 @@ class SpaceTimeAStar:
         forbidden_edges: Set[Tuple[int, int, int]],
         legal_cells: Optional[List[Set[int]]] = None,
         tie_break_seed: int = 0,
+        hold_until: Optional[int] = None,
     ) -> Optional[List[Tuple[int, int]]]:
         """Returns [(node, t), ...] from (start, start_time) to the first
         arrival at goal, or None if no path exists within the deadline.
-        Not padded — the caller pads to the robot's own deadline if needed.
+        Not padded — the caller pads to hold_until (default: deadline).
 
         tie_break_seed: perturbs which of several *equal-cost* paths gets
         returned (see _TIE_BREAK_EPSILON) without ever affecting the actual
@@ -151,7 +155,12 @@ class SpaceTimeAStar:
                 continue  # stale heap entry, a cheaper path to this state was already found
 
             if current.node == goal and self._can_hold_goal(
-                goal, current.time, start_time, deadline, forbidden_vertices, legal_cells
+                goal,
+                current.time,
+                start_time,
+                deadline if hold_until is None else hold_until,
+                forbidden_vertices,
+                legal_cells,
             ):
                 return self._reconstruct(current)
 
@@ -277,10 +286,10 @@ class ConflictBasedSearch:
         return [self._pos2id[c] for c in cand if c in self._pos2id]
 
     @staticmethod
-    def _pad(path: List[Tuple[int, int]], goal: int, deadline: int) -> List[Tuple[int, int]]:
+    def _pad(path: List[Tuple[int, int]], goal: int, hold_until: int) -> List[Tuple[int, int]]:
         padded = list(path)
         last_t = path[-1][1]
-        for t in range(last_t + 1, deadline + 1):
+        for t in range(last_t + 1, hold_until + 1):
             padded.append((goal, t))
         return padded
 
@@ -327,10 +336,11 @@ class ConflictBasedSearch:
             forbidden_edges,
             legal_cells=legal_cells.get(robot_id) if legal_cells else None,
             tie_break_seed=stable_hash(robot_id),
+            hold_until=meta.get("hold_until"),
         )
         if raw is None:
             return None
-        return self._pad(raw, meta["goal"], meta["deadline"])
+        return self._pad(raw, meta["goal"], meta.get("hold_until", meta["deadline"]))
 
     def _total_cost(self, solution: Dict[str, List[Tuple[int, int]]], robots_meta: Dict[str, dict]) -> float:
         return sum(

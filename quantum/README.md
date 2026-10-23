@@ -79,6 +79,13 @@ collision, leaving the goal) pays its hard penalty once and gains w per step
 of arrival it saves, so w must stay well below the cheapest hard penalty;
 w = 1-2 lets shortcuts win.
 
+**Finished robots stay parked** (hold-goal): once a robot reaches its goal it
+keeps occupying that cell, plus its clearance shell, until the last robot is
+done. Later windows, the BFS pre-processing and the goal distance maps route
+the other robots around it (`BaseQUBO.parked_cells`). CBS, ILP and the
+validator use the same rule, so a plan where a robot drives through a parked
+one is invalid. Before its `start_time` a robot isn't on the map.
+
 | Option | Why |
 |---|---|
 | `--approach-weight 3` | Penalizes robot pairs ending a window heading into each other along their shortest routes. Each window picks between equally short routes independently; for four robots swapping corners on a ring only 2 of 16 such choices avoid a head-on. `--approach-radius` defaults to `min(M, N) // 2`. Off by default. |

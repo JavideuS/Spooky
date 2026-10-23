@@ -238,7 +238,8 @@ class GridQUBOBuilder(BaseQUBO):
     def goal_distance_map(self, robot_id):
         """{(i, j): steps} shortest-path distance from every cell to this
         robot's goal, by BFS backwards from the goal over grid.adjacency
-        (obstacle-aware), skipping the robot's clearance keep-out cells.
+        (obstacle-aware), skipping the robot's clearance keep-out cells and
+        the cells other robots are parked on by the window's end.
         Cells that can't reach the goal are absent, so they get no reward.
 
         Unlike Manhattan distance it has no local minima: every reachable
@@ -246,11 +247,14 @@ class GridQUBOBuilder(BaseQUBO):
         cost-to-go for a robot on its own, so a short window scored with it
         can't be lured into a dead end or the wrong side of a wall. It knows
         nothing about other robots -- the QUBO still decides all of that.
-        Computed once per robot and cached: map and goal don't change.
+        Cached per robot and set of parked cells.
         """
-        if robot_id not in self._goal_distance_maps:
+        parked = frozenset(self.parked_cells(robot_id).get(self.t_max - 1, ()))
+        key = (robot_id, parked)
+        if key not in self._goal_distance_maps:
             goal = tuple(self.problem.robots[robot_id].goal)
             keepout = self.problem.get_obstacle_keepout().get(robot_id, frozenset())
+            keepout = keepout | parked
             adjacency = self.problem.grid.adjacency
             dist = {goal: 0}
             frontier = deque([goal])
@@ -260,8 +264,8 @@ class GridQUBOBuilder(BaseQUBO):
                     if nxt not in dist and nxt not in keepout:
                         dist[nxt] = dist[cell] + 1
                         frontier.append(nxt)
-            self._goal_distance_maps[robot_id] = dist
-        return self._goal_distance_maps[robot_id]
+            self._goal_distance_maps[key] = dist
+        return self._goal_distance_maps[key]
 
     def apply_goal_objective(self):
         """
@@ -683,6 +687,8 @@ class GridQUBOBuilder(BaseQUBO):
             self.apply_crash_penalty()
         if "trailing" in constraints_to_apply:
             self.apply_trailing_penalty()
+        if "crash" in constraints_to_apply or "trailing" in constraints_to_apply:
+            self.apply_parked_penalty()
         if self.approach_weight:
             self.apply_approach_penalty()
 
@@ -707,12 +713,14 @@ class GridQUBOBuilder(BaseQUBO):
             f"Reachable positions for robot {robot.robot_id}: {reachable}"
         )
         return reachable
-    def reachable_positions_safe(self, robot, start, start_time, end_time):
+    def reachable_positions_safe(
+        self, robot, start, start_time, end_time, blocked=None
+    ):
         """Monotone reachability (staying and revisiting allowed); see
         preprocessing.reachable_safe."""
         adjacency = self.problem.grid.adjacency  # already excludes obstacles
         return reachable_safe(
-            start, lambda cell: adjacency.get(cell, ()), start_time, end_time
+            start, lambda cell: adjacency.get(cell, ()), start_time, end_time, blocked
         )
     def get_logical_variables(self, bfs_variant=None):
         """

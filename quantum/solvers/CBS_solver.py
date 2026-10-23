@@ -91,6 +91,7 @@ class CBSSolver(BaseSolver):
                 "goal": goal_node,
                 "start_time": robot.start_time,
                 "deadline": robot.start_time + robot.T - 1,
+                "hold_until": T - 1,  # hold-goal: parked until the plan ends
             }
 
         cbs = ConflictBasedSearch(

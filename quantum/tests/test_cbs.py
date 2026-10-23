@@ -32,22 +32,17 @@ def _validate(solver, solution, problem):
 
 
 def test_cbs_corridor_forces_a_wait():
-    """1x3 corridor: robot 'a' must cross it entirely (node0->node2); robot
-    'b' only needs to duck one hop in (node2->node1) and is done by t=1 (its
-    own short deadline — it stops existing/occupying anything after that,
-    same active-window semantics as ILP). Planned independently (CBS's
-    root), both would be at node1 at t=1 — a vertex conflict — so CBS must
-    resolve it, and the only resolution here is 'a' waiting one step at
-    node0 until 'b' has vacated (there's no room to detour in a 1-wide
-    corridor, unlike test_cbs_vertex_conflict_resolved's 2x2 grid below).
-    Note: a true end-to-end swap in a 1-wide corridor with no siding is
-    mathematically impossible regardless of time slack (the two robots can
-    never pass each other), which is why this fixture has 'b' duck in and
-    finish early rather than also traverse the full corridor."""
-    grid = Grid(1, 3, obstacles=[])
+    """1x3 corridor (0,0)-(0,1)-(0,2) with a side cell (1,1) under its
+    middle. Robot 'a' crosses the corridor; robot 'b' leaves (0,2) for the
+    side cell, which it can only reach through (0,1), by its deadline t=2,
+    and then stays parked there (hold-goal). Planned independently (CBS's
+    root), both would be at (0,1) at t=1 -- a vertex conflict -- and the only
+    resolution is 'a' waiting one step at (0,0) while 'b' passes: 'b' has no
+    slack, and 'a' has no other cell to go to."""
+    grid = Grid(2, 3, obstacles=[(1, 0), (1, 2)])
     robots = [
         RobotConfig("a", (0, 0), (0, 2), start_time=0, expected_duration=5),
-        RobotConfig("b", (0, 2), (0, 1), start_time=0, expected_duration=2),
+        RobotConfig("b", (0, 2), (1, 1), start_time=0, expected_duration=3),
     ]
     problem = PathfindingProblem(robots, grid=grid, name="corridor_wait")
 
@@ -158,11 +153,12 @@ def test_astar_refuses_arrival_it_cannot_hold():
     )
 
 
-def test_cbs_robot_crossing_already_parked_goal_terminates_and_is_valid():
+def test_cbs_robot_crossing_parked_goal_is_proven_infeasible():
     """Full-solver version of the same scenario: robot 'a' must cross
-    robot 'b's goal cell; 'b' parks there almost immediately, well before
-    'a' would naturally arrive. Must terminate well under node_limit (no
-    duplicate-child starvation) and produce a genuinely valid solution."""
+    robot 'b's goal cell in a 1-wide corridor; 'b' must park there by t=2,
+    before 'a' could pass, and hold-goal keeps it there until the plan
+    ends. No valid plan exists, and CBS must prove it well under node_limit
+    (no duplicate-child starvation)."""
     grid = Grid(1, 4, obstacles=[])
     robots = [
         RobotConfig("a", (0, 0), (0, 3), start_time=0, expected_duration=8),
@@ -174,12 +170,11 @@ def test_cbs_robot_crossing_already_parked_goal_terminates_and_is_valid():
     solver = CBSSolver(node_limit=200, time_limit=5)
     solution = solver.solve(builder, preprocess=True)
 
-    assert solution["metadata"]["termination_condition"] == "optimal"
+    assert solution["metadata"]["termination_condition"] == "no_solution"
     assert solution["raw_response"]["nodes_expanded"] < 50, (
         "search took far more nodes than this tiny instance should need — "
         "possible duplicate-child starvation regression"
     )
-    _validate(solver, solution, problem)
 
 
 def _cheb(p, q):

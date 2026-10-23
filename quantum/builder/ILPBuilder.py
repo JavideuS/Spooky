@@ -172,13 +172,10 @@ class GridILPBuilder(BaseILPBuilder):
         # since it relies on that for its own penalty terms, so extend it locally here.
         reachable = {v: grid.adjacency[v] + [v] for v in model.V}
 
-        # Each robot only exists for its own [start_time, start_time + T - 1] window,
-        # matching the QUBO: no variables before start_time, none after the robot's
-        # own goal is reached (regardless of how long the shared horizon runs).
-        active_range = {
-            a: range(robots[a].start_time, robots[a].start_time + robots[a].T)
-            for a in robots
-        }
+        # Hold-goal: a robot exists from its start_time to the end of the plan.
+        # It must reach its goal by its own deadline (start_time + T - 1) and
+        # then stays there, blocking the cell, until the last robot is done.
+        active_range = {a: range(robots[a].start_time, problem.T) for a in robots}
 
         # Forward-from-start and backward-from-goal BFS reachability per robot:
         # cells it cannot possibly have reached by t, or cannot possibly still
@@ -248,7 +245,7 @@ class GridILPBuilder(BaseILPBuilder):
                     for v in model.V:
                         model.x[a, v, t].fix(0)
                     continue
-                if a in parked:
+                if a in parked or t > goal_deadline[a]:
                     goal = robots[a].goal
                     for v in model.V:
                         in_window_vars += 1
@@ -488,10 +485,8 @@ class GraphILPBuilder(BaseILPBuilder):
         # for graph robot state (see PathfindingProblem.get_graph_robot_current_goal).
         start_goal = {a: problem.get_graph_robot_current_goal(a) for a in robots}
 
-        active_range = {
-            a: range(robots[a].start_time, robots[a].start_time + robots[a].T)
-            for a in robots
-        }
+        # Hold-goal, as in the grid model: exists until the end of the plan.
+        active_range = {a: range(robots[a].start_time, problem.T) for a in robots}
 
         # Forward-from-start and backward-from-goal BFS reachability per robot:
         # nodes it cannot possibly have reached by t, or cannot possibly still
@@ -528,6 +523,12 @@ class GraphILPBuilder(BaseILPBuilder):
                         model.x[a, v, t].fix(0)
                         continue
                     in_window_vars += 1
+                    if t > goal_deadline[a]:
+                        # held on the goal past its deadline
+                        if v != start_goal[a][1]:
+                            model.x[a, v, t].fix(0)
+                            bfs_fixed += 1
+                        continue
                     if preprocess:
                         forward_ok = v in forward_sets[a][t - robots[a].start_time]
                         backward_ok = v in backward_sets[a][goal_deadline[a] - t]

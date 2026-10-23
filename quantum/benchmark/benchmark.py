@@ -910,6 +910,12 @@ def is_solution_valid(solution, problem):
             return result
         result["details"][f"robot_{robot_num}"] = robot_result
 
+    # Hold-goal: a finished robot stays on its goal cell until the plan ends
+    # (problem.T), so the conflict checks below see it parked there.
+    for robot_path in robot_positions.values():
+        i, j, t_last = max(robot_path, key=lambda p: p[2])
+        robot_path.extend((i, j, t) for t in range(t_last + 1, problem.T))
+
     # multi-robot vertex conflict check (same cell at same time)
     occupancy = {}  # (i, j, t) -> [robot_num, ...]
     for robot_num, robot_path in robot_positions.items():
@@ -1097,9 +1103,11 @@ def _validate_single_robot_path_unified(positions, problem, robot_id, robot_num)
     all_times = set(t for _, _, t in positions)
     missing_times = expected_times - all_times
     # Only flag as extra if timesteps exceed the robot's full timeline range
-    # Robot can have timesteps from start_time to (start_time + T - 1)
-    # Extra timesteps are those >= (start_time + T)
-    extra_times = set(t for t in all_times if t >= robot_end_time)
+    # Robot can have timesteps from start_time to (start_time + T - 1), or
+    # to the end of the plan once at its goal (hold-goal; the check above
+    # already made sure it never left it).
+    last_time = problem.T if goal_times else robot_end_time
+    extra_times = set(t for t in all_times if t >= last_time)
 
     if missing_times:
         result["valid"] = False
