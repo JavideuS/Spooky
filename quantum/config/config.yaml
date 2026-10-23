@@ -5,9 +5,7 @@ penalty_sets:
     K_start: 6.5
     K_goal: 3 #2.7
     K_lock: 4
-    K_bt: 2.3
     K_tp: 1.2
-    K_goal_approx: 0.7
     K_obs: 0
     K_crash: 2.7
     K_trail: 3 # Seems to do overconstrain a bit so does better when smaller than crashes
@@ -18,9 +16,7 @@ penalty_sets:
     K_start: 6.5
     K_goal: 3 #2.7
     K_lock: 4
-    K_bt: 2.3
     K_tp: 1.2
-    K_goal_approx: 0.7
     K_obs: 0
     K_crash: 3 # Crash cant be higher thand adjacency, then there is no point
 
@@ -30,8 +26,6 @@ penalty_sets:
     K_start: 6.5
     K_goal: 2.7
     K_lock: 4
-    K_bt: 2.3
-    K_goal_approx: 0.7
 
   obs:
     K_hot: 10
@@ -39,9 +33,7 @@ penalty_sets:
     K_start: 6.5
     K_goal: 3.8
     K_lock: 4.7
-    K_bt: 2.3
     K_tp: 1.2
-    K_goal_approx: 0.9
     K_obs: 1.5
 
   ter:
@@ -50,7 +42,6 @@ penalty_sets:
     K_start: 6.5
     K_goal: 3.3
     K_lock: 2.4
-    K_bt: 2.5
     K_tp: 0.5
     K_ter: 1.4
 
@@ -60,7 +51,6 @@ penalty_sets:
     K_start: 6.5
     K_goal: 3.7
     K_lock: 2.4
-    K_bt: 1.9
     K_tp: 0.5
     K_elev: 1.2
 

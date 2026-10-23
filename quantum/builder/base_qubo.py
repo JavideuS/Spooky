@@ -28,7 +28,6 @@ class BaseQUBO(DiagonalFixer, ABC):
         window_max_steps=None,
         window_sizing="estimate",
         fixer="chain",
-        distance_scaling=None,
         robot_window_limits=None,
         verbose_level=2,
         log_reductions=True,
@@ -66,7 +65,6 @@ class BaseQUBO(DiagonalFixer, ABC):
         self.Q = {}
         self.initial_num_vars = 0  # To be set by subclass during build
         # Optional knob used by grid subclass
-        self.distance_scaling = distance_scaling
         self.prev_solution = []
         self.verbose_level = verbose_level
         # Initialize logger

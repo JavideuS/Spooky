@@ -343,15 +343,12 @@ class SweepRunner:
             builder_kwargs["robot_window_limits"] = {
                 robot_id: solver_cfg["window_limit"] for robot_id in problem.robots
             }
+        # Goal term and fixer, both QUBO builders; absent keys keep defaults
+        for key in ("goal_objective", "goal_weight", "fixer"):
+            if key in solver_cfg:
+                builder_kwargs[key] = solver_cfg[key]
         if builder_kind == "grid":
-            # Grid-only goal-term options; absent keys keep QUBOBuilder's defaults
-            for key in (
-                "approach_weight",
-                "approach_radius",
-                "goal_objective",
-                "goal_weight",
-                "fixer",
-            ):
+            for key in ("approach_weight", "approach_radius"):
                 if key in solver_cfg:
                     builder_kwargs[key] = solver_cfg[key]
             p = problem.as_grid_only()
