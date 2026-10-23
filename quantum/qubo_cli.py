@@ -157,7 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["shaped", "terminal"],
         default="shaped",
         help=(
-            "Goal term (grid builder only): arrival time priced at "
+            "Goal term (grid and graph builders): arrival time priced at "
             "--goal-weight per step plus the BFS distance left; shaped "
             "(default) spreads the distance over the window, terminal puts it "
             "on the last step"
@@ -331,9 +331,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override K_lock penalty",
     )
     pen.add_argument(
-        "--K-bt", type=float, default=None, metavar="VAL", help="Override K_bt penalty"
-    )
-    pen.add_argument(
         "--K-tp", type=float, default=None, metavar="VAL", help="Override K_tp penalty"
     )
     pen.add_argument(
@@ -356,13 +353,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="VAL",
         help="Override K_obs penalty",
-    )
-    pen.add_argument(
-        "--K-goal-approx",
-        type=float,
-        default=None,
-        metavar="VAL",
-        help="Override K_goal_approx penalty",
     )
 
     # ---- Solver ------------------------------------------------------------
@@ -796,12 +786,10 @@ def build_penalties(config: dict, args: argparse.Namespace) -> dict:
         "K_start": args.K_start,
         "K_goal": args.K_goal,
         "K_lock": args.K_lock,
-        "K_bt": args.K_bt,
         "K_tp": args.K_tp,
         "K_crash": args.K_crash,
         "K_trail": args.K_trail,
         "K_obs": args.K_obs,
-        "K_goal_approx": args.K_goal_approx,
     }
     for key, val in overrides.items():
         if val is not None:
@@ -1112,6 +1100,12 @@ def main():
     if args.var_limit is not None:
         builder_kwargs["var_limit"] = args.var_limit
     builder_kwargs["window_sizing"] = args.window_sizing
+    # QUBO builders only (ILP/CBS build their own kwargs below)
+    qubo_kwargs = {
+        "goal_objective": args.goal_objective,
+        "goal_weight": args.goal_weight,
+        "fixer": args.fixer,
+    }
 
     if args.solver == "ilp":
         # ILP has no penalty weights, var_limit, or windowing — builder_kwargs
@@ -1133,15 +1127,13 @@ def main():
             builder = GraphCBSBuilder(p, name=args.problem, verbose_level=verbose_level)
     elif args.builder == "grid":
         p = problem.as_grid_only()
-        builder_kwargs["goal_objective"] = args.goal_objective
-        builder_kwargs["fixer"] = args.fixer
-        builder_kwargs["goal_weight"] = args.goal_weight
+        builder_kwargs.update(qubo_kwargs)
         builder_kwargs["approach_weight"] = args.approach_weight
         builder_kwargs["approach_radius"] = args.approach_radius
         builder = QUBOBuilder(p, **builder_kwargs)
     else:  # graph
         p = problem.as_graph_only()
-        builder = GraphQUBO(p, **builder_kwargs)
+        builder = GraphQUBO(p, **builder_kwargs, **qubo_kwargs)
 
     logger.minimal(
         f"Builder: {args.builder.upper()} | window_limits={window_limits or 'none'}"
