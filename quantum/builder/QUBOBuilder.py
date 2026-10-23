@@ -94,17 +94,7 @@ class GridQUBOBuilder(BaseQUBO):
 
         for robot_id in self.get_active_robot_in_window():
             robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
-            robot = self.problem.robots[robot_id]
-            start_time = robot.start_time
-            start = 0
-            if self.current_T < start_time:
-                start = start_time - self.current_T
-            # Note that if current_T > start_time then it is a continuation
-            end_time = robot.T + start_time
-            end = end_time - self.current_T
-            # This would mean it doesn't finish in this window
-            if end_time > self.current_T + self.t_max:
-                end = self.t_max
+            start, end = self.window_steps(robot_id)
 
             for t in range(start, end):
                 indices = [
@@ -132,14 +122,7 @@ class GridQUBOBuilder(BaseQUBO):
             robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
             robot = self.problem.robots[robot_id]
 
-            start_time = robot.start_time
-            start = 0
-            if self.current_T < start_time:
-                start = start_time - self.current_T
-            end_time = robot.T + start_time
-            end = end_time - self.current_T
-            if end_time > self.current_T + self.t_max:
-                end = self.t_max
+            start, end = self.window_steps(robot_id)
 
             for t in range(start, end - 1):
                 next_active = set(self._cells(robot_id, t + 1))
@@ -160,44 +143,6 @@ class GridQUBOBuilder(BaseQUBO):
                             continue
                         m = k * N + l + M * N * (t + 1) + robot_offset
                         self.Q[(n, m)] = self.Q.get((n, m), 0) - K_adj
-
-    def apply_adjacency_penalty(self):
-        """
-        Apply adjacency penalty: discourage moving to non-adjacent cells.
-        """
-        M, N = self.problem.grid.M, self.problem.grid.N
-        adjacency = self.problem.grid.adjacency
-        K_adj = self.penalties["K_adj"]
-        robot_nums = self.problem.get_robot_nums()
-
-        for robot_id in self.get_active_robot_in_window():
-            robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
-            robot = self.problem.robots[robot_id]
-
-            start_time = robot.start_time
-            start = 0
-            if self.current_T < start_time:
-                start = start_time - self.current_T
-            end_time = robot.T + start_time
-            end = end_time - self.current_T
-            if end_time > self.current_T + self.t_max:
-                end = self.t_max
-
-            for t in range(start, end - 1):
-                for i, j in self._cells(robot_id, t):
-                    n = i * N + j + M * N * t + robot_offset
-
-                    # Look at all possible positions at next time step
-                    for k, l in self._cells(robot_id, t + 1):
-                        m = k * N + l + M * N * (t + 1) + robot_offset
-
-                        # Skip self-loop unless explicitly allowed
-                        if k == i and l == j:
-                            continue
-
-                        # Only penalize if (k,l) is NOT in adjacency[(i,j)]
-                        if (k, l) not in adjacency[(i, j)]:
-                            self.Q[(n, m)] = self.Q.get((n, m), 0) + K_adj
 
     def apply_start_penalty(self):
         """
@@ -386,14 +331,7 @@ class GridQUBOBuilder(BaseQUBO):
             robot = self.problem.robots[robot_id]
             e_i, e_j = robot.goal
 
-            start_time = robot.start_time
-            start = 0
-            if self.current_T < start_time:
-                start = start_time - self.current_T
-            end_time = robot.T + start_time
-            end = end_time - self.current_T
-            if end_time > self.current_T + self.t_max:
-                end = self.t_max
+            start, end = self.window_steps(robot_id)
 
             for t in range(start, end - 1):  # up to T-2 to reference t+1
                 # Skip if goal is not a reachable cell at this timestep — avoids phantom Q entries
@@ -423,14 +361,7 @@ class GridQUBOBuilder(BaseQUBO):
             robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
             robot = self.problem.robots[robot_id]
 
-            start_time = robot.start_time
-            start = 0
-            if self.current_T < start_time:
-                start = start_time - self.current_T
-            end_time = robot.T + start_time
-            end = end_time - self.current_T
-            if end_time > self.current_T + self.t_max:
-                end = self.t_max
+            start, end = self.window_steps(robot_id)
 
             e_i, e_j = robot.goal
             min_steps = self.problem.manhattan_distance(
@@ -454,16 +385,8 @@ class GridQUBOBuilder(BaseQUBO):
 
         for robot_id in self.get_active_robot_in_window():
             robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
-            robot = self.problem.robots[robot_id]
 
-            start_time = robot.start_time
-            start = 0
-            if self.current_T < start_time:
-                start = start_time - self.current_T
-            end_time = robot.T + start_time
-            end = end_time - self.current_T
-            if end_time > self.current_T + self.t_max:
-                end = self.t_max
+            start, end = self.window_steps(robot_id)
 
             for t in range(start, end):
                 for i, j in self._cells(robot_id, t):
@@ -485,16 +408,8 @@ class GridQUBOBuilder(BaseQUBO):
 
         for robot_id in self.get_active_robot_in_window():
             robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
-            robot = self.problem.robots[robot_id]
 
-            start_time = robot.start_time
-            start = 0
-            if self.current_T < start_time:
-                start = start_time - self.current_T
-            end_time = robot.T + start_time
-            end = end_time - self.current_T
-            if end_time > self.current_T + self.t_max:
-                end = self.t_max
+            start, end = self.window_steps(robot_id)
 
             for t in range(start, end - 1):
                 next_active = set(self._cells(robot_id, t + 1))
@@ -542,16 +457,8 @@ class GridQUBOBuilder(BaseQUBO):
 
         for robot_id in self.get_active_robot_in_window():
             robot_offset = robot_nums[robot_id] * (M * N * self.total_t)
-            robot = self.problem.robots[robot_id]
 
-            start_time = robot.start_time
-            start = 0
-            if self.current_T < start_time:
-                start = start_time - self.current_T
-            end_time = robot.T + start_time
-            end = end_time - self.current_T
-            if end_time > self.current_T + self.t_max:
-                end = self.t_max
+            start, end = self.window_steps(robot_id)
 
             # BFS-restricted windows already exclude obstacle cells from active_cells
             # (reachable_positions_aggressive filters them out), so this hard penalty
@@ -757,8 +664,6 @@ class GridQUBOBuilder(BaseQUBO):
             self.apply_one_hot()
         if "adjacency_reward" in constraints_to_apply:
             self.apply_adjacency_reward()
-        if "adjacency_penalty" in constraints_to_apply:
-            self.apply_adjacency_penalty()
         if "start" in constraints_to_apply:
             self.apply_start_penalty()
         if "goal_objective" in constraints_to_apply:
@@ -938,64 +843,6 @@ class GridQUBOBuilder(BaseQUBO):
             reachable[t] = set(current)
         return reachable
 
-    def reachable_positions_aggressive_v2(self, robot, start, start_time, end_time):
-        """
-        Compute reachable positions per time step without backtracking,
-        taking into account the robot's historical path (similar to backtracking penalty).
-
-        This is even more aggressive than reachable_positions_aggressive because it also
-        excludes positions that are in the robot's path from being visited again.
-
-        Args:
-            robot: Robot object with current_position and path attribute.
-            start: Starting position tuple (i, j).
-            start_time (int): starting time step.
-            end_time (int): ending time step (exclusive).
-
-        Returns:
-            dict[int, set[tuple[int, int]]]: {t: {(i, j), ...}} reachable positions per time step.
-        """
-
-        goal = robot.goal
-        adjacency = self.problem.grid.adjacency  # adjacency map without obstacles
-        obstacles = set(self.problem.grid.obstacles or [])
-
-        reachable = {start_time: {start}}
-        visited = {start}  # <- prevent backtracking / revisiting
-
-        # Add robot's historical path to visited set (excluding goal to allow re-entry)
-        if robot.active and robot.path:
-            for pos in robot.path:
-                # Extract (i, j) from path position (could be (i, j) or (i, j, t))
-                path_pos = pos[:2] if len(pos) > 2 else pos
-                # Don't mark goal as visited from path, allow re-entry to goal
-                if path_pos != goal:
-                    visited.add(path_pos)
-
-        # Expand layer by layer
-        for t in range(start_time + 1, end_time):
-            prev_layer = reachable[t - 1]
-            curr_layer = set()
-
-            for i, j in prev_layer:
-                for ni, nj in adjacency.get((i, j), []):
-                    if (ni, nj) not in obstacles and (ni, nj) not in visited:
-                        curr_layer.add((ni, nj))
-                        visited.add((ni, nj))  # mark as seen globally
-
-            # Always include goal once reachable — robot may stay there indefinitely.
-            # Must come before the empty check so late timesteps get {goal} instead of {}.
-            if goal in visited:
-                curr_layer.add(goal)
-
-            # Stop only if goal hasn't been reached yet and no new cells found
-            if not curr_layer:
-                break
-
-            reachable[t] = curr_layer
-
-        return reachable
-
     def get_logical_variables(self, bfs_variant=None):
         """
         Returns (fixed_ones, active_cells):
@@ -1016,14 +863,7 @@ class GridQUBOBuilder(BaseQUBO):
             s_i, s_j = robot.current_position
             e_i, e_j = robot.goal
 
-            start_time = robot.start_time
-            start = 0
-            if self.current_T < start_time:
-                start = start_time - self.current_T
-            end_time = robot.T + robot.start_time
-            end = end_time - self.current_T
-            if end_time > self.current_T + self.t_max:
-                end = self.t_max
+            start, end = self.window_steps(robot_id)
 
             start_idx = s_i * N + s_j + M * N * start + robot_offset
             fixed_ones[start_idx] = 1

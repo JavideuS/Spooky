@@ -340,6 +340,18 @@ class BaseQUBO(ABC):
         active_cells = {k: v for k, v in active_cells.items() if k[1] < window}
         return fixed_ones, active_cells
 
+    def window_steps(self, robot_id):
+        """(start, end) of robot_id in the current window, window-relative:
+        start is 0 unless the robot starts later; end is exclusive -- its
+        deadline (start_time + T) if that falls inside the window, else
+        t_max."""
+        robot = self.problem.robots[robot_id]
+        start = max(0, robot.start_time - self.current_T)
+        end_time = robot.start_time + robot.T
+        if end_time > self.current_T + self.t_max:
+            return start, self.t_max
+        return start, end_time - self.current_T
+
     def get_active_robot_in_window(self):
         """
         Get list of robot IDs that are active in the current window.
