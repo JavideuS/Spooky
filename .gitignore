@@ -81,3 +81,8 @@ grove
 
 .project.yaml
 CLAUDE.md
+
+# Local-only (editor settings, external code, reports)
+.zed/
+ext/
+Internship_report*.pdf
