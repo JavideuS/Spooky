@@ -1,4 +1,5 @@
 from .base_qubo import BaseQUBO
+from .preprocessing import reachable_aggressive, reachable_safe
 import numpy as np
 
 
@@ -691,95 +692,30 @@ class GraphQUBO(BaseQUBO):
                         idx2 = node_i + (self.num_nodes * t_next_window) + robot_offset2
                         self.Q[(idx1, idx2)] = self.Q.get((idx1, idx2), 0) + K_trail
 
-    def reachable_positions(self, robot, start_node, start, end):
-        # Initialize reachable set with the start node at start_time
-        reachable_at_time = {start: {start_node}}
-
-        # Perform a BFS-like traversal to find all reachable nodes at each time step
-        for t in range(start, end - 1):
-            reachable_at_time[t + 1] = set()
-            for node_i in reachable_at_time[t]:
-                for node_j, _ in self.graph.adjacency.get(node_i, []):
-                    reachable_at_time[t + 1].add(node_j)
-
-        return reachable_at_time
-
     def reachable_positions_safe(self, robot, start_node, start_time, end_time):
-        """
-        Monotone reachability over graph nodes -- staying put and revisiting
-        are both allowed. Graph counterpart of
-        GridQUBOBuilder.reachable_positions_safe(); see
-        quantum.utils.preprocess for why the aggressive variant can make a
-        solvable multi-robot instance unsolvable.
-        """
-        adjacency = self.problem.graph.adjacency
+        """Monotone reachability over nodes; see preprocessing.reachable_safe."""
+        return reachable_safe(start_node, self._neighbour_nodes, start_time, end_time)
 
-        current = {start_node}
-        reachable = {start_time: set(current)}
-        for t in range(start_time + 1, end_time):
-            # adjacency holds (neighbour, weight) pairs
-            grown = current | {n for node in current for n, _ in adjacency.get(node, [])}
-            if len(grown) == len(current):
-                for rest in range(t, end_time):
-                    reachable[rest] = set(current)
-                break
-            current = grown
-            reachable[t] = set(current)
-        return reachable
+    def _neighbour_nodes(self, node):
+        """graph.adjacency holds (neighbour, weight) pairs; reachability
+        only needs the neighbours."""
+        return (n for n, _ in self.graph.adjacency.get(node, ()))
 
     def reachable_positions_aggressive(
         self, robot, start_node, start_time, end_time, blocked=None, allow_wait_at=None
     ):
-        """
-        blocked: optional {t: {node_id, ...}} of nodes to treat as
-        temporary/dynamic obstacles at that specific timestep only -- see
-        QUBOBuilder.GridQUBOBuilder.reachable_positions_aggressive for why.
-        allow_wait_at: optional set of timesteps at which the robot may stay
-        at its current node(s) instead of the walk ending early when
-        blocking/no-revisit leaves no forward candidates -- see
-        QUBOBuilder.GridQUBOBuilder.reachable_positions_aggressive.
-        """
+        """Nodes reachable per step without revisiting; see
+        preprocessing.reachable_aggressive for blocked / allow_wait_at."""
         goal_node = self.problem.get_graph_robot_current_goal(robot.robot_id)[1]
-        reachable_at_time = {start_time: {start_node}}
-        visited = {start_node}  # Prevent revisiting previously reached nodes
-        blocked = blocked or {}
-        allow_wait_at = allow_wait_at or set()
-
-        # Match QUBOBuilder loop range: start at start_time + 1, end at end_time
-        for t in range(start_time + 1, end_time):
-            prev_layer = reachable_at_time[t - 1]
-            curr_layer = set()
-            blocked_at_t = blocked.get(t, set())
-
-            for node_i in prev_layer:
-                for node_j, _ in self.graph.adjacency.get(node_i, []):
-                    # Only expand to new nodes not yet visited
-                    if node_j not in visited and node_j not in blocked_at_t:
-                        curr_layer.add(node_j)
-                        visited.add(node_j)
-
-            # To make sure goal is always reachable (and not conflict with goal lock)
-            if goal_node in visited and goal_node not in blocked_at_t:
-                curr_layer.add(goal_node)
-
-            if not curr_layer:
-                # See QUBOBuilder.GridQUBOBuilder.reachable_positions_aggressive:
-                # the "stay" node must still respect blocked_at_t, or a node
-                # blocked for being a confirmed collision gets re-offered
-                # identically on every retry.
-                stay_layer = (
-                    set(prev_layer) - blocked_at_t if t in allow_wait_at else set()
-                )
-                if stay_layer:
-                    curr_layer = stay_layer
-                else:
-                    # Stop early if no new nodes are reachable
-                    break
-
-            reachable_at_time[t] = curr_layer
-
-        # print(reachable_at_time)
-        return reachable_at_time
+        return reachable_aggressive(
+            start_node,
+            goal_node,
+            self._neighbour_nodes,
+            start_time,
+            end_time,
+            blocked,
+            allow_wait_at,
+        )
 
     # def apply_multi_robot_proximity_penalty(self):
     #     """Apply proximity penalty: discourage robots from being too close to each other."""
