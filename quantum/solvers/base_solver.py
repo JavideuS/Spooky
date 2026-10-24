@@ -5,6 +5,7 @@ from typing import Dict, Any, List, Tuple
 from quantum.utils.paths import decode_position, clip_path_at_goal
 from quantum.utils.validation import is_valid_move
 from quantum.utils.logger import get_logger
+from quantum.utils import preprocess as preprocess_modes
 
 
 class BaseSolver(ABC):
@@ -12,6 +13,19 @@ class BaseSolver(ABC):
     Abstract base class for all quantum solvers.
     Defines the common interface that all solvers must implement.
     """
+
+    # Pre-processing mode solve() uses when none is given (preprocess=None).
+    # QAOA needs the diagonal fixer to fit its qubit budget; SA can take the
+    # bigger unfixed windows (DWaveSolver overrides this with bfs_safe).
+    DEFAULT_PREPROCESS = preprocess_modes.FULL
+
+    def resolve_preprocess(self, preprocess):
+        """The mode solve() runs: preprocess as given (a mode string, or a
+        legacy bool: True -> full, False -> raw), or DEFAULT_PREPROCESS when
+        None."""
+        if preprocess is None:
+            return self.DEFAULT_PREPROCESS
+        return preprocess_modes.normalize(preprocess)
 
     def __init__(
         self,

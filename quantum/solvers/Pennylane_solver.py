@@ -448,7 +448,7 @@ class PennylaneSolver(BaseSolver):
 
         return ansatz
 
-    def solve(self, builder, optimization=False, preprocess=True):
+    def solve(self, builder, optimization=False, preprocess=None):
         """
         Solve QUBO using Pennylane QAOA. Thin wrapper around _solve_impl()
         that guarantees an IBM Runtime Session opened during the solve (see
@@ -463,16 +463,17 @@ class PennylaneSolver(BaseSolver):
         finally:
             self._session_manager.close()
 
-    def _solve_impl(self, builder, optimization=False, preprocess=True):
+    def _solve_impl(self, builder, optimization=False, preprocess=None):
         """
         Args:
             builder: QUBOBuilder instance
             optimization: When True, runs the variational QAOA parameter optimization
                 loop before sampling.
-            preprocess: When True (default), applies BFS variable reduction,
-                diagonal pruning, correction loop, and window stats tracking.
-                When False, runs a simple QAOA loop with no preprocessing — useful
-                for debugging the raw sampler.
+            preprocess: a mode from quantum.utils.preprocess, or None
+                (default) for DEFAULT_PREPROCESS, full: the diagonal fixer is
+                what keeps windows within the qubit budget. Legacy bools:
+                True -> full, False -> raw (no preprocessing, for debugging
+                the raw sampler).
 
         Returns:
             Dictionary containing solution, energy, and raw response
@@ -480,9 +481,7 @@ class PennylaneSolver(BaseSolver):
         best_sample = []
         best_energy = []
 
-        # `preprocess` accepts the mode strings in quantum.utils.preprocess as
-        # well as the legacy booleans (True -> "full", False -> "raw").
-        mode = preprocess_modes.normalize(preprocess)
+        mode = self.resolve_preprocess(preprocess)
         self._preprocess_mode = mode  # for _check_simulator_fits' advice
         bfs_variant = preprocess_modes.bfs_variant(mode)
         apply_numeric = preprocess_modes.applies_numeric_reduction(mode)

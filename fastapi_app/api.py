@@ -534,9 +534,9 @@ def plan_path(robot_id: str, request: PlanRequest):
         problem = pathfinding.PathfindingProblem(robot_config, grid=map_obj)
         builder = _select_builder(solver, problem, "grid", penalties, "standard")
         start_time = time.time()
-        # No builder.build() here: solver.solve() always runs with its
-        # preprocess=True default in this app (no preprocess flag is
-        # exposed), and QUBO builders' _prepare_window() rebuilds after BFS
+        # No builder.build() here: solver.solve() always runs with its own
+        # default mode in this app (DEFAULT_PREPROCESS: bfs_safe for SA,
+        # full for QAOA; no preprocess flag is exposed), and QUBO builders' _prepare_window() rebuilds after BFS
         # reduction populates _active_cells anyway — a pre-build here would
         # be a full-grid build, immediately discarded (see
         # builder/base_qubo.py's _warn_if_unrestricted_build()). ILP builders

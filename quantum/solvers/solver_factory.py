@@ -149,7 +149,11 @@ class DynamicSolver:
         """
         return self.solver.get_solver_info()
     
-    def solve(self, builder, optimization=False, preprocess=True):
+    def resolve_preprocess(self, preprocess):
+        """The current solver's resolve_preprocess (see BaseSolver)."""
+        return self.solver.resolve_preprocess(preprocess)
+
+    def solve(self, builder, optimization=False, preprocess=None):
         """
         Solve using the current solver.
 
@@ -157,8 +161,8 @@ class DynamicSolver:
             builder: Builder instance holding the problem to solve
             optimization: Whether to run variational optimization before sampling
                 (PennyLane only; ignored by other solvers).
-            preprocess: When True (default), applies variable reduction and
-                correction loop. When False, runs the simple raw loop.
+            preprocess: a pre-processing mode, or None (default) for the
+                current solver's DEFAULT_PREPROCESS.
 
         Returns:
             Solution dictionary

@@ -50,16 +50,19 @@ class DWaveSolver(BaseSolver):
             math.ceil(len(bqm.variables) * self.AUTO_READS_PER_VAR),
         )
 
-    def solve(self, builder, optimization=False, preprocess=True):
+    DEFAULT_PREPROCESS = preprocess_modes.BFS_SAFE
+
+    def solve(self, builder, optimization=False, preprocess=None):
         """
         Solve QUBO using simulated annealing.
 
         Args:
             builder: QUBOBuilder instance
             optimization: Accepted for interface compatibility; unused by DWave/SA.
-            preprocess: When True (default), applies BFS variable reduction,
-                diagonal pruning, correction loop, and window stats tracking.
-                When False, runs a simple loop with no preprocessing.
+            preprocess: a mode from quantum.utils.preprocess, or None
+                (default) for DEFAULT_PREPROCESS, bfs_safe: BFS pruning only,
+                the sampler decides every window. Legacy bools: True -> full,
+                False -> raw (the simple loop with no preprocessing).
 
         Returns:
             Dictionary containing solution, energy, and raw response
@@ -73,9 +76,7 @@ class DWaveSolver(BaseSolver):
         correction_count = 0
         import time as timing
 
-        # `preprocess` accepts the mode strings in quantum.utils.preprocess as
-        # well as the legacy booleans (True -> "full", False -> "raw").
-        mode = preprocess_modes.normalize(preprocess)
+        mode = self.resolve_preprocess(preprocess)
         bfs_variant = preprocess_modes.bfs_variant(mode)
         apply_numeric = preprocess_modes.applies_numeric_reduction(mode)
 

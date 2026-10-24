@@ -74,6 +74,13 @@ window's steps; `terminal` puts it on the last step). The price doesn't grow
 with window length. A wait off the goal also pays `K_adj`: only stays on the
 goal are rewarded like a move, because rewarding every stay measured worse.
 
+**Known limitation: yielding by waiting.** No single wait price works. Below
+`K_adj` robots idle (only w pushes them forward); above `K_crash` they collide
+rather than wait. A head-on in a one-lane corridor also needs one robot to
+back out, which a short window can't see paying off, so in `bfs_safe`
+`10x10_hard:four_robots` livelocks (`full_safe` solves it). A context-aware
+wait price (cheap only where a rival contests the next cell) is the open idea.
+
 The rule behind w: **a soft incentive summed over the window must stay below
 the penalty for the violation it competes with.** A violation (jump,
 collision, leaving the goal) pays its hard penalty once and gains w per step

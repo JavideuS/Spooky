@@ -20,7 +20,7 @@ class BenchmarkRunner:
         num_runs=10,
         output_dir=None,
         level=2,
-        preprocess=True,
+        preprocess=None,
         seed=None,
         clip_at_goal=False,
     ):
@@ -39,10 +39,10 @@ class BenchmarkRunner:
                 - Level 1: Only statistics, timing, energy, validation pass/fail
                 - Level 2: Level 1 + robot paths and per-robot validation details
                 - Level 3: Level 2 + raw bit solution for debugging
-            preprocess (bool): Forwarded to solver.solve() each run — toggles
-                each solver's own variable-reduction step (BFS reachability
-                pruning for both QUBO and ILP, plus diagonal fixing/windowing
-                for QUBO specifically).
+            preprocess: Forwarded to solver.solve() each run — a mode from
+                quantum.utils.preprocess or a legacy bool; None (default) is
+                the solver's DEFAULT_PREPROCESS (bfs_safe for SA, full for
+                QAOA, full for ILP/CBS: their BFS pruning).
             seed (int | None): Base seed for per-run RNG. Each run derives
                 run_seed = seed + run_id, re-seeds numpy's global RNG with it,
                 and re-draws the solver's stochastic starting state (PennyLane
@@ -63,7 +63,11 @@ class BenchmarkRunner:
         self.seed = seed
         self.clip_at_goal = clip_at_goal
         # accepts a mode string or a legacy bool; see quantum.utils.preprocess
-        self.preprocess = preprocess_modes.normalize(preprocess)
+        self.preprocess = (
+            solver.resolve_preprocess(preprocess)
+            if hasattr(solver, "resolve_preprocess")
+            else preprocess_modes.normalize(True if preprocess is None else preprocess)
+        )
         self.level = max(1, min(3, level))  # Clamp to 1-3
         self.output_dir = (
             Path(output_dir) if output_dir is not None else RESULTS_DIR / "benchmarks"

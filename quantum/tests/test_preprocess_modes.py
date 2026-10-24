@@ -104,3 +104,18 @@ def test_simulator_capacity_guard_raises_instead_of_crashing(monkeypatch):
         solver._check_simulator_fits(30)  # 16 GiB
     solver.dev = "qiskit.remote"
     solver._check_simulator_fits(100)  # hardware is sized by _get_backend
+
+
+def test_solver_default_mode_when_none_given():
+    """No mode given -> the solver's own default: SA can take the bigger
+    unfixed windows (bfs_safe), QAOA needs the fixer for qubits (full).
+    Legacy True still means full, so recorded sweeps re-aggregate."""
+    from quantum.solvers.solver_factory import SolverFactory, DynamicSolver
+
+    sa = SolverFactory.create_solver("dwave")
+    qaoa = SolverFactory.create_solver("pennylane", device="default.qubit")
+    assert sa.resolve_preprocess(None) == pm.BFS_SAFE
+    assert qaoa.resolve_preprocess(None) == pm.FULL
+    assert sa.resolve_preprocess(True) == pm.FULL
+    assert sa.resolve_preprocess("full_safe") == pm.FULL_SAFE
+    assert DynamicSolver(initial_solver="dwave").resolve_preprocess(None) == pm.BFS_SAFE
