@@ -1,9 +1,8 @@
 """Robot-footprint clearance geometry, shared by CBS / ILP / QUBO.
 
-See quantum/docs/clearance.md for the full derivation and notation this
-module implements, and for why the separate "trailing" constraint the
-D_ab table also drives (CBS's crossing check, ILPBuilder.model.trailing,
-QUBO's planned K_trail) is a distinct hazard, not a generalisation of swap.
+The separate "trailing" constraint the D_ab table also drives (CBS's
+crossing check, ILPBuilder.model.trailing, QUBO's K_trail) is a distinct
+hazard, not a generalisation of swap.
 
 Each robot has two real-world scalars (metres):
 

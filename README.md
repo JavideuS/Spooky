@@ -2,34 +2,42 @@
 
 [![arXiv](https://img.shields.io/badge/arXiv-2602.14799-b31b1b.svg)](https://arxiv.org/abs/2602.14799)
 
-> **⚠️ Alpha Release**: This project is under active development and is being prepared for academic publication. APIs and features may change.
+> **⚠️ Alpha**: Spooky is under active development (0.x). The method is published ([arXiv:2602.14799](https://arxiv.org/abs/2602.14799)); APIs, defaults and penalty sets may still change between releases.
 
-A hybrid quantum-classical framework for multi-robot path planning using QUBO (Quadratic Unconstrained Binary Optimization) formulations. Spooky leverages quantum annealing and gate-based quantum algorithms to solve complex navigation problems in both grid and graph environments.
+A hybrid quantum-classical framework for multi-robot path planning using QUBO (Quadratic Unconstrained Binary Optimization) formulations. The QUBOs target quantum annealing and gate-based quantum algorithms (QAOA), and run today on simulated annealing, QAOA simulators and IBM / IQM hardware, in both grid and graph environments.
 
 ## ✨ Key Features
 
-- **Hybrid Quantum-Classical Solving**: Support for D-Wave quantum annealers, PennyLane QAOA, and classical simulated annealing
-- **Multi-Robot Coordination**: Simultaneous path planning for multiple robots with collision avoidance
-- **Flexible Environment Representation**: Works with both grid-based and graph-based maps
-- **Windowed Solving**: Overcomes qubit limitations by solving paths in sliding windows
-- **Advanced Preprocessing**: BFS-based variable fixing and dead-end avoidance
-- **Comprehensive Benchmarking**: Built-in tools for performance analysis and validation
-- **Visualization Tools**: Real-time visualization of paths, energy landscapes, and solving progress
+- **Quantum and classical backends**: QAOA via PennyLane (simulators, IBM Quantum and IQM hardware), simulated annealing (D-Wave Ocean's `neal`, local), and exact classical baselines (CBS, ILP)
+- **Multi-robot coordination**: vertex, swap and clearance (robot footprint) collisions; finished robots stay parked on their goal (hold-goal)
+- **Grid and graph environments**, with obstacles and terrain costs
+- **Windowed solving**: sliding time windows sized to the variable / qubit budget, with an arrival-time goal term that keeps short windows heading the right way
+- **Pre-processing**: BFS reachability pruning and a diagonal fixer that shrinks each window before it reaches the solver
+- **Calibrated defaults**: SA read budget, QAOA angles and shot counts tuned on recorded windows (`quantum.benchmark.calibration`)
+- **Benchmarking and sweeps**: validation, invalid-cause attribution and paired statistical comparisons
+- **FastAPI server** for remote planning, plus visualization of paths and solving progress
 
 ## 🏗️ Architecture
 
 ```
 quantum_nav/
-├── quantum/              # Core quantum solver package
-│   ├── builder/         # QUBO formulation builders (grid & graph)
-│   ├── solvers/         # Quantum and classical solver interfaces
-│   ├── config/          # Configuration management and parsers
-│   ├── benchmark/       # Benchmarking and performance analysis
-│   ├── utils/           # Utility functions for path handling
-│   ├── map.py           # Environment representation (Grid/Graph)
-│   ├── pathFormulation.py  # Problem formulation
-│   └── qubo.py          # Reference script for experiments
-└── fastapi_app/         # FastAPI server for remote solving
+├── quantum/                 # Core package
+│   ├── builder/             # QUBO builders (grid, graph), window pre-processing,
+│   │                        # ILP and CBS builders
+│   ├── solvers/             # SA (neal), PennyLane QAOA, ILP, CBS; SolverFactory
+│   ├── hardware/            # IBM Quantum and IQM backends / sessions
+│   ├── benchmark/           # BenchmarkRunner, sweeps, calibration, analysis
+│   ├── config/              # Penalty sets, materials, parsers
+│   ├── maps/                # Synthetic maps (YAML source + HDF5) and problems
+│   ├── demos/               # Numbered usage examples (01_quickstart ...)
+│   ├── tests/               # pytest suite
+│   ├── utils/               # Paths, validation, logging, pre-processing modes
+│   ├── map.py               # Grid / Graph environments
+│   ├── pathFormulation.py   # PathfindingProblem (robots + environment)
+│   ├── qubo_cli.py          # CLI (spooky-solve)
+│   └── qubo.py              # Annotated lab script
+├── fastapi_app/             # FastAPI server and web demo
+└── sweep_configs/           # Sweep definitions (spooky-sweep)
 ```
 
 ## 🔄 Solving Pipeline
@@ -41,10 +49,10 @@ quantum_nav/
 
 | Stage | What happens |
 |---|---|
-| **Logical Reduction** | BFS forward-reachability per robot fixes start/goal variables and computes the sparse `_active_cells` set — constraints are only built over reachable positions. |
-| **Build QUBO** | Penalty terms (one-hot, adjacency, start/goal, lock-after-goal, backtracking, collision) are applied exclusively over `_active_cells`, keeping the matrix small. |
-| **Numerical Reduction** | `reduce_diag_fixed_vars_iterative()` eliminates variables whose diagonal coefficient dominates all off-diagonal interactions, propagating fixings until convergence. |
-| **Solve** | The reduced QUBO (optionally normalized) is submitted to the selected backend. |
+| **Logical Reduction** | BFS reachability per robot (`bfs_safe`: waiting allowed; `bfs_aggressive`: no revisits) fixes start/goal variables and computes the sparse `_active_cells` set, routing around cells parked robots hold — constraints are only built over reachable positions. |
+| **Build QUBO** | Penalty terms (one-hot, adjacency, start, arrival-time goal term, lock-after-goal, collision / swap / clearance) are applied exclusively over `_active_cells`, keeping the matrix small. |
+| **Numerical Reduction** | The diagonal fixer (`reduce_diag_fixed_vars_iterative()`, modes `full` / `full_safe`) greedily pins variables from their own diagonal coefficient, keeping each robot's pins a connected path and avoiding cells other robots are committed to; `fixer="contested"` also leaves steps where two robots' preferred paths meet to the solver. It is a heuristic: it shrinks windows (QAOA needs it to fit its qubits) but can commit a poor choice. |
+| **Solve** | The reduced QUBO is submitted to the selected backend. Default pre-processing is `bfs_safe` for SA and `full` for QAOA. |
 | **Post-process** | Fixed variables are merged back into the raw sample, the path is decoded, invalid moves are detected and corrected, and the window advances. |
 
 ## 🚀 Installation
@@ -98,14 +106,14 @@ pip install -e ".[windows]"
 
 ## 📖 Quick Start
 
-> **Note**: Comprehensive usage examples and tutorials are currently being developed. The following demonstrates basic usage patterns.
+More complete examples are in [`quantum/demos/`](quantum/demos/) (`01_quickstart.py` → `06_advanced_features.py`).
 
 ### Command-Line Interface
 
 After installation, the `spooky-solve` command is available from anywhere:
 
 ```bash
-# D-Wave
+# Simulated annealing (local, neal)
 spooky-solve --map quantum/maps/synthetic/10x10/obs10x10_hard --problem four_robots
 
 # PennyLane (GPU)
@@ -124,61 +132,55 @@ spooky-solve --map quantum/maps/synthetic/10x10/no_obs10x10 --problem two_robots
 spooky-solve --map quantum/maps/synthetic/10x10/no_obs10x10 --problem two_robots --solver qiskit_iqm --machine garnet --verbose 3
 ```
 
-### Basic Single-Robot Navigation (Python Script)
+### Python Library
+
+Run from the repo root (paths are relative to it):
 
 ```python
+import yaml
 from quantum.pathFormulation import PathfindingProblem
 from quantum.builder import QUBOBuilder
 from quantum.solvers import SolverFactory
+from quantum.benchmark.benchmark import is_solution_valid
 
-# Load problem from HDF5 map
-problem = PathfindingProblem.from_unified_data(
-    "maps/synthetic/10x10/no_obs10x10.h5",
-    start=(0, 0),
-    end=(9, 9),
-    T=20
-)
+penalties = yaml.safe_load(open("quantum/config/config.yaml"))["penalty_sets"]["crash"]
 
-# Build QUBO formulation
-builder = QUBOBuilder(problem, penalties={"K_hot": 10.0, "K_adj": 5.0})
+# Map + named problem (robots, starts, goals) from the YAML pair
+problem = PathfindingProblem.from_map_config(
+    "quantum/maps/synthetic/10x10/obs10x10_medium", "two_robots"
+).as_grid_only()
 
-# Solve using PennyLane QAOA
-solver = SolverFactory.create_solver(
-    solver="pennylane",
-    layers=2,
-    optimizer="QNG",
-    opt_steps=30
-)
+builder = QUBOBuilder(problem, penalties=penalties)
+# Simulated annealing; reads scale with each window. seed makes the run reproducible.
+solver = SolverFactory.create_solver("dwave", seed=42)
+solution = solver.solve(builder)  # windowed, with the solver's default pre-processing
 
-# Get solution
-result = solver.solve_qubo(builder)
-path = solver.decode_path(result["solution"], problem)
-print(f"Path found: {path}")
+path = solver.decode_path(solution["solution"], problem)
+print(is_solution_valid(path, problem)["message"])
+for robot_id, robot in problem.robots.items():
+    print(robot_id, [cell[:2] for cell in robot.path])
 ```
 
-### Multi-Robot Coordination
+QAOA uses the same builders; with no `params` it runs the tuned 2-layer
+angles and the calibrated shot table. Solving updates the problem's robots
+(paths, finished flags), so load a fresh problem per solve:
 
 ```python
-from quantum.robotConfiguration import RobotConfig
-
-# Add multiple robots to the problem
-robot1 = RobotConfig("Robot1", start=(0, 0), goal=(9, 9), priority=1)
-robot2 = RobotConfig("Robot2", start=(9, 0), goal=(0, 9), priority=2)
-
-problem.add_robot(robot1)
-problem.add_robot(robot2)
-
-# Build and solve with collision avoidance
-builder = QUBOBuilder(problem, penalties=penalties)
-result = solver.solve_qubo(builder)
+problem = PathfindingProblem.from_map_config(
+    "quantum/maps/synthetic/5x5/obs5x5_hard", "hard"
+).as_grid_only()
+solver = SolverFactory.create_solver("pennylane", device="lightning.qubit")  # or lightning.gpu
+solution = solver.solve(QUBOBuilder(problem, penalties=penalties))
 ```
 
 ## 🔧 Configuration
 
 The system uses YAML configuration files for problem definitions and penalty weights:
 
-- `config/config.yaml` - Problem definitions and penalty sets
-- `config/materials.yaml` - Terrain material costs
+- `quantum/config/config.yaml` - Penalty sets (`crash` is the recommended default)
+- `quantum/config/materials.yaml` - Terrain material costs
+- `quantum/maps/synthetic/<size>/*.yaml` - Maps and their named problems
+- `fastapi_app/config/solvers.yaml` - Named solver profiles for the API
 
 See [`quantum/config/README.md`](quantum/config/README.md) for detailed configuration options.
 
@@ -187,15 +189,10 @@ See [`quantum/config/README.md`](quantum/config/README.md) for detailed configur
 Run benchmarks to evaluate solver performance:
 
 ```python
-from quantum.benchmark import BenchmarkRunner
+from quantum.benchmark.benchmark import BenchmarkRunner
 
-benchmark = BenchmarkRunner(
-    builder,
-    solver,
-    num_runs=100,
-    level=1  # Benchmark detail level
-)
-results = benchmark.run_build()
+benchmark = BenchmarkRunner(builder, solver, num_runs=10, level=1, seed=42)
+results = benchmark.run_build()  # validates every run; JSON lands in results/benchmarks/
 ```
 
 For the full `instance × solver × ablation` **sweep** matrix, run from the repo root:
@@ -210,29 +207,23 @@ options, the sweep workflow, the paired Wilcoxon methodology, and how to read
 the aggregated tables; [`quantum/benchmark/analysis/README.md`](quantum/benchmark/analysis/README.md)
 is the per-column reference for the CSV output.
 
-## 🧪 Current Status & Roadmap
+## 🧪 Current Status
 
-### Working Features
+### Working
 
-- ✅ QUBO formulation for grid and graph environments
-- ✅ D-Wave quantum annealer integration
-- ✅ PennyLane QAOA solver with GPU support
-- ✅ Multi-robot path planning with collision avoidance
-- ✅ Windowed solving for large problems
-- ✅ Comprehensive benchmarking system
-
-### In Development
-
-- 🚧 FastAPI server for remote solving
-- 🚧 Improved numerical stability in preprocessing
-- 🚧 Edge collision handling in QUBO formulation
-- 🚧 Automatic variable limit tuning
+- ✅ Grid and graph QUBO formulations with the arrival-time goal term
+- ✅ Multi-robot planning: vertex, swap and clearance collisions, hold-goal semantics
+- ✅ Windowed solving with BFS pre-processing and the diagonal fixer
+- ✅ Simulated annealing, PennyLane QAOA (CPU / GPU simulators, IBM Quantum, IQM), CBS and ILP baselines
+- ✅ Calibrated SA read budget, QAOA angles and shot counts
+- ✅ Benchmarking, sweeps and statistical analysis
+- ✅ FastAPI server with named solver profiles and a web demo
 
 ### Known Limitations
 
-- Some edge cases in BFS preprocessing need refinement
-- Performance tuning for specific problem types ongoing
-- Documentation and examples are incomplete
+- **Yielding**: a robot can't wait cheaply (a stay off the goal pays the adjacency penalty, and no single wait price works), so head-on traffic in one-lane corridors can livelock in `bfs_safe` (e.g. `obs10x10_hard` / `four_robots`; `full_safe` solves it).
+- **Diagonal fixer**: a greedy heuristic; it can commit a robot to a poor route (see `fixer="contested"`).
+- **D-Wave QPU**: the `dwave` backend always samples locally with `neal`; a real annealer is not wired up.
 
 ## 🔌 Integration
 
@@ -245,16 +236,17 @@ from quantum.builder import QUBOBuilder
 from quantum.solvers import SolverFactory
 ```
 
-**Via FastAPI** (start the server in `fastapi_app/`):
+**Via FastAPI** (`cd fastapi_app && uvicorn api:app`):
 ```
-POST /solve  →  { map, robots, solver_config }  →  { paths }
+POST /v1/plan  →  { map_id, solver, robots, penalty_set }  →  { paths, cost }
 ```
+Solver profiles (`dwave.general`, `pennylane.inference.qaoa_GPU_general`, `classic.cbs`, ...) live in `fastapi_app/config/solvers.yaml`; see [`fastapi_app/README.md`](fastapi_app/README.md) for the other endpoints.
 
 Robot framework integration (ROS2, DiMOS) is handled by [argOS](https://github.com/JavideuS/argOS), which uses Spooky as a planning backend.
 
 ## 🤝 Contributing
 
-This project is currently in active research and development. Contributions, bug reports, and suggestions are welcome! Please note that the codebase is evolving rapidly as we prepare for academic publication.
+This project is currently in active research and development. Contributions, bug reports, and suggestions are welcome! Please note that the codebase is evolving rapidly.
 
 ## 📄 License
 
@@ -271,7 +263,7 @@ The academic paper is licensed under the [Creative Commons Attribution 4.0 Inter
 This project uses:
 
 - [PennyLane](https://pennylane.ai/) for quantum circuit simulation and optimization
-- [D-Wave Ocean SDK](https://ocean.dwavesys.com/) for quantum annealing
+- [D-Wave Ocean SDK](https://ocean.dwavesys.com/) (`neal`) for simulated annealing
 - [Qiskit](https://qiskit.org/) for IBM Quantum hardware access
 - [Qrisp](https://qrisp.eu/) and [IQM's iqm-client](https://docs.iqm.tech/) for IQM Quantum hardware access via Resonance
 

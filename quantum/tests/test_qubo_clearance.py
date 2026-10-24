@@ -1,5 +1,5 @@
 """
-Robot-robot clearance in QUBO (quantum/docs/clearance.md): apply_crash_penalty
+Robot-robot clearance in QUBO (quantum/utils/clearance.py): apply_crash_penalty
 and apply_trailing_penalty generalise their same-cell matching to the D_ab
 shell, the same idea already verified for CBS/ILP in test_cbs.py.
 

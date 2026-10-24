@@ -362,8 +362,7 @@ class ConflictBasedSearch:
         — a's and b's transitions over [t, t+1] conflict. The predicate this
         checks depends on whether the pair is a clearance pair (D_ab bigger
         than one cell), and the two are NOT the same rule generalised —
-        trailing is a distinct hazard, not a looser version of swap (see
-        quantum/docs/clearance.md):
+        trailing is a distinct hazard, not a looser version of swap:
           * trivial pair: exact SWAP only — a_from == b_to and b_from ==
             a_to, the classic two-way exchange. Correctly permits e.g. b
             vacating a cell and a moving into it one step later.

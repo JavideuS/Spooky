@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Guard against committing internal or bulky files by accident.
+# Enable once per clone:  git config core.hooksPath .githooks
+# Bypass for a deliberate commit:  git commit --no-verify
+
+MAX_BYTES=$((1024 * 1024))
+MAX_NEW_FILES=50
+BLOCKED_EXT='\.(pdf|pptx|docx|xlsx|odt|key)$'
+
+fail=0
+new_files=0
+
+while IFS= read -r -d '' status && IFS= read -r -d '' path; do
+    if [[ $status == A ]]; then
+        new_files=$((new_files + 1))
+        if [[ $path =~ $BLOCKED_EXT ]]; then
+            echo "pre-commit: document file staged: $path" >&2
+            fail=1
+        fi
+    fi
+    if [[ $path == local/* ]]; then
+        echo "pre-commit: file under local/ staged: $path" >&2
+        fail=1
+    fi
+    size=$(git cat-file -s ":$path" 2>/dev/null || echo 0)
+    if ((size > MAX_BYTES)); then
+        echo "pre-commit: file over $((MAX_BYTES / 1024)) KiB: $path ($((size / 1024)) KiB)" >&2
+        fail=1
+    fi
+done < <(git diff --cached --name-status --diff-filter=AM -z)
+
+if ((new_files > MAX_NEW_FILES)); then
+    echo "pre-commit: $new_files new files (limit $MAX_NEW_FILES); check 'git status' for stray output" >&2
+    fail=1
+fi
+
+if ((fail)); then
+    echo "pre-commit: commit blocked. Unstage with 'git restore --staged <path>'," >&2
+    echo "            move internal files to local/, or use --no-verify if intended." >&2
+fi
+exit $fail

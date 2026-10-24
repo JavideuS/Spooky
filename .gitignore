@@ -17,15 +17,6 @@ ENV/
 env.bak/
 venv.bak/
 
-# IDE and editor files
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
-Thumbs.db
-
 # Jupyter Notebook
 .ipynb_checkpoints/
 *.ipynb_checkpoints
@@ -40,6 +31,7 @@ htmlcov/
 *prueba
 quantum/images/ibm_q/
 quantum/paper/paper_figures/
+docs/
 
 # Data files (exclude .h5 except maps)
 *.h5
@@ -86,3 +78,19 @@ CLAUDE.md
 .zed/
 ext/
 Internship_report*.pdf
+
+# Internal (internship material, lab maps, raw calibration runs)
+quantum/paper/paper.tex
+quantum/paper/internship_talk_outline.md
+quantum/paper/presentation.pptx
+quantum/paper/generate_presentation.py
+quantum/paper/report_figures.py
+quantum/docs/
+quantum/maps/ros_maps/
+quantum/maps/synthetic/fraunhofer/
+quantum/benchmark/qpu_test.py
+results/calibration/*/
+results/qaoa_calibration/
+
+# Local-only scratch: reports, slides, drafts, raw runs. Never committed.
+local/
