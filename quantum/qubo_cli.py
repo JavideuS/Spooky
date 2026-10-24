@@ -165,13 +165,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     prob.add_argument(
         "--fixer",
-        choices=["chain", "prefix"],
+        choices=["chain", "prefix", "contested"],
         default="chain",
         help=(
             "Diagonal fixer path discipline (full/full_safe). chain (default): "
             "pins must keep each robot's path connected; prefix: also stop at a "
             "robot's first undecided step -- pins less, better for SA in "
-            "full_safe, worse for QAOA (more qubits)"
+            "full_safe, worse for QAOA (more qubits); contested: chain, but steps "
+            "where two robots' greedy paths meet are left to the sampler -- "
+            "better for SA (graph full, grid full_safe), worse for QAOA"
         ),
     )
     prob.add_argument(

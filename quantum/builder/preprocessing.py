@@ -441,6 +441,57 @@ class DiagonalFixer:
             keepout.update((fi + di, fj + dj) for di, dj in D)
         return keepout
 
+    def _contested(self, var_idx, t, total_fixed, own_robot_num):
+        """
+        True if another robot, not yet committed at some step of [t-1, t+1],
+        prefers a cell there (its minimum-diagonal one, what this fixer would
+        pin for it) that collides with var_idx (same cell, swap or clearance
+        shell): the two greedy paths meet, and pinning either would settle
+        who yields by processing order alone. Cells another robot could only
+        reach, without preferring them, don't count -- leaving those free
+        too keeps windows far beyond what QAOA can simulate.
+        """
+        if not self._active_cells or own_robot_num is None:
+            return False
+        is_graph = self.problem.get_format_type() == "graph"
+        per_t = self.num_nodes if is_graph else self.problem.grid.M * self.problem.grid.N
+        local = var_idx % per_t
+        pos = local if is_graph else divmod(local, self.problem.grid.N)
+        committed = {**getattr(self, "_pinned_before_diag", {}), **(total_fixed or {})}
+        settled = set()
+        for idx, val in committed.items():
+            if val == 1:
+                _, _, ft, frn = paths.decode_position(idx, self.problem)
+                settled.add((frn, ft))
+        robot_nums = self.problem.get_robot_nums()
+        own_id = next(r for r, n in robot_nums.items() if n == own_robot_num)
+        trivial = frozenset({(0, 0)})
+        for other_id in self.get_active_robot_in_window():
+            other_num = robot_nums[other_id]
+            if other_num == own_robot_num:
+                continue
+            D = (
+                trivial
+                if is_graph
+                else self.problem.get_clearance_table().get((own_id, other_id))
+                or trivial
+            )
+            # own - other in D  <=>  other in own - D
+            near = {pos} if is_graph else {(pos[0] - di, pos[1] - dj) for di, dj in D}
+            for t2 in (t - 1, t, t + 1):
+                if (other_num, t2) in settled:
+                    continue
+                diag = {}
+                for c in self._active_cells.get((other_id, t2), ()):
+                    n = self._var_index(other_id, t2, c)
+                    if (n, n) in self.Q:
+                        diag[c] = self.Q[(n, n)]
+                if diag:
+                    low = min(diag.values())
+                    if any(diag[c] == low for c in near if c in diag):
+                        return True
+        return False
+
     def _collides_with_fixed_rival(self, var_idx, t, total_fixed, own_robot_num):
         """
         True if `var_idx` (a candidate cell for the robot currently being
@@ -562,6 +613,15 @@ class DiagonalFixer:
 
         if len(counts) <= 1:
             return result  # All same, skip
+
+        # A step another robot may still collide on is left to the sampler:
+        # who yields there is decided by the crash couplings, not the diagonal
+        # (pinning the closest cell or dropping the farthest one, which is
+        # often the detour, would settle it by processing order alone).
+        if self.fixer == "contested" and any(
+            self._contested(v, t, total_fixed, own_robot_num) for v, _ in vars_at_t
+        ):
+            return result
 
         # Find unique minimum coefficient
         min_coeff = min(counts)

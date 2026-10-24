@@ -252,7 +252,7 @@ def test_deadline_guard_silent_on_solvable_problem():
         "quantum/maps/synthetic/10x10/obs10x10_easy", "four_robots"
     ).as_grid_only()
     builder = GridQUBOBuilder(problem, penalties=PENALTIES)
-    solver = DWaveSolver(normalize_scale=4, num_reads=4, seed=0)
+    solver = DWaveSolver(normalize_scale=4, num_reads="auto", seed=0)
     solution = solver.solve(builder, preprocess="full")
 
     assert solution["metadata"]["deadline_misses"] == []

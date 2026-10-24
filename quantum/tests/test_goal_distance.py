@@ -67,3 +67,22 @@ def test_lock_has_no_diagonal():
     b.build(["lock"])
     assert b.Q and all(i != j for i, j in b.Q)
     assert all(v == pytest.approx(PENALTIES["K_lock"]) for v in b.Q.values())
+
+
+def test_contested_fixer_leaves_the_yield_to_the_sampler():
+    """obs5x5_hard two_robots: both robots' greedy paths meet head-on in
+    row 0. The chain fixer pins robot_0's straight path first, so robot_1
+    flees into the dead end (4, 3) that robot_0 then parks in front of;
+    fixer="contested" leaves those steps to the sampler."""
+    from quantum.solvers.DWave_solver import DWaveSolver
+    from quantum.benchmark.benchmark import is_solution_valid
+
+    for fixer, expect in (("chain", False), ("contested", True)):
+        problem = PathfindingProblem.from_map_config(
+            "quantum/maps/synthetic/5x5/obs5x5_hard", "two_robots"
+        ).as_grid_only()
+        builder = GridQUBOBuilder(problem, penalties=PENALTIES, fixer=fixer)
+        solver = DWaveSolver(normalize_scale=1, num_reads="auto", seed=1)
+        solution = solver.solve(builder, preprocess="full")
+        path = solver.decode_path(solution["solution"], problem)
+        assert is_solution_valid(path, problem)["valid"] is expect, fixer

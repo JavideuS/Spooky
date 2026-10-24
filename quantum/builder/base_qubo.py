@@ -52,9 +52,13 @@ class BaseQUBO(DiagonalFixer, ABC):
         self.window_sizing = window_sizing
         # Diagonal fixer's path discipline (see _process_robot_timesteps):
         # "chain" pins any step whose pins keep the robot's 1-pins connected;
-        # "prefix" also stops a robot's pinning at its first undecided step.
-        if fixer not in ("chain", "prefix"):
-            raise ValueError(f"fixer must be 'chain' or 'prefix', got {fixer!r}")
+        # "prefix" also stops a robot's pinning at its first undecided step;
+        # "contested" also leaves steps where two greedy paths meet to the
+        # sampler (DiagonalFixer._contested).
+        if fixer not in ("chain", "prefix", "contested"):
+            raise ValueError(
+                f"fixer must be 'chain', 'prefix' or 'contested', got {fixer!r}"
+            )
         self.fixer = fixer
         # Windowing/time slicing support
         self.current_T = 0  # This represents the current global time in the problem

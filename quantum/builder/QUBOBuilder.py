@@ -32,8 +32,9 @@ class GridQUBOBuilder(BaseQUBO):
             None (default) = min(M, N) // 2, so on a small map it doesn't
             reach every robot pair and penalise passes in open space.
         goal_objective: how arrival is priced (see apply_goal_objective):
-            w per step not at the goal plus the BFS distance left, so a wait
-            costs w and the cost doesn't grow with window length. "shaped"
+            w per step not at the goal plus the BFS distance left, so the
+            cost doesn't grow with window length. A wait off the goal also
+            pays K_adj (apply_adjacency_reward rewards stays only on the goal). "shaped"
             (default) spreads the distance over the window's steps, giving the
             sampler a pull at every step; "terminal" puts it on the last step.
         goal_weight: w, the price of one step of arrival. A violation pays its
@@ -136,7 +137,9 @@ class GridQUBOBuilder(BaseQUBO):
                     # Staying on the goal is rewarded like a move. grid.adjacency
                     # has no self-move, so otherwise every stay pays K_adj.
                     # Waits elsewhere keep that cost: it is the push that keeps
-                    # robots moving (rewarding every stay measured worse, more stalls).
+                    # robots moving (rewarding every stay measured worse, more stalls;
+                    # re-measured under hold-goal with a wait price c in [0, K_adj):
+                    # any c < K_adj broke full_safe and left bfs_safe unchanged).
                     if (i, j) == tuple(robot.goal):
                         targets = [*targets, (i, j)]
                     for k, l in targets:

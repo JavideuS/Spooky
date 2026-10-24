@@ -70,8 +70,9 @@ and the penalty balance decides whether robots yield or collide. The grid
 builder prices **arrival time**: `--goal-weight` w (default 0.5) per step not
 at the goal, plus each robot's obstacle-aware BFS distance left to its goal
 (`--goal-objective shaped`, the default, spreads that distance over the
-window's steps; `terminal` puts it on the last step). A wait costs w and the
-price doesn't grow with window length.
+window's steps; `terminal` puts it on the last step). The price doesn't grow
+with window length. A wait off the goal also pays `K_adj`: only stays on the
+goal are rewarded like a move, because rewarding every stay measured worse.
 
 The rule behind w: **a soft incentive summed over the window must stay below
 the penalty for the violation it competes with.** A violation (jump,
