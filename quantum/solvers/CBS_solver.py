@@ -2,6 +2,7 @@ from typing import Any, Dict
 from .base_solver import BaseSolver
 from quantum.utils import preprocess as preprocess_modes
 from .cbs_algorithm import ConflictBasedSearch
+from quantum.pathFormulation import InfeasibleProblemError
 
 
 class CBSSolver(BaseSolver):
@@ -93,6 +94,14 @@ class CBSSolver(BaseSolver):
                 "deadline": robot.start_time + robot.T - 1,
                 "hold_until": T - 1,  # hold-goal: parked until the plan ends
             }
+            if robot.fixed_prefix:
+                prefix = [self._node_id(builder, p) for p in robot.fixed_prefix]
+                self._check_contiguous(builder.graph, robot_id, prefix)
+                robots_meta[robot_id].update(
+                    prefix=prefix,
+                    fully_fixed=robot.fully_fixed,
+                    cost_origin=robot.prefix_start_time,
+                )
 
         cbs = ConflictBasedSearch(
             builder.graph,
@@ -116,7 +125,9 @@ class CBSSolver(BaseSolver):
         else:
             energy = sum(
                 self._robot_cost(
-                    path, robots_meta[rid]["goal"], robots_meta[rid]["start_time"]
+                    path,
+                    robots_meta[rid]["goal"],
+                    robots_meta[rid].get("cost_origin", robots_meta[rid]["start_time"]),
                 )
                 for rid, path in paths.items()
             )
@@ -153,6 +164,30 @@ class CBSSolver(BaseSolver):
                 "window_stats": [builder.bfs_stats],
             },
         }
+
+    @staticmethod
+    def _node_id(builder, pos):
+        """A RobotConfig position (grid cell, graph node id or graph
+        coordinate) as a node of builder.graph."""
+        if builder.problem.grid is not None and isinstance(pos, tuple):
+            return builder.local_index(pos)
+        if isinstance(pos, int):
+            return pos
+        return builder.problem.graph.get_node_from_position(pos)
+
+    @staticmethod
+    def _check_contiguous(graph, robot_id, prefix):
+        """A committed prefix moves at most one edge per step, on free cells."""
+        for k, node in enumerate(prefix):
+            if node not in graph:
+                raise InfeasibleProblemError(
+                    f"Robot '{robot_id}' fixed_path[{k}] is not a free cell/node."
+                )
+            if k and node != prefix[k - 1] and not graph.has_edge(prefix[k - 1], node):
+                raise InfeasibleProblemError(
+                    f"Robot '{robot_id}' fixed_path jumps between steps {k - 1} and {k}: "
+                    "consecutive positions must be equal (wait) or adjacent."
+                )
 
     @staticmethod
     def _robot_cost(path, goal, start_time):

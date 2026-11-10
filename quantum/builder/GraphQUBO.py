@@ -253,7 +253,11 @@ class GraphQUBO(BaseQUBO):
         goal (BFS backwards over graph.adjacency; one edge per timestep, so
         weights don't enter), around nodes other robots are parked on by the
         window's end. Nodes that can't reach the goal are absent."""
-        parked = frozenset(self.parked_cells(robot_id).get(self.t_max - 1, ()))
+        # Static obstacles for the distance map: parked goals only, not
+        # committed robots that are just passing through.
+        parked = frozenset(
+            self.parked_cells(robot_id, include_committed=False).get(self.t_max - 1, ())
+        )
         key = (robot_id, parked)
         if key not in self._goal_distance_maps:
             goal = self.problem.get_graph_robot_current_goal(robot_id)[1]

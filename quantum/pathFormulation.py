@@ -71,6 +71,11 @@ class PathfindingProblem:
             robot.resolve_coordinates(num_rows, origin=origin, resolution=resolution)
 
         self._validate_robot_positions()
+        for robot in self.robots.values():
+            try:
+                robot.apply_fixed_path()
+            except ValueError as e:
+                raise InfeasibleProblemError(str(e)) from e
 
         if T is None:
             T = self.calculate_timeline()
@@ -94,6 +99,68 @@ class PathfindingProblem:
         self._clearance_table = None
         self._obstacle_keepout = None
         self._validate_clearance_config()
+        self._validate_fixed_paths()
+
+    def committed_steps(self):
+        """{robot_id: {t: position}} for robots with a fixed_path: the
+        committed prefix, plus the held goal through the end of the plan
+        when it already ends there (see RobotConfig.fully_fixed)."""
+        steps = {}
+        for rid, robot in self.robots.items():
+            if not robot.fixed_prefix:
+                continue
+            t0 = robot.prefix_start_time
+            own = {t0 + k: pos for k, pos in enumerate(robot.fixed_prefix)}
+            if robot.fully_fixed:
+                own.update({t: robot.goal for t in range(robot.start_time, self.T)})
+            steps[rid] = own
+        return steps
+
+    def _validate_fixed_paths(self):
+        """Fail fast when a committed path collides with another committed
+        path or another robot's start: no solver can move either. Same rules
+        as the solvers' collision checks -- footprint overlap at one step,
+        the exact swap for plain pairs, trailing for clearance pairs."""
+        committed = self.committed_steps()
+        if not committed:
+            return
+        steps = {
+            rid: committed.get(rid, {robot.start_time: robot.current_position})
+            for rid, robot in self.robots.items()
+        }
+        table = self.get_clearance_table()
+        trivial = frozenset({(0, 0)})
+
+        def overlap(a, b, pa, pb):
+            D = table.get((a, b))
+            if D is None or not isinstance(pa, tuple):
+                return pa == pb
+            return (pa[0] - pb[0], pa[1] - pb[1]) in D
+
+        clashes = []
+        ids = list(steps)
+        for i, a in enumerate(ids):
+            for b in ids[i + 1:]:
+                if a not in committed and b not in committed:
+                    continue
+                clearance_pair = table.get((a, b), trivial) != trivial
+                sa, sb = steps[a], steps[b]
+                for t in sorted(set(sa) & set(sb)):
+                    hit = overlap(a, b, sa[t], sb[t])
+                    if not hit and t + 1 in sa and t + 1 in sb:
+                        if clearance_pair:
+                            hit = overlap(a, b, sa[t], sb[t + 1]) or overlap(
+                                a, b, sa[t + 1], sb[t]
+                            )
+                        else:
+                            hit = sa[t] == sb[t + 1] and sb[t] == sa[t + 1] != sa[t]
+                    if hit:
+                        clashes.append(f"{a}/{b} at t={t}")
+                        break
+        if clashes:
+            raise InfeasibleProblemError(
+                "Committed paths conflict, no plan can fix them: " + ", ".join(clashes)
+            )
 
     def get_clearance_table(self):
         """{(a_id, b_id): D_ab} robot-robot separation offset sets for every
@@ -266,7 +333,9 @@ class PathfindingProblem:
         a node id in "both"-format problems.
         """
         for robot in self.robots.values():
-            for label, pos in (("start", robot.start), ("goal", robot.goal)):
+            checks = [("start", robot.start), ("goal", robot.goal)]
+            checks += [(f"fixed_path[{k}]", p) for k, p in enumerate(robot.fixed_path or [])]
+            for label, pos in checks:
                 if isinstance(pos, (tuple, list)) and self.grid is not None:
                     i, j = pos
                     if not (0 <= i < self.grid.M and 0 <= j < self.grid.N):

@@ -592,6 +592,8 @@ def plan_path(robot_id: str, request: PlanRequest):
             response.solver_details = solver.to_dict()
 
         return response
+    except HTTPException:
+        raise  # e.g. _reject_if_infeasible's 422, not a server error
     except pathfinding.InfeasibleProblemError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
@@ -817,6 +819,11 @@ def plan_stateless(request: StatelessPlanRequest):
             robot_radius=r.robot_radius,
             inflation=r.inflation,
             coordinate_format=r.coordinate_format,
+            fixed_path=(
+                [resolve_position(p, r.coordinate_format) for p in r.fixed_path]
+                if r.fixed_path
+                else None
+            ),
         )
         for i, r in enumerate(request.robots)
     ]
@@ -931,6 +938,8 @@ def plan_stateless(request: StatelessPlanRequest):
             response.figure = json.loads(fig.to_json())
 
         return response
+    except HTTPException:
+        raise  # e.g. _reject_if_infeasible's 422, not a server error
     except pathfinding.InfeasibleProblemError as e:
         raise HTTPException(400, str(e))
     except Exception as e:

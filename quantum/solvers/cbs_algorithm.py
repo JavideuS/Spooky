@@ -22,6 +22,14 @@ last robot is done. CBSSolver's cost-equivalence with ILPSolver depends on
 this. Cost (sum of
 arrival offsets) is computed from the trimmed, unpadded arrival time, not
 the padded path length, for the same reason.
+
+Committed prefixes (robots_meta[r]["prefix"], from RobotConfig.fixed_path):
+the robot holds those nodes one per step and is planned on from the last one
+at its start_time. A prefix ending at the goal fixes the robot for the whole
+plan. Committed steps are never branched on; every other robot gets them as
+root constraints up front (a reservation table, sound because no solution can
+move them), so it routes around them instead of discovering them one
+conflict at a time.
 """
 
 import heapq
@@ -294,6 +302,68 @@ class ConflictBasedSearch:
         return padded
 
     @staticmethod
+    def _fixed_until(meta: dict) -> float:
+        """Last time step this robot's position is fixed: its planning start
+        (its start, or the end of a committed prefix), or every step when the
+        prefix already ends at the goal."""
+        return float("inf") if meta.get("fully_fixed") else meta["start_time"]
+
+    def _fixed_segment(self, meta: dict) -> List[Tuple[int, int]]:
+        """The committed (node, t) steps: the prefix (or just the start),
+        padded through hold_until when it already ends at the goal."""
+        prefix = meta.get("prefix") or [meta["start"]]
+        t0 = meta["start_time"] - len(prefix) + 1
+        segment = [(node, t0 + k) for k, node in enumerate(prefix)]
+        if meta.get("fully_fixed"):
+            segment = self._pad(segment, meta["goal"], meta.get("hold_until", meta["deadline"]))
+        return segment
+
+    def _reservations(
+        self, robots_meta: Dict[str, dict]
+    ) -> Tuple[Dict[str, Set[Tuple[int, int]]], Dict[str, Set[Tuple[int, int, int]]]]:
+        """Root constraints keeping every robot off the committed steps of
+        the others -- exactly the steps _all_conflicts would flag against
+        them: footprint overlap at t, the exact swap (trivial pairs) or
+        trailing (clearance pairs: ending a step inside the other's
+        start-of-step footprint, or starting it inside its end-of-step one)."""
+        vertex: Dict[str, Set[Tuple[int, int]]] = {}
+        edge: Dict[str, Set[Tuple[int, int, int]]] = {}
+        committed = {
+            f: dict((t, n) for n, t in self._fixed_segment(m))
+            for f, m in robots_meta.items()
+            if m.get("prefix")
+        }
+        for f, pos_f in committed.items():
+            for r, meta in robots_meta.items():
+                if r == f or meta.get("fully_fixed"):
+                    continue
+                v = vertex.setdefault(r, set())
+                e = edge.setdefault(r, set())
+                clearance_pair = (r, f) in self._clearance_robot_pairs
+                for t, node in pos_f.items():
+                    v.update((c, t) for c in self._forbidden_cells(r, node, r, f))
+                    nxt = pos_f.get(t + 1)
+                    if nxt is None:
+                        continue
+                    if clearance_pair:
+                        v.update((c, t) for c in self._forbidden_cells(r, nxt, r, f))
+                        if t >= meta["start_time"]:
+                            v.update((c, t + 1) for c in self._forbidden_cells(r, node, r, f))
+                    elif nxt != node:
+                        e.add((nxt, node, t))
+        return vertex, edge
+
+    def _fixed_conflicts(self, robots_meta: Dict[str, dict]) -> List[tuple]:
+        """Conflicts no plan can fix: between two robots' committed steps,
+        at least one of them a committed prefix."""
+        segments = {r: self._fixed_segment(m) for r, m in robots_meta.items()}
+        return [
+            c
+            for c in self._all_conflicts(segments)
+            if robots_meta[c[2]].get("prefix") or robots_meta[c[3]].get("prefix")
+        ]
+
+    @staticmethod
     def _arrival_offset(path: List[Tuple[int, int]], goal: int, start_time: int) -> int:
         t_arrive = path[-1][1]
         for node, t in reversed(path):
@@ -310,6 +380,8 @@ class ConflictBasedSearch:
         legal_cells: Optional[Dict[str, List[Set[int]]]],
     ) -> Optional[List[Tuple[int, int]]]:
         meta = robots_meta[robot_id]
+        if meta.get("fully_fixed"):
+            return self._fixed_segment(meta)
         # CBS's low level only ever sees the explicit per-robot constraints
         # accumulated from root to this CT node (added by _all_conflicts's
         # branching, below) — never the other robots' current paths in this
@@ -340,11 +412,18 @@ class ConflictBasedSearch:
         )
         if raw is None:
             return None
-        return self._pad(raw, meta["goal"], meta.get("hold_until", meta["deadline"]))
+        path = self._pad(raw, meta["goal"], meta.get("hold_until", meta["deadline"]))
+        if meta.get("prefix"):
+            path = self._fixed_segment(meta)[:-1] + path
+        return path
 
     def _total_cost(self, solution: Dict[str, List[Tuple[int, int]]], robots_meta: Dict[str, dict]) -> float:
         return sum(
-            self._arrival_offset(path, robots_meta[rid]["goal"], robots_meta[rid]["start_time"])
+            self._arrival_offset(
+                path,
+                robots_meta[rid]["goal"],
+                robots_meta[rid].get("cost_origin", robots_meta[rid]["start_time"]),
+            )
             for rid, path in solution.items()
         )
 
@@ -418,13 +497,18 @@ class ConflictBasedSearch:
         robots_meta: Dict[str, dict],
         legal_cells: Optional[Dict[str, List[Set[int]]]] = None,
     ) -> Tuple[Dict[str, List[Tuple[int, int]]], dict]:
-        """robots_meta[robot_id] = {"start": node, "goal": node, "start_time": int, "deadline": int}.
+        """robots_meta[robot_id] = {"start": node, "goal": node, "start_time": int, "deadline": int}
+        plus optional "hold_until", and for a committed prefix "prefix" (nodes,
+        prefix[-1] == start, held from start_time - len + 1), "fully_fixed"
+        (prefix ends at the goal) and "cost_origin" (time cost is counted from).
         Returns (solution, meta) where meta["termination_condition"] is one of:
           - "optimal": solution is a genuine, conflict-free, minimum-cost
             joint plan.
           - "infeasible": some robot has no path even with no other robots
             to avoid — checked before any branching starts, a hard
             impossibility independent of budget.
+          - "fixed_conflict": two robots' committed steps (see the module
+            docstring) already conflict; meta["conflicts"] lists them.
           - "no_solution": the entire constraint tree was exhausted (heap
             emptied) without ever finding a conflict-free node. Given CBS's
             completeness guarantee, this is a proof the joint problem has no
@@ -443,14 +527,26 @@ class ConflictBasedSearch:
         "optimal" — callers must check termination_condition before trusting
         solution/energy, not treat a budget cutoff as if it were a
         worse-but-valid result."""
-        root = CTNode(cost=0.0)
+        fixed_conflicts = self._fixed_conflicts(robots_meta)
+        if fixed_conflicts:
+            return {}, {
+                "termination_condition": "fixed_conflict",
+                "nodes_expanded": 0,
+                "conflicts": fixed_conflicts,
+            }
+        reserved_vertices, reserved_edges = self._reservations(robots_meta)
+        root = CTNode(
+            cost=0.0,
+            vertex_constraints=reserved_vertices,
+            edge_constraints=reserved_edges,
+        )
         for robot_id in robots_meta:
-            # Root has no constraints for anyone yet, so each robot's path
-            # here is genuinely independent of every other robot — _low_level
-            # only ever looks at ct_node's constraint sets (empty at root),
-            # never at ct_node.solution, so passing `root` itself (already
+            # Root holds only the reservations of committed steps, so each
+            # robot's path here is otherwise independent of every other robot
+            # — _low_level only ever looks at ct_node's constraint sets, never
+            # at ct_node.solution, so passing `root` itself (already
             # partially filled in by earlier robots in this loop) is exactly
-            # as independent as a fresh empty node would be.
+            # as independent as a fresh node would be.
             path = self._low_level(robot_id, robots_meta, root, legal_cells)
             if path is None:
                 return {}, {"termination_condition": "infeasible", "nodes_expanded": 0}
@@ -500,6 +596,8 @@ class ConflictBasedSearch:
                     (robot_b, self._forbidden_cells(robot_b, node_a, robot_a, robot_b)),
                 ]
                 for robot_id, region in branches:
+                    if t <= self._fixed_until(robots_meta[robot_id]):
+                        continue  # committed step: only the other robot can give way
                     child = CTNode(
                         cost=0.0,
                         vertex_constraints={k: set(v) for k, v in node.vertex_constraints.items()},
@@ -521,6 +619,8 @@ class ConflictBasedSearch:
                 _, _, robot_a, robot_b, a_from, a_to, b_from, b_to = conflict
                 branches = [(robot_a, a_from, a_to), (robot_b, b_from, b_to)]
                 for robot_id, from_node, to_node in branches:
+                    if t < self._fixed_until(robots_meta[robot_id]):
+                        continue  # committed transition
                     child = CTNode(
                         cost=0.0,
                         vertex_constraints={k: set(v) for k, v in node.vertex_constraints.items()},

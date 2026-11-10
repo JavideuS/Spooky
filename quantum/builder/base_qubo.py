@@ -353,17 +353,72 @@ class BaseQUBO(DiagonalFixer, ABC):
             return start, self.t_max
         return start, end_time - self.current_T
 
-    def parked_cells(self, robot_id):
+    def _shell(self, robot_id, other_id, pos):
+        """Cells whose footprint for robot_id overlaps other_id's on pos (the
+        pair's clearance shell on a grid, the node itself on a graph)."""
+        if self.problem.get_format_type() == "graph":
+            if not isinstance(pos, int):
+                pos = self.problem.graph.get_node_from_position(pos)
+            return {pos}
+        M, N = self.problem.grid.M, self.problem.grid.N
+        D = self.problem.get_clearance_table().get((robot_id, other_id)) or {(0, 0)}
+        return {
+            (pos[0] + di, pos[1] + dj)
+            for di, dj in D
+            if 0 <= pos[0] + di < M and 0 <= pos[1] + dj < N
+        }
+
+    def committed_cells(self, robot_id):
+        """{window-relative t: cells} robot_id must stay off because another
+        robot's committed step (RobotConfig.fixed_path) holds them. With that
+        robot's position known, its crash and trailing terms against
+        robot_id only ever price robot_id's own cells, so they become
+        forbidden cells: footprint overlap at t, inside its footprint at t+1
+        (robot_id would be trailed), and inside its footprint at t-1
+        (robot_id would trail it). Trailing rather than the exact swap -- a
+        QUBO has no exact-swap tier (see apply_trailing_penalty) -- whatever
+        the penalty set."""
+        robot = self.problem.robots[robot_id]
+        blocked = {}
+        for other_id, steps in self.problem.committed_steps().items():
+            if other_id == robot_id:
+                continue
+            for t in range(self.t_max):
+                now = self.current_T + t
+                if now <= max(self.current_T, robot.start_time):
+                    continue  # already decided (window start / its start)
+                cells = blocked.setdefault(t, set())
+                for when in (now, now + 1, now - 1):
+                    if when == now - 1 and when < robot.start_time:
+                        continue  # robot_id didn't exist yet: nothing to trail
+                    if when in steps:
+                        cells |= self._shell(robot_id, other_id, steps[when])
+        return {t: cells for t, cells in blocked.items() if cells}
+
+    def parked_cells(self, robot_id, include_committed=True):
         """Hold-goal: {window-relative t: cells} robot_id must stay off
         because another robot is parked on its goal there, from the window
         start if it finished in an earlier window, or from its deadline if
         that falls inside this window (it has no variables after it). On a
-        grid the pair's clearance shell around the goal is included."""
-        is_graph = self.problem.get_format_type() == "graph"
-        clearance_table = {} if is_graph else self.problem.get_clearance_table()
-        blocked = {}
+        grid the pair's clearance shell around the goal is included. Also
+        other robots' committed steps (committed_cells) unless
+        include_committed is False."""
+        blocked = (
+            {t: set(c) for t, c in self.committed_cells(robot_id).items()}
+            if include_committed
+            else {}
+        )
         for other_id, other in self.problem.robots.items():
             if other_id == robot_id:
+                continue
+            if other.fully_fixed:
+                # Holds its goal from its (shifted) start_time on. Already in
+                # committed_cells; without them it still counts as parked
+                # (e.g. for the goal-distance map) once it holds it.
+                if not include_committed:
+                    cells = self._shell(robot_id, other_id, other.goal)
+                    for t in range(max(0, other.start_time - self.current_T), self.t_max):
+                        blocked.setdefault(t, set()).update(cells)
                 continue
             if other.active:
                 _, from_t = self.window_steps(other_id)
@@ -373,17 +428,10 @@ class BaseQUBO(DiagonalFixer, ABC):
                 from_t = 0
             else:
                 continue
-            if is_graph:
+            if self.problem.get_format_type() == "graph":
                 cells = {self.problem.get_graph_robot_current_goal(other_id)[1]}
             else:
-                gi, gj = other.goal
-                M, N = self.problem.grid.M, self.problem.grid.N
-                D = clearance_table.get((robot_id, other_id)) or {(0, 0)}
-                cells = {
-                    (gi + di, gj + dj)
-                    for di, dj in D
-                    if 0 <= gi + di < M and 0 <= gj + dj < N
-                }
+                cells = self._shell(robot_id, other_id, other.goal)
             for t in range(from_t, self.t_max):
                 blocked.setdefault(t, set()).update(cells)
         return blocked

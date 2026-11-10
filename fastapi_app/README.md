@@ -61,6 +61,10 @@ curl -X POST $BASE/v1/plan -H 'content-type: application/json' -d '{
   ]
 }'
 # add "details": true for solver internals, "render": true for a Plotly figure
+# A robot's "fixed_path" ([start, ...], one position per step) is
+# kept as is and planned on from its last entry; everyone else plans around it.
+# Ending it at the goal fixes the robot for the whole plan (re-plan a group
+# around robots that keep going, or a parked robot). Conflicting fixed paths: 400.
 
 # register your own HDF5 map at runtime (lives for this process only)
 curl -X POST $BASE/v1/maps/my_map \

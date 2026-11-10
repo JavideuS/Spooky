@@ -252,7 +252,11 @@ class GridQUBOBuilder(BaseQUBO):
         nothing about other robots -- the QUBO still decides all of that.
         Cached per robot and set of parked cells.
         """
-        parked = frozenset(self.parked_cells(robot_id).get(self.t_max - 1, ()))
+        # Static obstacles for the distance map: parked goals only, not
+        # committed robots that are just passing through.
+        parked = frozenset(
+            self.parked_cells(robot_id, include_committed=False).get(self.t_max - 1, ())
+        )
         key = (robot_id, parked)
         if key not in self._goal_distance_maps:
             goal = tuple(self.problem.robots[robot_id].goal)

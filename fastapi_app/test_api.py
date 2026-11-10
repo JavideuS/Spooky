@@ -13,6 +13,7 @@ the requested path was, so a small map would never actually exercise it.
 The fast classical solver keeps this quick with no GPU/real hardware needed.
 """
 
+import pytest
 from fastapi.testclient import TestClient
 
 from api import app
@@ -104,3 +105,48 @@ def test_v1_maps_list_carries_resolution_key_once_loaded():
         assert entry["loaded"] is True
         assert entry["resolution"] == 1.0
         assert entry["origin"] == [0.0, 0.0, 0.0]
+
+
+def _plan(client, robots, solver="classic.cbs"):
+    return client.post(
+        "/v1/plan",
+        json={"map_id": "obs5x5_hard", "solver": solver, "format": "grid", "robots": robots},
+    )
+
+
+@pytest.mark.parametrize("solver", ["classic.cbs", "classic.ilp"])
+def test_fixed_path_keeps_committed_steps_and_the_optimum(solver):
+    """Re-planning with r0 committed to (part of) its own plan returns that
+    plan for r0 and the same total cost -- what clew sends to re-plan only a
+    deadlocked group around robots that keep going."""
+    robots = [
+        {"id": "r0", "start": [0, 0], "goal": [4, 4]},
+        {"id": "r1", "start": [4, 0], "goal": [0, 4]},
+    ]
+    with TestClient(app) as client:
+        free = _plan(client, robots, solver)
+        assert free.status_code == 200, free.text
+        r0_path = next(p["path"] for p in free.json()["paths"] if p["robot_id"] == "r0")
+        for cut in (3, len(r0_path)):
+            committed = [dict(robots[0], fixed_path=r0_path[:cut]), robots[1]]
+            resp = _plan(client, committed, solver)
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["cost"] == free.json()["cost"]
+            got = next(p["path"] for p in body["paths"] if p["robot_id"] == "r0")
+            assert got[:cut] == r0_path[:cut]
+
+
+def test_fixed_path_on_qubo_and_conflicts():
+    with TestClient(app) as client:
+        robot = {"id": "r0", "start": [0, 0], "goal": [0, 2], "fixed_path": [[0, 0], [0, 1]]}
+        resp = _plan(client, [robot], solver="dwave.general")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["paths"][0]["path"][:2] == [[0, 0], [0, 1]]
+
+        clash = [
+            {"id": "r0", "start": [0, 0], "goal": [0, 2], "fixed_path": [[0, 0], [0, 1]]},
+            {"id": "r1", "start": [0, 2], "goal": [0, 0], "fixed_path": [[0, 2], [0, 1]]},
+        ]
+        resp = _plan(client, clash)
+        assert resp.status_code == 400 and "r0/r1 at t=1" in resp.text, resp.text

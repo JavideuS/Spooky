@@ -9,7 +9,8 @@ class RobotConfig:
                  goal: Union[Tuple[int, int], int], start_time: int = 0,
                  priority: float = 1.0, robot_radius: float = 0.5, inflation: float = 0.0,
                  expected_duration: Optional[int] = None,
-                 coordinate_format: str = "matrix"):
+                 coordinate_format: str = "matrix",
+                 fixed_path: Optional[List] = None):
         """
         Initialize robot configuration.
 
@@ -32,6 +33,12 @@ class RobotConfig:
                 in. Internally everything still ends up stored as (row, col); see
                 resolve_coordinates(). Node-index positions (graph mode, plain
                 ints) are never affected regardless of this setting.
+            fixed_path: Committed positions, one per step from start_time, in
+                coordinate_format; fixed_path[0] must be the start. The planner
+                keeps them, plans on from the last one and plans every other
+                robot around them. Ending at the goal fixes the robot for the
+                whole plan (parked or already-committed robot). See
+                apply_fixed_path().
         """
         self.robot_id = robot_id
         self.start = start
@@ -42,6 +49,11 @@ class RobotConfig:
         self.start_time = start_time
         self.T = expected_duration  # By default is none and can be calculated by the problem, but you can predefine it
         self.coordinate_format = coordinate_format
+        self.fixed_path = list(fixed_path) if fixed_path else None
+        # Set by apply_fixed_path(): the committed positions (start..last)
+        # and the time the first of them is held.
+        self.fixed_prefix = None
+        self.prefix_start_time = start_time
         self.num_rows = None  # set by resolve_coordinates(); also doubles as the "already resolved" signal
         self.origin = None  # set by resolve_coordinates() when coordinate_format == "world"
         self.resolution = None  # set by resolve_coordinates() when coordinate_format == "world"
@@ -75,6 +87,11 @@ class RobotConfig:
                 self.goal = to_matrix_rc(*self.goal, num_rows)
             if isinstance(self.current_position, (tuple, list)):
                 self.current_position = to_matrix_rc(*self.current_position, num_rows)
+            if self.fixed_path:
+                self.fixed_path = [
+                    to_matrix_rc(*p, num_rows) if isinstance(p, (tuple, list)) else p
+                    for p in self.fixed_path
+                ]
         elif self.coordinate_format == "world":
             if origin is None or resolution is None:
                 raise ValueError(
@@ -87,6 +104,12 @@ class RobotConfig:
                 self.goal = world_to_grid_cell(*self.goal[:2], num_rows, origin, resolution)
             if isinstance(self.current_position, (tuple, list)):
                 self.current_position = world_to_grid_cell(*self.current_position[:2], num_rows, origin, resolution)
+            if self.fixed_path:
+                self.fixed_path = [
+                    world_to_grid_cell(*p[:2], num_rows, origin, resolution)
+                    if isinstance(p, (tuple, list)) else p
+                    for p in self.fixed_path
+                ]
             self.origin = origin
             self.resolution = resolution
 
@@ -100,7 +123,32 @@ class RobotConfig:
         self.start = self._to_int_cell(self.start)
         self.goal = self._to_int_cell(self.goal)
         self.current_position = self._to_int_cell(self.current_position)
+        if self.fixed_path:
+            self.fixed_path = [self._to_int_cell(p) for p in self.fixed_path]
         self.num_rows = num_rows
+
+    def apply_fixed_path(self):
+        """Turn fixed_path into a planning start: the robot is planned from
+        its last committed position at start_time + len - 1, with the
+        committed positions kept in fixed_prefix. Idempotent; call after
+        resolve_coordinates()."""
+        if not self.fixed_path or self.fixed_prefix is not None:
+            return
+        if self.fixed_path[0] != self.start:
+            raise ValueError(
+                f"Robot '{self.robot_id}' fixed_path starts at {self.fixed_path[0]}, "
+                f"not at its start {self.start}."
+            )
+        self.fixed_prefix = list(self.fixed_path)
+        self.prefix_start_time = self.start_time
+        self.start = self.current_position = self.fixed_prefix[-1]
+        self.start_time += len(self.fixed_prefix) - 1
+        self.active = not self.fully_fixed  # nothing left to plan
+
+    @property
+    def fully_fixed(self) -> bool:
+        """Committed all the way to its goal: never re-planned, holds it."""
+        return bool(self.fixed_prefix) and self.fixed_prefix[-1] == self.goal
 
     @staticmethod
     def _to_int_cell(pos):
@@ -130,7 +178,7 @@ class RobotConfig:
         """Restore dynamic state to the robot's initial start position."""
         self.path = []
         self.current_position = self.start
-        self.active = True
+        self.active = not self.fully_fixed
 
     def to_dict(self) -> Dict:
         """Convert to dictionary representation, formatted per coordinate_format."""

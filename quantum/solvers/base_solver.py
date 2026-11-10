@@ -839,6 +839,24 @@ class BaseSolver(ABC):
             "parameters": self._solver_params,
         }
 
+    @staticmethod
+    def _prepend_committed_steps(problem) -> None:
+        """Windowed solvers only plan a fixed_path robot from its (shifted)
+        start_time, and a fully committed one not at all: put its committed
+        steps back on robot.path. Idempotent."""
+        for robot_id, steps in problem.committed_steps().items():
+            robot = problem.robots[robot_id]
+            planned_from = problem.T if robot.fully_fixed else robot.start_time
+            kept = [p for p in robot.path if p[2] >= planned_from]
+            committed = []
+            for t, pos in sorted(steps.items()):
+                if t >= planned_from:
+                    continue
+                if not isinstance(pos, tuple):  # graph node id
+                    pos = tuple(problem.graph.nodes[pos])
+                committed.append((pos[0], pos[1], t))
+            robot.path = committed + kept
+
     def build_solution_from_robot_paths(self, problem) -> Dict[int, int]:
         """
         Build a solution dictionary from stored robot paths.
@@ -870,6 +888,8 @@ class BaseSolver(ABC):
         # Initialize all variables to 0
         for idx in range(total_vars):
             solution[idx] = 0
+
+        self._prepend_committed_steps(problem)
 
         # Set variables to 1 for positions in robot paths
         for robot_num, robot_id in enumerate(problem.robots.keys()):

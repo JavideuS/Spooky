@@ -90,6 +90,9 @@ class RobotSpec(BaseModel):
     coordinate_format: str = "matrix"  # "matrix" (row, col), "cartesian" (x, y robotics/Y-up),
     # or "world" (real-world x, y meters in the map's frame — see quantum/maps/pgm2HDF5.py);
     # applies to this robot's start/goal, and its returned path is formatted the same way
+    fixed_path: Optional[list[list[float]]] = None  # committed positions, one per step from start_time, same
+    # coordinate_format; [0] must equal start. Kept as is, the robot is planned on from the last one and
+    # everyone else around them; ending at the goal fixes the robot for the whole plan.
 
 
 class StatelessPlanRequest(BaseModel):

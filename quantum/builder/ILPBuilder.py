@@ -130,6 +130,32 @@ class BaseILPBuilder:
         index — the inverse of decode_position()'s per-format unpacking."""
         raise NotImplementedError
 
+    def _committed_steps(self, reachable, to_vertex=lambda p: p):
+        """{robot: {t: vertex}} for the committed steps of a fixed_path
+        before the robot's (shifted) start_time -- see RobotConfig.fixed_path.
+        build() fixes x to 1 there and 0 elsewhere; the shared crash/swap/
+        clearance rows then keep every other robot off them. The step at
+        start_time is the model's own start constraint."""
+        committed = {}
+        for a, robot in self.problem.robots.items():
+            if not robot.fixed_prefix:
+                continue
+            verts = [to_vertex(p) for p in robot.fixed_prefix]
+            for k, v in enumerate(verts):
+                if v not in reachable:
+                    raise InfeasibleProblemError(
+                        f"Robot '{a}' fixed_path[{k}] is not a free cell/node."
+                    )
+                if k and v not in reachable[verts[k - 1]]:
+                    raise InfeasibleProblemError(
+                        f"Robot '{a}' fixed_path jumps between steps {k - 1} and {k}: "
+                        "consecutive positions must be equal (wait) or adjacent."
+                    )
+            committed[a] = {
+                robot.prefix_start_time + k: v for k, v in enumerate(verts[:-1])
+            }
+        return committed
+
     def reset_problem(self):
         """Restore every robot to its initial start state (mirrors BaseQUBO.reset_problem)."""
         for robot in self.problem.robots.values():
@@ -171,6 +197,7 @@ class GridILPBuilder(BaseILPBuilder):
         # ILP allows staying in place; QUBO's grid.adjacency is kept strict-neighbor-only
         # since it relies on that for its own penalty terms, so extend it locally here.
         reachable = {v: grid.adjacency[v] + [v] for v in model.V}
+        committed = self._committed_steps(reachable)
 
         # Hold-goal: a robot exists from its start_time to the end of the plan.
         # It must reach its goal by its own deadline (start_time + T - 1) and
@@ -242,8 +269,11 @@ class GridILPBuilder(BaseILPBuilder):
             ko_a = keepout.get(a, frozenset())
             for t in model.T:
                 if t not in active_range[a]:
+                    held = committed.get(a, {}).get(t)
                     for v in model.V:
-                        model.x[a, v, t].fix(0)
+                        model.x[a, v, t].fix(1 if v == held else 0)
+                    if held is not None:
+                        legal[a][t] = {held}
                     continue
                 if a in parked or t > goal_deadline[a]:
                     goal = robots[a].goal
@@ -361,8 +391,12 @@ class GridILPBuilder(BaseILPBuilder):
                                 <= 3
                             )
 
+        # Clearance rows also cover committed steps (before start_time).
+        present_range = {
+            a: range(robots[a].prefix_start_time, problem.T) for a in robots
+        }
         self._add_clearance_constraints(
-            model, active_range, legal, clearance_robot_pairs
+            model, present_range, legal, clearance_robot_pairs
         )
 
         # minimize total timesteps spent away from goal (equivalent to sum of arrival times,
@@ -478,6 +512,10 @@ class GraphILPBuilder(BaseILPBuilder):
         # graph.adjacency[v] is a set of (neighbor_id, weight) pairs — drop the
         # weight and add the self-loop, same "stay in place" allowance grid gets.
         reachable = {v: [n for n, _w in graph.adjacency[v]] + [v] for v in model.V}
+        committed = self._committed_steps(
+            reachable,
+            lambda p: p if isinstance(p, int) else graph.get_node_from_position(p),
+        )
 
         # Robot start/goal may be stored as raw node ids or as coordinates,
         # depending on how the problem was built — resolve both to node ids
@@ -520,7 +558,8 @@ class GraphILPBuilder(BaseILPBuilder):
             for v in model.V:
                 for t in model.T:
                     if t not in active_range[a]:
-                        model.x[a, v, t].fix(0)
+                        held = committed.get(a, {}).get(t)
+                        model.x[a, v, t].fix(1 if v == held else 0)
                         continue
                     in_window_vars += 1
                     if t > goal_deadline[a]:

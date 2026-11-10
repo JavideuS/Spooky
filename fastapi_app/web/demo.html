@@ -281,6 +281,17 @@
     background: var(--accent-soft);
   }
   #viz.picking { cursor: crosshair; }
+  .fixed-row {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11.5px; color: var(--text-dim);
+  }
+  .fixed-row .fixed-count { flex: 1; }
+  .fixed-row button { padding: 3px 8px; font-size: 11px; }
+  .robot-result-row .committed {
+    color: var(--accent); font-weight: 600;
+    border-bottom: 1px dotted var(--accent);
+  }
+  .robot-result-row .keep-btn { margin-left: auto; padding: 3px 8px; font-size: 11px; flex: none; }
 
   button.secondary {
     background: none;
@@ -623,10 +634,11 @@
     maps: {},
     solvers: {},
     robots: [
-      { id: "", start: [0, 0], goal: [0, 0], start_time: 0, priority: 1.0, robot_radius: 0.5 },
+      { id: "", start: [0, 0], goal: [0, 0], start_time: 0, priority: 1.0, robot_radius: 0.5, fixed: [] },
     ],
     activeTab: "form",
-    picking: null, // { idx, field: "start"|"goal" } while waiting for a map click
+    picking: null, // { idx, field: "start"|"goal"|"fixed" } while waiting for a map click / drag
+    drawing: false, // mouse held down while drawing a fixed path
     previewFigure: null, // last-fetched map preview {data, layout}, re-used to overlay start/goal markers
   };
 
@@ -756,7 +768,23 @@
       goals.x.push(gx); goals.y.push(gy); goals.hovertext.push(`${label} goal`);
     });
     if (!starts.x.length) return [];
+    // Committed (fixed_path) steps, drawn under the start/goal markers.
+    const fixedTraces = state.robots
+      .map((r, idx) => ({ r, idx }))
+      .filter(({ r }) => r.fixed && r.fixed.length > 1)
+      .map(({ r, idx }) => {
+        const pts = r.fixed.map(toXY);
+        return {
+          x: pts.map((p) => p[0]), y: pts.map((p) => p[1]),
+          mode: "lines+markers", type: "scatter",
+          line: { color: ROBOT_COLORS[idx % ROBOT_COLORS.length], width: 3, dash: "dot" },
+          marker: { size: 6, color: ROBOT_COLORS[idx % ROBOT_COLORS.length] },
+          hovertext: r.fixed.map((_, k) => `${r.id || `robot_${idx}`} fixed t+${k}`),
+          hoverinfo: "text", showlegend: false, name: "fixed",
+        };
+      });
     return [
+      ...fixedTraces,
       {
         x: starts.x, y: starts.y, mode: "markers+text", type: "scatter",
         marker: { size: 15, color: starts.color, symbol: "circle", line: { color: "#fff", width: 1.5 } },
@@ -872,9 +900,16 @@
           <div><label>${labels.d}</label><input type="number" data-field="goal1" value="${r.goal[1]}" /></div>
         </div>
         <div class="pick-row">
-          <button type="button" class="secondary pick-btn" data-pick="start">pick start on map</button>
-          <button type="button" class="secondary pick-btn" data-pick="goal">pick goal on map</button>
+          <button type="button" class="secondary pick-btn" data-pick="start">pick start</button>
+          <button type="button" class="secondary pick-btn" data-pick="goal">pick goal</button>
+          <button type="button" class="secondary pick-btn" data-pick="fixed" title="Press on the map at the start and drag along the route the robot is committed to (fixed_path)">draw fixed</button>
         </div>
+        ${r.fixed.length ? `
+        <div class="fixed-row">
+          <span class="fixed-count">fixed: ${r.fixed.length - 1} step${r.fixed.length === 2 ? "" : "s"}${r.fixed.length && sameCell(r.fixed[r.fixed.length - 1], r.goal) ? " (to goal: fully fixed)" : ""}</span>
+          <button type="button" class="secondary" data-fixed="wait" title="Stay one more step on the last cell">+wait</button>
+          <button type="button" class="secondary" data-fixed="clear">clear</button>
+        </div>` : ""}
       `;
       row.querySelectorAll("input").forEach((input) => {
         input.addEventListener("input", () => {
@@ -883,6 +918,10 @@
           const val = parseInt(input.value, 10) || 0;
           if (field === "start0") r.start[0] = val;
           if (field === "start1") r.start[1] = val;
+          if (field.startsWith("start") && r.fixed.length && !sameCell(r.fixed[0], r.start)) {
+            r.fixed = []; // a fixed path has to begin at the start
+            renderRobotRows();
+          }
           if (field === "goal0") r.goal[0] = val;
           if (field === "goal1") r.goal[1] = val;
           syncJsonFromForm();
@@ -903,13 +942,22 @@
       row.querySelectorAll(".pick-btn").forEach((btn) => {
         btn.addEventListener("click", () => setPicking(idx, btn.dataset.pick));
       });
+      row.querySelectorAll("[data-fixed]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          if (btn.dataset.fixed === "wait") r.fixed.push([...r.fixed[r.fixed.length - 1]]);
+          else r.fixed = [];
+          renderRobotRows();
+          syncJsonFromForm();
+          refreshPreviewWithRobots();
+        });
+      });
       container.appendChild(row);
     });
     updatePickingUI();
   }
 
   el("addRobotBtn").addEventListener("click", () => {
-    state.robots.push({ id: "", start: [0, 0], goal: [0, 0], start_time: 0, priority: 1.0, robot_radius: 0.5 });
+    state.robots.push({ id: "", start: [0, 0], goal: [0, 0], start_time: 0, priority: 1.0, robot_radius: 0.5, fixed: [] });
     renderRobotRows();
     syncJsonFromForm();
     refreshPreviewWithRobots();
@@ -953,18 +1001,25 @@
       const activeBtn = document.querySelector(`.robot-row[data-idx="${idx}"] .pick-btn[data-pick="${field}"]`);
       if (activeBtn) activeBtn.classList.add("active");
       vizEl.classList.add("picking");
-      hintEl.textContent = `Click the map to set ${label}'s ${field}.`;
+      hintEl.textContent = field === "fixed"
+        ? `Press on ${label}'s start cell and drag along its route; release to finish. Drag back over a cell to undo it.`
+        : `Click the map to set ${label}'s ${field}.`;
     } else {
       vizEl.classList.remove("picking");
       hintEl.textContent = "";
     }
   }
 
-  function handleVizClick(evt) {
-    if (!state.picking) return;
+  function sameCell(p, q) {
+    return p[0] === q[0] && p[1] === q[1];
+  }
+
+  // Map pixel -> grid cell {a, b, plotX, plotY} in the current coordinate
+  // format (a/b as the start/goal inputs use them), or null off the plot.
+  function eventToCell(evt) {
     const gd = vizEl;
     const fullLayout = gd._fullLayout;
-    if (!fullLayout || !fullLayout.xaxis || !fullLayout.yaxis || !fullLayout._size) return;
+    if (!fullLayout || !fullLayout.xaxis || !fullLayout.yaxis || !fullLayout._size) return null;
 
     const rect = gd.getBoundingClientRect();
     const size = fullLayout._size;
@@ -975,9 +1030,9 @@
       dataX = fullLayout.xaxis.p2c(pxX);
       dataY = fullLayout.yaxis.p2c(pxY);
     } catch (err) {
-      return; // clicked outside the plotting area, or an incompatible plotly build
+      return null; // clicked outside the plotting area, or an incompatible plotly build
     }
-    if (typeof dataX !== "number" || typeof dataY !== "number" || Number.isNaN(dataX) || Number.isNaN(dataY)) return;
+    if (typeof dataX !== "number" || typeof dataY !== "number" || Number.isNaN(dataX) || Number.isNaN(dataY)) return null;
 
     // Bounds come from the already-rendered axis range, not state.maps[mapId]
     // — that registry snapshot is taken once at page load, before any map has
@@ -1003,12 +1058,19 @@
       b = Math.min(Math.max(b, 0), bMax);
     }
 
-    const { idx, field } = state.picking;
-    if (!state.robots[idx]) { exitPicking(); return; }
-
     // Plot-space (x, y) for this pick — same mapping robotMarkerTraces()/toXY()
     // uses, so it lines up with how the Obstacles trace itself was drawn.
     const [plotX, plotY] = isCartesian ? [a, b] : [b, a];
+    return { a, b, plotX, plotY };
+  }
+
+  function handleVizClick(evt) {
+    if (!state.picking || state.picking.field === "fixed") return;
+    const cell = eventToCell(evt);
+    if (!cell) return;
+    const { a, b, plotX, plotY } = cell;
+    const { idx, field } = state.picking;
+    if (!state.robots[idx]) { exitPicking(); return; }
     if (isObstacleAt(plotX, plotY)) {
       const label = state.robots[idx].id || `robot_${idx}`;
       el("pickHint").textContent = `That cell is an obstacle — pick a different cell for ${label}'s ${field}.`;
@@ -1016,6 +1078,8 @@
     }
 
     state.robots[idx][field] = [a, b];
+    const r = state.robots[idx];
+    if (field === "start" && r.fixed.length && !sameCell(r.fixed[0], r.start)) r.fixed = [];
     exitPicking();
     renderRobotRows();
     syncJsonFromForm();
@@ -1035,6 +1099,76 @@
   // so this runs before Plotly's (bubble-phase) internal handlers do.
   vizEl.addEventListener("click", handleVizClick, { capture: true });
 
+  // ---- Drag to draw a fixed path ----
+  // Press = the robot's start (a fixed path must begin there), drag = one
+  // step per cell entered. A fast drag skips cells, so the gap is filled
+  // with 4-connected steps (rows first, then columns), each of which must be
+  // free; re-entering the previous cell undoes the last step.
+
+  function extendFixed(r, target) {
+    const path = r.fixed;
+    const last = path[path.length - 1];
+    if (sameCell(last, target)) return;
+    if (path.length > 1 && sameCell(path[path.length - 2], target)) {
+      path.pop();
+      return;
+    }
+    const isCartesian = el("coordFormatSelect").value === "cartesian";
+    let [a, b] = last;
+    while (a !== target[0] || b !== target[1]) {
+      const na = a !== target[0] ? a + Math.sign(target[0] - a) : a;
+      const nb = a !== target[0] ? b : b + Math.sign(target[1] - b);
+      const [px, py] = isCartesian ? [na, nb] : [nb, na];
+      if (isObstacleAt(px, py)) break; // walls stop the line
+      a = na; b = nb;
+      path.push([a, b]);
+    }
+  }
+
+  function fixedRefresh() {
+    renderRobotRows();
+    syncJsonFromForm();
+    refreshPreviewWithRobots();
+  }
+
+  vizEl.addEventListener("mousedown", (evt) => {
+    if (!state.picking || state.picking.field !== "fixed" || evt.button !== 0) return;
+    const cell = eventToCell(evt);
+    if (!cell) return;
+    evt.preventDefault();
+    evt.stopPropagation();
+    const r = state.robots[state.picking.idx];
+    if (!r) { exitPicking(); return; }
+    if (isObstacleAt(cell.plotX, cell.plotY)) {
+      el("pickHint").textContent = "That cell is an obstacle — press on a free cell to start the path.";
+      return;
+    }
+    r.start = [cell.a, cell.b];
+    r.fixed = [[cell.a, cell.b]];
+    state.drawing = true;
+    fixedRefresh();
+  }, { capture: true });
+
+  vizEl.addEventListener("mousemove", (evt) => {
+    if (!state.drawing || !state.picking) return;
+    const cell = eventToCell(evt);
+    if (!cell) return;
+    const r = state.robots[state.picking.idx];
+    const before = r.fixed.length;
+    const lastBefore = r.fixed[before - 1];
+    extendFixed(r, [cell.a, cell.b]);
+    if (r.fixed.length !== before || !sameCell(r.fixed[r.fixed.length - 1], lastBefore)) {
+      refreshPreviewWithRobots();
+    }
+  }, { capture: true });
+
+  window.addEventListener("mouseup", () => {
+    if (!state.drawing) return;
+    state.drawing = false;
+    exitPicking();
+    fixedRefresh();
+  });
+
   // ---- Form <-> JSON ----
 
   function buildRequestBody() {
@@ -1052,6 +1186,7 @@
         priority: r.priority,
         robot_radius: r.robot_radius,
         coordinate_format: coordinateFormat,
+        ...(r.fixed.length ? { fixed_path: r.fixed } : {}),
       })),
       penalty_set: el("penaltySelect").value,
       T: tVal ? parseInt(tVal, 10) : null,
@@ -1123,7 +1258,38 @@
 
   const ROBOT_COLORS = ["#7c8cff", "#f0616b", "#4fd1a5", "#e8a33d", "#b98cf2", "#4fc3f7"];
 
-  function renderResults(response) {
+  // Committed steps of the request that produced this plan: {robot_id: [[a, b], ...]}.
+  function committedById(body) {
+    const out = {};
+    ((body && body.robots) || []).forEach((r, i) => {
+      if (r.fixed_path && r.fixed_path.length) out[r.id || `robot_${i}`] = r.fixed_path;
+    });
+    return out;
+  }
+
+  // Thick dotted overlay of each committed path on the solved figure, in the
+  // robot's own figure colour. Appended after the animated traces: frames
+  // address theirs by index, so they leave this one alone.
+  function committedTraces(figData, committed, coordinateFormat) {
+    const toXY = (pos) => (coordinateFormat === "cartesian" ? [pos[0], pos[1]] : [pos[1], pos[0]]);
+    return Object.entries(committed)
+      .filter(([, cells]) => cells.length > 1)
+      .map(([id, cells]) => {
+        const own = figData.find((t) => t.name === id && t.showlegend !== false);
+        const color = (own && ((own.line && own.line.color) || (own.marker && own.marker.color))) || "#888";
+        const pts = cells.map(toXY);
+        return {
+          x: pts.map((p) => p[0]), y: pts.map((p) => p[1]),
+          mode: "lines+markers", type: "scatter",
+          line: { color, width: 6, dash: "dot" }, marker: { color, size: 7 }, opacity: 0.55,
+          name: `${id} fixed`, showlegend: true,
+          hovertext: cells.map((_, k) => `${id} fixed, t+${k}`), hoverinfo: "text",
+        };
+      });
+  }
+
+  function renderResults(response, body) {
+    const committed = committedById(body);
     el("resultStrip").style.display = "flex";
     el("statCost").textContent = response.cost.toFixed(3);
     el("statTime").textContent = `${(response.metrics.planning_time * 1000).toFixed(1)} ms`;
@@ -1139,15 +1305,34 @@
         <div class="swatch" style="background:${color};"></div>
         <div class="rid">${escapeHtml(p.robot_id)}</div>
         <span class="tag" title="Coordinate format">${escapeHtml(p.coordinate_format || "matrix")}</span>
-        <div class="path">${p.path.map((c) => `(${c[0]},${c[1]})`).join(" → ")}</div>
+        <div class="path">${(() => {
+          const cells = p.path.map((c) => `(${c[0]},${c[1]})`);
+          const k = (committed[p.robot_id] || []).length;
+          if (!k) return cells.join(" → ");
+          const head = `<span class="committed" title="Committed (fixed_path): kept as sent">${cells.slice(0, k).join(" → ")}</span>`;
+          return [head, ...cells.slice(k)].join(" → ");
+        })()}</div>
+        <button type="button" class="secondary keep-btn" title="Commit this robot to its planned route (up to its goal) and re-plan the others around it">keep as fixed</button>
       `;
+      row.querySelector(".keep-btn").addEventListener("click", () => {
+        const r = state.robots.find((s, i) => (s.id || `robot_${i}`) === p.robot_id);
+        if (!r) return;
+        const cells = p.path.map((c) => [Math.round(c[0]), Math.round(c[1])]);
+        const arrival = cells.findIndex((c) => sameCell(c, r.goal));
+        r.fixed = arrival >= 0 ? cells.slice(0, arrival + 1) : cells;
+        r.start = [...r.fixed[0]];
+        fixedRefresh();
+      });
       resultsEl.appendChild(row);
     });
 
     if (response.figure) {
       const { data, layout, frames } = response.figure;
+      const coordinateFormat = (body && body.robots && body.robots[0] && body.robots[0].coordinate_format) || "matrix";
+      const overlay = committedTraces(data, committed, coordinateFormat);
       Plotly.newPlot(vizEl, data, layout, { responsive: true }).then(() => {
         if (frames && frames.length) Plotly.addFrames(vizEl, frames);
+        if (overlay.length) Plotly.addTraces(vizEl, overlay);
       });
     }
   }
@@ -1185,7 +1370,7 @@
           : data.detail || res.statusText;
         throw new Error(detail);
       }
-      renderResults(data);
+      renderResults(data, body);
     } catch (err) {
       showError(String(err.message || err));
     } finally {
